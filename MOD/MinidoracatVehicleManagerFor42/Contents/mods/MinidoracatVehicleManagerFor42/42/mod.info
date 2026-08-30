@@ -1,0 +1,5 @@
+name=Minidoracat Vehicle Manager for B42
+id=MinidoracatVehicleManagerFor42
+description=[B42]提供車輛綁定、所有權保護、個人與陣營車隊管理，以及 MiniMap 追蹤與 Economy 租賃整合的車輛管理系統。By Minidoracat
+modversion=42.20.4-0.1.0
+versionMin=42.20.4
