@@ -11,5 +11,11 @@
         "tchinese": "STEAM_DESCRIPTION.md",
         "schinese": "STEAM_DESCRIPTION.md",
         "japanese": "STEAM_DESCRIPTION_JP.md"
+    },
+    "titles": {
+        "english": "Minidoracat Vehicle Manager for B42",
+        "tchinese": "[B42] Minidoracat 車輛管理 Vehicle Manager",
+        "schinese": "[B42] Minidoracat 车辆管理 Vehicle Manager",
+        "japanese": "[B42] Minidoracat ビークルマネージャー Vehicle Manager"
     }
 }
