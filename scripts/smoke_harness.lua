@@ -281,6 +281,7 @@ require("MinidoracatVehicleManager_ActionGuards")
 require("MinidoracatVehicleManager_Tracking")
 require("MinidoracatVehicleManager_Migration")
 require("MinidoracatVehicleManager_Export")
+require("MinidoracatVehicleManager_Economy")
 local MVM = MinidoracatVehicleManager
 local O, S = MVM.Own, MVM.Srv
 local G = MVM.Guards
@@ -1397,6 +1398,256 @@ P.jsonBuf = files[P.X.folder() .. "vehicles.json"]
 nowMs = nowMs + 20000; P.X.tick()
 check(files[P.X.folder() .. "vehicles.json"] == P.jsonBuf, "帳本沒變就不重寫")
 check(P.X.utc(0) == "1970-01-01 00:00:00 UTC" and P.X.utc(1790439302927) == "2026-09-26 16:15:02 UTC", "UTC 時間格式")
+end)(); -- 分號：下一個情境也是 IIFE，避免被解析成連續呼叫
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 E1：Economy 付費名額（rev 2 權益 consumer 邊界）")
+local E = MVM.Econ
+local H = { ents = {}, calls = 0, productResult = { ok = true } }
+-- 假 Economy server facade：只模擬 VM 用到的 source-bound 方法，權益快照由情境直接指定
+local function fake(rev, caps)
+    MinidoracatEconomy = { CURRENCIES = { survivor = { id = "survivor" }, cat = { id = "cat" } },
+        v1 = { API_MAJOR = 1, API_REVISION = rev, CAPABILITIES = caps, registerSource = function(spec)
+            H.calls, H.source = H.calls + 1, spec
+            return { modId = spec.modId,
+                registerProduct = function(p) H.product = p; return H.productResult end,
+                getEntitlement = function(user, productId)
+                    if H.throw then error("economy read failed") end
+                    if H.fail then return { ok = false, error = H.fail } end
+                    if productId ~= MVM.ECON_PRODUCT then return { ok = false, error = "unknown_product" } end
+                    return { ok = true, entitlement = H.ents[user] or { usable = 0, permanent = 0, rental = 0, pendingQuantity = 0 } }
+                end,
+                onEntitlementChanged = function(fn)
+                    if H.subscribeThrow then error("subscription failed") end
+                    H.changed = fn
+                end }
+        end } }
+end
+local RICH = { entitlements = true, subscriptions = true }
+boot()
+SB.ClaimsPerPlayer = 1
+fake(2, RICH)
+serverMode = false
+E.init()
+check(E.status == "OFF" and H.calls == 0, "SP：不註冊 Economy 來源，維持免費核心")
+serverMode = true
+MinidoracatEconomy = nil
+E.init()
+check(E.status == "ABSENT" and E.src == nil, "沒裝 Economy：ABSENT，不報錯")
+fake(1, { post = true })
+E.init()
+check(E.status == "UNSUPPORTED" and H.calls == 0, "舊版 rev 1（無 entitlements 能力）：不註冊")
+fake(2, RICH)
+H.productResult = { ok = false, error = "invalid_args" }
+E.init()
+check(E.status == "FAILED" and E.src == nil and O.quotaLimit("alice") == 1, "產品註冊被拒：FAILED，只剩免費基本上限")
+H.productResult = { ok = true }
+H.subscribeThrow = true
+E.init()
+check(E.status == "FAILED" and E.src == nil and O.quotaLimit("alice") == 1,
+    "權益通知訂閱失敗：FAILED，不啟用付費名額")
+H.subscribeThrow = nil
+E.init()
+check(E.status == "READY" and type(H.changed) == "function", "註冊成功才 READY，並訂閱權益變更")
+local cur = {}
+for _, id in ipairs(H.source.currencies) do cur[id] = true end
+check(cur.survivor and cur.cat, "來源允許所有 Economy 幣別（服主可改用任一幣別計價）")
+
+-- 沙盒雙向同步交給 Economy：每個方案欄位都要對到 sandbox-options.txt 的真實選項，且預設值一致
+local P = H.product
+local fh = io.open((MEDIA:gsub("/lua$", "")) .. "/sandbox-options.txt")
+local txt = fh:read("*a")
+fh:close()
+local defaults = {}
+for name, body in txt:gmatch("option MinidoracatVehicleManager%.(%w+)%s*(%b{})") do
+    local d = (body:match("default%s*=%s*([^,}]*)"):gsub("%s+$", ""))
+    local v = d
+    if d == "true" then v = true elseif d == "false" then v = false elseif tonumber(d) then v = tonumber(d) end
+    defaults["MinidoracatVehicleManager." .. name] = v
+end
+local fields, mapped = 0, true
+for field, opt in pairs(P.sandbox) do
+    if field ~= "revision" then
+        fields = fields + 1
+        if defaults[opt] == nil or defaults[opt] ~= P.defaults[field] then mapped = false end
+    end
+end
+for field in pairs(P.defaults) do if P.sandbox[field] == nil then mapped = false end end
+check(fields == 12 and mapped and P.defaults.revision == nil, "12 個方案欄位都對到真實沙盒選項、預設一致、不含 revision")
+check(P.sandbox.revision == "MinidoracatVehicleManager.PaidSlotPlanRevision" and defaults[P.sandbox.revision] == 0,
+    "沙盒包含 Economy 管理的版本欄位，購買方案 defaults 不包含 revision")
+check(P.defaults.permanentEnabled == false and P.defaults.rentalEnabled == false, "預設兩種販售都關閉，由服主開啟")
+
+-- 上限＝基本＋usable；pending 不計入
+local AL = player("alice", 0, 0)
+local ADM = player("admin", 0, 0, { admin = true })
+local cars = {}
+for i = 1, 4 do cars[i] = vehicle(i, 100 + i, 5000 + i, "Base.CarNormal", 1, 1) end
+local a1 = claim(AL, cars[1])
+check(a1.ok and cmd(AL, "prepareClaim", { vehicleId = 2 }).reason == "QUOTA_EXCEEDED", "沒有付費名額：基本 1 格用完")
+check(E.validatePurchase("alice", MVM.ECON_PRODUCT, "permanent", 1, {}) == true, "名額用完仍可購買（買格就是為了提高上限）")
+H.ents.alice = { usable = 0, permanent = 0, rental = 0, pendingQuantity = 1, state = "none" }
+check(cmd(AL, "prepareClaim", { vehicleId = 2 }).reason == "QUOTA_EXCEEDED", "付款待確認（pending）不計入上限")
+H.ents.alice = { usable = 2, permanent = 1, rental = 1, pendingQuantity = 0, state = "active" }
+local a2, a3 = claim(AL, cars[2]), claim(AL, cars[3])
+check(a2.ok and a3.ok, "已確認永久＋租用：上限＝基本＋usable")
+cmd(AL, "fleetSubscribe", {}, false)
+local snap = lastOf(AL, "fleetSnapshot")
+local q = snap.quota
+check(q.base == 1 and q.paid == 2 and q.permanent == 1 and q.rental == 1 and q.total == 3 and q.used == 3
+    and q.economy == "READY" and snap.quotaLimit == 3, "fleetSnapshot 名額分項：基本／永久／租用／總計／整合狀態")
+cmd(ADM, "adminSetQuota", { username = "alice", amount = 0 })
+check(O.quotaBase("alice") == 0 and O.quotaLimit("alice") == 2, "管理員個人上限取代基本（絕對值），付費名額照加")
+cmd(ADM, "adminSetQuota", { username = "alice", amount = -1 })
+
+-- 權益變更推送：只重送該玩家的快照
+local n = #outbox.alice
+H.ents.alice = { usable = 3, permanent = 2, rental = 1, pendingQuantity = 0, state = "active" }
+H.changed("alice", MVM.ECON_PRODUCT, {})
+check(#outbox.alice == n + 1 and lastOf(AL, "fleetSnapshot").quota.total == 4, "權益變更：重送該玩家快照，名額即時更新")
+H.changed("alice", "other_product", {})
+H.changed("bob", MVM.ECON_PRODUCT, {})
+check(#outbox.alice == n + 1, "別的產品、沒訂閱的玩家都不推送")
+
+-- 到期／退款／Economy 不可用：只擋新增，既有綁定與管理照常
+H.ents.alice = { usable = 1, permanent = 1, rental = 0, pendingQuantity = 0, state = "expired" }
+check(cmd(AL, "prepareClaim", { vehicleId = 4 }).reason == "QUOTA_EXCEEDED", "租約到期後超額：拒絕新綁定")
+check(records() == 3 and rec(a2.oid).recordState == "ACTIVE" and rec(a3.oid).recordState == "ACTIVE", "超額的既有綁定不解除")
+H.throw = true
+check(O.quotaLimit("alice") == 1 and E.summary("alice").economy == "UNAVAILABLE", "Economy 查詢出錯：付費 0、UNAVAILABLE，不當成功")
+check(cmd(AL, "rename", { expectedOid = a3.oid, expectedEpoch = rec(a3.oid).epoch, name = "mine" }).ok, "Economy 不可用時既有車照常管理")
+H.throw = nil
+H.fail = "source_disabled"
+check(O.quotaLimit("alice") == 1, "權益查詢被拒：付費 0")
+H.fail = nil
+local badOk = true
+for _, bad in ipairs({ { usable = 1.5, permanent = 1 }, { usable = "2", permanent = 2 }, { permanent = 3, rental = 1 } }) do
+    H.ents.alice = bad
+    if O.quotaLimit("alice") ~= 1 or E.summary("alice").economy ~= "UNAVAILABLE" then badOk = false end
+end
+check(badOk, "usable 缺或不是非負整數：不猜 permanent＋rental，付費 0")
+
+-- 購買前驗證：付費名額用不到時拒購
+serverOpts.DropOffWhiteListAfterDeath = true
+local okv, why = E.validatePurchase("alice", MVM.ECON_PRODUCT, "permanent", 1, {})
+check(okv == false and why == "CONFIG_BLOCKED", "伺服器擋新綁定時拒絕購買")
+serverOpts.DropOffWhiteListAfterDeath = nil
+local rdisk, rgmd = GOS.snapshot(), deepcopy(gmd)
+rdisk.ledgerRevision = rdisk.ledgerRevision - 3
+boot(rdisk, true); gmd = rgmd
+okv, why = E.validatePurchase("alice", MVM.ECON_PRODUCT, "rental", 1, {})
+check(okv == false and why == "RECOVERY_REQUIRED", "帳本需復原時拒絕購買")
+
+-- client：API 探測、可用性提示與購買結果判讀
+isClient = function() return true end
+assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_BillingWindow.lua"))()
+isClient = function() return false end
+local BU = MVM.BillingUI
+MinidoracatEconomy = { v1 = { Client = { API_MAJOR = 1, API_REVISION = 1, CAPABILITIES = { wallet = true } } } }
+check(BU.api() == nil, "client：舊版 Economy（rev 1）視為不支援")
+local ENT = {}
+MinidoracatEconomy.v1.Client = { API_MAJOR = 1, API_REVISION = 2, CAPABILITIES = { entitlements = true }, Entitlements = ENT }
+check(BU.api() == ENT, "client：rev 2＋entitlements 能力才使用權益 API")
+check(BU.blocker(nil, true, {}) == "IGUI_MVM_Loading" and BU.blocker({ economy = "OFF" }, true, {}) == "IGUI_MVM_Slots_SP"
+    and BU.blocker({ economy = "UNAVAILABLE" }, true, {}) == "IGUI_MVM_Slots_Unavailable"
+    and BU.blocker({ economy = "READY" }, false, nil) == "IGUI_MVM_Slots_Unsupported"
+    and BU.blocker({ economy = "READY" }, true, nil) == "IGUI_MVM_Slots_LoadingPrices"
+    and BU.blocker({ economy = "READY" }, true, {}) == nil, "付費區塊可用性：server 整合狀態優先，缺 client API 明確提示")
+local function durable(s) return { ok = true, snapshot = { entitlement = { durable = { status = s } } } } end
+check(BU.purchaseKey({ ok = false, error = "timeout", unknown = true }) == "IGUI_MVM_Slots_NoAnswer"
+    and BU.purchaseKey({ ok = false, error = "insufficient_funds" }) == nil
+    and BU.purchaseKey(durable("pending")) == "IGUI_MVM_Slots_WaitSave"
+    and BU.purchaseKey(durable("confirmed")) == "IGUI_MVM_Slots_Saved"
+    and BU.purchaseKey(durable("rolledback")) == "IGUI_MVM_Slots_RolledBack"
+    and BU.purchaseKey({ ok = true }) == "IGUI_MVM_Slots_SaveUnknown", "購買結果：逾時＝未知；沒有耐久證明不冒充已保存")
+
+-- 載入真正視窗操作方法；只替代未啟動遊戲時不存在的 UI 建構依賴與 Economy 傳輸。
+local savedUI, savedPanel, savedFont = MinidoracatUI, ISPanel, UIFont
+local savedWindow, savedBillingUI = MVM.BillingWindow, MVM.BillingUI
+MinidoracatUI = { v1 = { API_MAJOR = 1, API_REVISION = 7,
+    CAPABILITIES = { window = true, controls = true, dialog = true },
+    Theme = { create = function(options) return options end } } }
+ISPanel = { derive = function() return {} end }
+UIFont = { Small = 1, Medium = 2 }
+isClient = function() return true end
+assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_BillingWindow.lua"))()
+isClient = function() return false end
+local w = setmetatable({ live = true, env = { ok = true, entitlement = {}, plan = {} } }, MVM.BillingWindow)
+local purchaseReply, orderReply, requestedOrder
+local purchaseCount, quoteCount = 0, 0
+ENT.purchase = function(_, _, cb) purchaseCount = purchaseCount + 1; purchaseReply = cb; return "purchase" end
+ENT.quote = function() quoteCount = quoteCount + 1; return "quote" end
+ENT.getOrder = function(_, _, id, cb) requestedOrder, orderReply = id, cb; return "order" end
+ENT.orderOutcome = function(reply)
+    local order = reply.order
+    if not reply.ok or reply.known ~= true or not order then return "unknown" end
+    if order.paid == false and order.final == true then return "not_paid" end
+    if (order.status == "paid" or order.status == "refunded") and order.durable.status == "confirmed" then return order.status end
+    return "processing"
+end
+local quote = { id = "quote-1", orderId = "order-1" }
+w:purchase(quote)
+purchaseReply({ ok = false, error = "timeout", unknown = true })
+w:startQuote("permanent")
+w:purchase(quote)
+check(not w:canPurchase() and w.order.quoteId == "quote-1" and w.order.orderId == "order-1"
+    and purchaseCount == 1 and quoteCount == 0, "付款逾時保留原識別，按鈕與直接操作都不能重購")
+w.env.entitlement.lastOrderId = "unrelated-renewal"
+w:onCheckOrder()
+orderReply({ ok = true, known = false, quoteState = "gone" })
+check(not w:canPurchase() and requestedOrder == "order-1" and w.order.orderId == "order-1",
+    "查無訂單或 gone 不是未付款證明，不能拿別筆續費解鎖")
+w:onCheckOrder()
+orderReply({ ok = false, unknown = true, error = "timeout" })
+check(not w:canPurchase() and w.order.orderId == "order-1", "查詢再次逾時仍保留原付款鎖")
+w:onCheckOrder()
+orderReply({ ok = true, known = true, order = { orderId = "unrelated-renewal", status = "paid", durable = { status = "confirmed" } } })
+check(not w:canPurchase(), "另一筆已保存訂單不能解除本筆未知付款")
+w:onCheckOrder()
+orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "paid", durable = { status = "pending" } } })
+check(not w:canPurchase(), "找到同筆付款但尚待保存，仍禁止再買同商品")
+w:onCheckOrder()
+orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "rolledback",
+    paid = false, final = true, durable = { status = "rolledback" } } })
+check(w:canPurchase() and w.order == nil, "server 確認同筆付款回滾才解除付款鎖")
+w:purchase(quote)
+purchaseReply({ ok = true, orderId = "order-1", snapshot = { entitlement = { durable = { status = "pending" } } } })
+check(not w:canPurchase(), "購買受理但 pending 不能再次購買")
+w:onCheckOrder()
+orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "paid", durable = { status = "confirmed" } } })
+check(w:canPurchase(), "查回同筆 paid 且 confirmed 後才開放下一次購買")
+w.env.entitlement.pendingOrderId = "server-pending"
+w:startQuote("permanent")
+check(not w:canPurchase() and quoteCount == 0, "沒有本機訂單但快照仍有 pending，一樣不能重新報價")
+w.env.entitlement.pendingOrderId = nil
+w:purchase(quote)
+purchaseReply({ ok = false, error = "insufficient_funds" })
+check(w:canPurchase(), "server 明確拒絕購買且未動款時解除付款鎖")
+
+local consent
+w.autoBox = { setChecked = function() end }
+ENT.setAutoRenew = function(_, _, enabled, _, _, cb) consent = enabled; cb({ ok = true }); return "consent" end
+w.env.plan = { autoRenewAllowed = false, revision = 2 }
+w.env.entitlement = { autoRenewState = "paused_terms", autoRenew = true, revision = 1 }
+w:onAutoRenew(false)
+check(consent == false and w.busy == nil, "不准新開自動續費時，暫停中的原授權仍可取消")
+local stateReply
+ENT.requestState = function() return nil, "queue_full" end
+w:requestState()
+check(w.stateError ~= nil and w.requested, "初次狀態請求本機拒送，顯示錯誤且不每幀重送")
+ENT.requestState = function(_, _, cb) stateReply = cb; return "state" end
+w:requestState()
+stateReply({ ok = false, unknown = true, error = "timeout" })
+check(w.stateError ~= nil, "狀態查詢逾時明示錯誤，不永遠顯示載入")
+w:requestState()
+stateReply({ ok = true })
+check(w.stateError == nil and w.dirty, "玩家明示重新整理成功，清除先前讀取錯誤")
+MinidoracatUI, ISPanel, UIFont = savedUI, savedPanel, savedFont
+MVM.BillingWindow, MVM.BillingUI = savedWindow, savedBillingUI
+
+MinidoracatEconomy = nil
+E.init()
+SB.ClaimsPerPlayer = 3
 end)()
 
 out("")

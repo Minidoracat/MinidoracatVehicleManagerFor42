@@ -38,3 +38,42 @@ option MinidoracatVehicleManager.WatchdogIntervalSeconds
 
 option MinidoracatVehicleManager.RebindDeadlineDays
 {type = integer, min = 1, max = 90, default = 30, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerRebindDeadlineDays,}
+
+option MinidoracatVehicleManager.PaidSlotPlanRevision
+{type = integer, min = 0, max = 2147483647, default = 0, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerPaidSlotPlanRevision,}
+
+option MinidoracatVehicleManager.PaidSlotEnabled
+{type = boolean, default = false, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerPaidSlotEnabled,}
+
+option MinidoracatVehicleManager.PaidSlotCurrency
+{type = string, default = survivor, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerPaidSlotCurrency,}
+
+option MinidoracatVehicleManager.PaidSlotPrice
+{type = integer, min = 1, max = 1000000000, default = 1000, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerPaidSlotPrice,}
+
+option MinidoracatVehicleManager.PaidSlotLimit
+{type = integer, min = 0, max = 1000, default = 10, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerPaidSlotLimit,}
+
+option MinidoracatVehicleManager.LeaseSlotEnabled
+{type = boolean, default = false, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotEnabled,}
+
+option MinidoracatVehicleManager.LeaseSlotCurrency
+{type = string, default = survivor, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotCurrency,}
+
+option MinidoracatVehicleManager.LeaseSlotPrice
+{type = integer, min = 1, max = 1000000000, default = 250, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotPrice,}
+
+option MinidoracatVehicleManager.LeaseSlotQuantity
+{type = integer, min = 1, max = 1000, default = 1, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotQuantity,}
+
+option MinidoracatVehicleManager.LeaseSlotDays
+{type = integer, min = 1, max = 365, default = 7, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotDays,}
+
+option MinidoracatVehicleManager.LeaseGraceHours
+{type = integer, min = 0, max = 168, default = 24, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseGraceHours,}
+
+option MinidoracatVehicleManager.LeaseReminderHours
+{type = integer, min = 0, max = 168, default = 24, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseReminderHours,}
+
+option MinidoracatVehicleManager.LeaseAutoRenewAllowed
+{type = boolean, default = true, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseAutoRenewAllowed,}

@@ -244,6 +244,11 @@ function FleetWindow:build()
     self.search = UI.TextField.new({ x = W - PAD - searchW, y = PAD, width = searchW, height = self.ch, theme = theme,
         placeholder = getText("IGUI_MVM_Search"), onChange = function(_, t) self.query = t or ""; self.dirty = true end })
     body:addChild(self.search)
+    -- 名額（付費名額視窗）：搜尋框左邊；Economy 不在場時視窗內說明原因
+    self.btnSlots = UI.Button.new({ x = 0, y = PAD, height = self.ch, title = getText("IGUI_MVM_Btn_Slots"), icon = "coins",
+        theme = theme, target = self, onClick = FleetWindow.onSlots })
+    self.btnSlots:setX(W - PAD - searchW - GAP - self.btnSlots.width)
+    body:addChild(self.btnSlots)
 
     self.footerH = fh * 2 + 20
     self.listTop = PAD + self.ch + PAD
@@ -484,7 +489,18 @@ function FleetWindow:draw(el)
     local fy = el.height - self.footerH
     local bc = COL.border
     el:drawRect(PAD, fy, el.width - PAD * 2, 1, bc.a, bc.r, bc.g, bc.b)
-    if b and b.quotaLimit then text(el, getText("IGUI_MVM_Quota", b.quotaUsed or 0, b.quotaLimit), PAD, fy + 6, "text") end
+    local q = b and b.quota
+    local quota
+    if q and ((q.paid or 0) > 0 or (q.pending or 0) > 0) then
+        quota = getText("IGUI_MVM_QuotaPaid", q.used or 0, q.total or 0, q.base or 0, q.paid or 0)
+        -- 大字級左欄放不下分項就只顯示已用／上限（分項在名額視窗），不壓到右側說明
+        if getTextManager():MeasureStringX(FS, quota) > self.detailX - PAD * 2 then
+            quota = getText("IGUI_MVM_Quota", q.used or 0, q.total or 0)
+        end
+    elseif b and b.quotaLimit then
+        quota = getText("IGUI_MVM_Quota", b.quotaUsed or 0, b.quotaLimit)
+    end
+    if quota then text(el, quota, PAD, fy + 6, "text") end
     text(el, getText("IGUI_MVM_Disclosure"), self.detailX, fy + 6, "textFaint")
     if self.pending then
         text(el, getText("IGUI_MVM_Pending"), PAD, fy + 8 + fh, "accent")
@@ -640,6 +656,10 @@ function FleetWindow:onImportMVCK()
         end)
         C.request(getSpecificPlayer(0), "adminList", {})
     end)
+end
+
+function FleetWindow:onSlots()
+    if MVM.BillingWindow then MVM.BillingWindow.open() else self:say("IGUI_MVM_NeedFramework") end
 end
 
 -- -------------------------------------------------------------- 外觀視窗 ---

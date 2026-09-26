@@ -72,7 +72,7 @@ function MVM.clientReceive(command, payload)
     if command == "fleetSnapshot" then
         b.streamId, b.seq, b.rows, b.track = payload.streamId, payload.seq, {}, {}
         for _, row in ipairs(payload.rows or {}) do b.rows[row.oid] = row end
-        b.quotaUsed, b.quotaLimit, b.status = payload.quotaUsed, payload.quotaLimit, payload.status
+        b.quotaUsed, b.quotaLimit, b.quota, b.status = payload.quotaUsed, payload.quotaLimit, payload.quota, payload.status
     elseif command == "fleetDelta" then
         -- 跳號或換 stream：丟棄並要求完整快照（keyed replace，不 append）
         if b.streamId ~= payload.streamId or payload.seq ~= (b.seq or -1) + 1 then return resync(payload.to) end

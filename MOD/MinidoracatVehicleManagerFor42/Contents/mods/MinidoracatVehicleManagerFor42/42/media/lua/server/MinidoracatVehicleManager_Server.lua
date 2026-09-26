@@ -128,20 +128,26 @@ local function change(rec, fn)
     S.push(union(before, S.audience(rec)), rec, false)
 end
 
+-- quota：used／base（基本）／permanent／rental／paid（Economy 已確認可用）／pending（付款未確認，不計入）／total，
+-- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client
 function S.snapshot(player, who)
     local st = { streamId = getRandomUUID(), seq = 0 }
     R.streams[who] = st
     local rows = {}
     local ledger = O.state()
+    local quota = nil
     if ledger then
         for _, rec in pairs(ledger.recordsByOid) do
             local row = S.row(rec, who)
             if row then rows[#rows + 1] = row end
         end
         for _, row in ipairs(S.extraRows and S.extraRows(who) or {}) do rows[#rows + 1] = row end
+        quota = MVM.Econ and MVM.Econ.summary(who) or { economy = "OFF", permanent = 0, rental = 0, paid = 0, pending = 0 }
+        quota.used, quota.base = O.quotaUsed(who), O.quotaBase(who)
+        quota.total = quota.base + quota.paid
     end
     S.send(player, "fleetSnapshot", { streamId = st.streamId, seq = 0, rows = rows,
-        quotaUsed = ledger and O.quotaUsed(who) or 0, quotaLimit = ledger and O.quotaLimit(who) or 0,
+        quotaUsed = quota and quota.used or 0, quotaLimit = quota and quota.total or 0, quota = quota,
         status = O.R.status })
 end
 

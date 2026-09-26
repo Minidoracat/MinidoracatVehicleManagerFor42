@@ -485,10 +485,16 @@ function O.quotaUsed(owner)
     return n
 end
 
-function O.quotaLimit(owner)
+-- 基本名額：管理員個人設定是絕對值，否則沙盒 ClaimsPerPlayer
+function O.quotaBase(owner)
     local override = O.state().quotaOverrides[owner]
     if MVM.isInt(override) then return override end
     return MVM.sandbox("ClaimsPerPlayer", 3)
+end
+
+-- 上限＝基本＋Economy 已確認付費名額（Economy.lua 掛 O.paidSlots；不可用時為 0，只擋新增、不動既有綁定）
+function O.quotaLimit(owner)
+    return O.quotaBase(owner) + (O.paidSlots and O.paidSlots(owner) or 0)
 end
 
 -- claim 前置條件（不含車輛本身的檢查）

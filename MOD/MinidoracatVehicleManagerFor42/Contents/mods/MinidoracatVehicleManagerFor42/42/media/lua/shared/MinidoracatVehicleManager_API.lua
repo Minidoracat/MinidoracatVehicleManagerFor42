@@ -6,6 +6,9 @@ local MVM = MinidoracatVehicleManager
 MVM.MODULE = "MinidoracatVehicleManager"
 MVM.PROTOCOL = 1
 MVM.LOG_PREFIX = "[MinidoracatVehicleManagerFor42] "
+-- Economy 選用整合（付費名額）：來源與產品 id，server 註冊與 client 查詢共用同一組字串
+MVM.ECON_SOURCE = "MinidoracatVehicleManagerFor42"
+MVM.ECON_PRODUCT = "vehicle_slot"
 
 -- Lua 5.1／Kahlua 沒有位元運算：每個 action 是 2 的冪，以整數除法測位
 MVM.ACTIONS = { PASSENGER = 1, DRIVE = 2, CARGO = 4, FUEL = 8, REPAIR = 16, SALVAGE = 32, TOW = 64, TRACK = 128, MANAGE = 256 }
