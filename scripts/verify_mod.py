@@ -221,6 +221,20 @@ fail("Kahlua 禁用全域（next/assert/xpcall）", hits_forbidden) if hits_forb
 fail("無 table.sort（用迭代 sortSafe，見 AGENTS.md）", hits_sort) if hits_sort \
     else ok("無 table.sort")
 
+# ---- 6b. Lua 字串字面值不得含非 ASCII ----
+# Kahlua LexState 以 byte 緩衝存 token，>255 的字元只剩低位 byte（家族 pitfalls「非 ASCII 字串字面值」）；
+# 玩家可見文字一律走 Translate JSON。註解不影響。
+hits_nonascii = []
+for f in LUA_FILES:
+    rel = os.path.relpath(f, REPO)
+    with open(f, encoding="utf-8") as fh:
+        for lineno, line in enumerate(fh, 1):
+            code = line.split("--", 1)[0]
+            for mm in re.finditer(r'"(?:[^"\\]|\\.)*"|\'(?:[^\'\\]|\\.)*\'', code):
+                if any(ord(c) > 127 for c in mm.group()):
+                    hits_nonascii.append(f"{rel}:{lineno} {mm.group()[:40]}")
+fail("Lua 字串字面值只含 ASCII", hits_nonascii) if hits_nonascii else ok("Lua 字串字面值只含 ASCII")
+
 # ---- 7. MOD/ 樹雜物 ----
 # .gitkeep 也算雜物：引擎會把 MOD 樹內任何檔案列舉成 mod 資源（console 出現
 # "overrides media/lua/client/.gitkeep"），且 Workshop 上傳整包不看 .gitignore。
@@ -318,6 +332,26 @@ for m in MEDIA_DIRS:
     miss += [f"缺 tooltip: Sandbox_{o}_tooltip" for o in opts if f"Sandbox_{o}_tooltip" not in keys]
     miss += [f"缺分頁名: Sandbox_{p}" for p in pages if f"Sandbox_{p}" not in keys]
     fail("沙盒選項翻譯配對", miss) if miss else ok(f"沙盒選項翻譯配對（{len(opts)} 選項）")
+    # 帳本分片容量：單一 GOS 系統存檔共用 10 MiB SliceBuffer，超過會在已截斷檔案後拋錯（SGlobalObjectSystem.java:273-298）。
+    # 每片最壞大小＝紀錄上限×(固定欄位 ~900 B＋成員上限×80 B)＋小項目上限×150 B，必須 ≤ 8 MiB；
+    # 開新分片的全伺服器 GOS 系統預算 ≤ 110（客戶端以有號 byte 讀系統數，>127 全部 MOD 的客戶端 GOS 會壞）
+    mem = re.search(r"option\s+MinidoracatVehicleManager\.MaxMembersPerVehicle\s*\{[^}]*?max\s*=\s*(\d+)", txt)
+    own = os.path.join(m, "lua", "server", "MinidoracatVehicleManager_OwnershipSystem.lua")
+    lim = None
+    if os.path.isfile(own):
+        with open(own, encoding="utf-8") as fh:
+            lim = re.search(r"O\.SHARD_LIMITS\s*=\s*\{\s*records\s*=\s*(\d+),\s*entries\s*=\s*(\d+),\s*shards\s*=\s*(\d+),\s*systemBudget\s*=\s*(\d+)", fh.read())
+    if mem and lim:
+        records, entries, shards, budget = (int(x) for x in lim.groups())
+        worst = records * (900 + int(mem.group(1)) * 80) + entries * 150
+        bad = []
+        if worst > 8 * 1024 * 1024:
+            bad.append(f"每片最壞 {worst} B 超過 8 MiB")
+        if budget > 110:
+            bad.append(f"全伺服器 GOS 系統預算 {budget} 太接近客戶端有號 byte 上限 127（CGlobalObjects.java:105）")
+        fail("帳本分片容量", bad) if bad else ok(f"帳本分片容量（每片最壞 {worst // 1024} KiB，本 MOD 最多 {shards} 片，全伺服器系統預算 {budget}）")
+    else:
+        fail("帳本分片容量", ["找不到 MaxMembersPerVehicle 選項或 O.SHARD_LIMITS 常數"])
 
 # ---- 11. CHANGELOG 洩漏掃描 ----
 LEAK_PATTERNS = [

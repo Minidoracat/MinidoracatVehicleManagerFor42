@@ -1,0 +1,10 @@
+{
+    "ContextMenu_MVM_Menu": "車輛管理",
+    "ContextMenu_MVM_Claim": "綁定車輛",
+    "ContextMenu_MVM_Unclaim": "解除綁定",
+    "ContextMenu_MVM_Reissue": "重新核發車輛識別",
+    "ContextMenu_MVM_ClaimedByOther": "已被其他玩家綁定",
+    "ContextMenu_MVM_StartVirtualKey": "發動引擎（虛擬鑰匙）",
+    "ContextMenu_MVM_UnlockVirtualKey": "解鎖（虛擬鑰匙）",
+    "ContextMenu_MVM_OpenFleet": "開啟車隊"
+}

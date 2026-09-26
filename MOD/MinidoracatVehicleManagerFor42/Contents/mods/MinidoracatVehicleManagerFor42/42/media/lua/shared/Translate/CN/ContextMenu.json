@@ -1,0 +1,10 @@
+{
+    "ContextMenu_MVM_Menu": "车辆管理",
+    "ContextMenu_MVM_Claim": "绑定车辆",
+    "ContextMenu_MVM_Unclaim": "解除绑定",
+    "ContextMenu_MVM_Reissue": "重新签发车辆识别",
+    "ContextMenu_MVM_ClaimedByOther": "已被其他玩家绑定",
+    "ContextMenu_MVM_StartVirtualKey": "启动引擎（虚拟钥匙）",
+    "ContextMenu_MVM_UnlockVirtualKey": "解锁（虚拟钥匙）",
+    "ContextMenu_MVM_OpenFleet": "打开车队"
+}
