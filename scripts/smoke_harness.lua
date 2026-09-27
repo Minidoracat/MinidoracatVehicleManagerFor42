@@ -752,6 +752,16 @@ MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 2, upsert
 check(Cl.buckets.alice.rows.o2 == nil and clientSent[1] and clientSent[1].command == "fleetResync", "跳號 → 丟棄並 resync")
 MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 1, upserts = { { oid = "o2" } }, removes = { "o1" } })
 check(Cl.buckets.alice.rows.o2 and Cl.buckets.alice.rows.o1 == nil, "連續 seq 套用 upsert／remove")
+do -- 失敗通知：有譯文顯示譯文；沒有譯文才用附代碼的通用說明（原本一律顯示原始代碼）
+    local halo, realGetText = nil, getText
+    HaloTextHelper.addBadText = function(_, t) halo = t end
+    getText = function(key, ...) if key == "IGUI_MVM_Reason_TOO_FAR" then return "walk over" end return realGetText(key, ...) end
+    MVM.clientReceive("mutationAck", { to = "alice", requestId = "r-far", ok = false, reason = "TOO_FAR" })
+    check(halo == "walk over", "失敗通知顯示原因譯文，不是原始代碼")
+    MVM.clientReceive("mutationAck", { to = "alice", requestId = "r-gone", ok = false, reason = "NO_SUCH_RECORD" })
+    check(halo == "IGUI_MVM_Failed(NO_SUCH_RECORD)", "沒有譯文的原因退回附代碼的通用說明")
+    getText, HaloTextHelper.addBadText = realGetText, function() end
+end
 MVM.clientReceive("mutationAck", { to = "alice", requestId = "r", ok = false, reason = "PROTOCOL_MISMATCH" })
 clientSent = {}
 Cl.request(getSpecificPlayer(0), "reportLost", { expectedOid = "o2" })
@@ -915,6 +925,32 @@ for i, nm in ipairs(names) do many["o" .. i] = { oid = "o" .. i, role = "OWNER",
 local sorted, seq = FU.filter(many, "OWNED", ""), ""
 for _, row in ipairs(sorted) do seq = seq .. row.name end
 check(seq == "abcdefg", "奇數筆亂序名稱排序正確（合併排序）")
+do -- 管理頁：依車主分組（玩家依帳號排序、沒有車主的隔離紀錄自成一組），點開才列車；車先列受保護與待處理、歷史紀錄最後
+    local adminRows = {
+        { oid = "r1", owner = "bob", name = "", script = "Base.Van", state = "ACTIVE" },
+        { oid = "r2", owner = "alice", name = "Zed", script = "Base.CarNormal", state = "RELEASED" },
+        { oid = "r3", owner = "alice", name = "Yak", script = "Base.CarNormal", state = "ACTIVE" },
+        { oid = "r4", name = "", script = "Base.CarNormal", state = "QUARANTINED" },
+        { oid = "legacy-1", owner = "alice", name = "", script = "Base.PickUpTruck", state = "PENDING_REBIND" },
+    }
+    local adminPlayers = { { user = "bob", used = 1, base = 3, limit = 3 }, { user = "alice", used = 2, base = 3, limit = 3 },
+        { user = "carl", used = 0, base = 5, limit = 5, custom = true } }
+    local function adminSeq(query, expanded)
+        local s = ""
+        for _, it in ipairs(FU.adminItems(adminRows, adminPlayers, query, expanded)) do
+            s = s .. (it.kind == "PLAYER" and ("[" .. it.user .. (it.open and "+" or "") .. "]") or it.oid)
+        end
+        return s
+    end
+    check(adminSeq("", {}) == "[][alice][bob][carl]", "管理頁預設只列玩家，依帳號排序；只有名額設定的玩家也在")
+    check(adminSeq("", { alice = true }) == "[][alice+]legacy-1r3r2[bob][carl]", "展開的玩家底下先列受保護與待轉的車，歷史紀錄最後")
+    check(adminSeq("yak", {}) == "[alice+]r3" and adminSeq("PICKUP", {}) == "[alice+]legacy-1",
+        "搜尋車名或車型：只留符合的車，所屬玩家自動展開")
+    check(adminSeq("BOB", {}) == "[bob]" and adminSeq("zzz", {}) == "", "搜尋玩家帳號列出該玩家；沒有結果時清單為空")
+    local items = FU.adminItems(adminRows, adminPlayers, "", {})
+    check(items[2].summary == "IGUI_MVM_Admin_Protected(1)IGUI_MVM_SepIGUI_MVM_Admin_Rebind(1)IGUI_MVM_SepIGUI_MVM_Admin_History(1)"
+        and items[4].summary == "IGUI_MVM_Admin_NoVehicles", "玩家摘要只列非零的狀態筆數，沒有車時明說")
+end
 -- 見證遺失的 WITNESS_STALE 車：身邊同車型、沒有見證的車當作候選；別車型、太遠的不選
 boot()
 local me = player("alice", 1, 1)
@@ -1067,6 +1103,26 @@ check(again.ok and again.imported == 0 and again.already == 2 and O.state().pend
 gmd.MVCKByVehicleSQLID[1700000000104] = { OwnerPlayerID = "alice", CarModel = "Base.CarNormal", ClaimDateTime = 1700000100 }
 check(cmd(AD5, "adminMigration", { op = "IMPORT" }).imported == 1, "MVCK 之後新增的綁定，再按一次會補進來")
 check(O.quotaUsed("alice") == 3, "待轉項與已轉正的車都計入 quota")
+-- 管理員總表：待轉列帶車主一起列出；每位玩家附已用／基本／上限，只設定過名額的玩家也在
+local function adminPlayer(user)
+    cmd(AD5, "adminList", {}, false)
+    local snap = lastOf(AD5, "adminSnapshot")
+    local pend = 0
+    for _, row in ipairs(snap.rows) do if row.state == "PENDING_REBIND" and row.owner == "alice" then pend = pend + 1 end end
+    for _, pl in ipairs(snap.players) do if pl.user == user then return pl, pend end end
+    return nil, pend
+end
+local ap, pendRows = adminPlayer("alice")
+check(pendRows == 2 and ap and ap.used == 3 and ap.base == 3 and ap.limit == 3 and not ap.custom,
+    "管理員總表列出待轉車與每位玩家的已用／基本／上限")
+check(cmd(AD5, "adminSetQuota", { username = "alice", amount = 5 }).ok and adminPlayer("alice").custom
+    and adminPlayer("alice").base == 5 and adminPlayer("alice").limit == 5, "管理員設定的基本名額標為自訂並算進上限")
+check(cmd(AD5, "adminSetQuota", { username = "alice", amount = -1 }).ok and not adminPlayer("alice").custom
+    and adminPlayer("alice").base == 3, "恢復預設後回到沙盒基本名額")
+cmd(AD5, "adminSetQuota", { username = "zed", amount = 2 })
+local zp = adminPlayer("zed")
+check(zp and zp.used == 0 and zp.custom and zp.limit == 2, "還沒有車、只設定過名額的玩家也列在總表")
+cmd(AD5, "adminSetQuota", { username = "zed", amount = -1 })
 local A5 = player("alice", 0, 0)
 cmd(A5, "fleetSubscribe", {}, false)
 local prow = nil

@@ -65,6 +65,14 @@ local function resync(who)
     if p and principal(0) == who then C.request(p, "fleetResync", {}) end
 end
 
+-- 失敗原因：有譯文用譯文；沒有就用附代碼的通用說明（含下一步）。通知與車隊視窗共用
+function MVM.reasonText(reason)
+    local key = "IGUI_MVM_Reason_" .. tostring(reason)
+    local t = getText(key)
+    if t == key then return getText("IGUI_MVM_Failed", tostring(reason)) end
+    return t
+end
+
 -- server → client（MP 經 OnServerCommand；SP 由 server adapter 直接呼叫）
 function MVM.clientReceive(command, payload)
     if type(payload) ~= "table" or type(payload.to) ~= "string" then return end
@@ -86,7 +94,7 @@ function MVM.clientReceive(command, payload)
         if type(cb) == "function" then cb(payload) end
         local p = getSpecificPlayer(0)
         if p and not payload.ok and principal(0) == payload.to then
-            MVM.notify(p, getText("IGUI_MVM_Failed", tostring(payload.reason)), true)
+            MVM.notify(p, MVM.reasonText(payload.reason), true)
         end
         MVM.log("ack " .. tostring(payload.requestKind) .. " ok=" .. tostring(payload.ok) .. " reason=" .. tostring(payload.reason))
     elseif command == "trackDelta" then
@@ -96,6 +104,7 @@ function MVM.clientReceive(command, payload)
         b.track[payload.oid] = { x = payload.x, y = payload.y, z = payload.z, t = payload.t }
     elseif command == "adminSnapshot" then
         b.admin = payload.ok and payload.rows or nil
+        b.adminPlayers = payload.ok and payload.players or nil
         b.migrationAvailable = payload.ok and payload.migrationAvailable == true
     elseif MVM.clientHandlers and MVM.clientHandlers[command] then
         MVM.clientHandlers[command](payload)

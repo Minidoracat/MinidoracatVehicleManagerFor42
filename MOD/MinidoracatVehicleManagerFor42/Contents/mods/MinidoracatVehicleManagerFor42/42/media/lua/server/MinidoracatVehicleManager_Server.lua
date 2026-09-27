@@ -151,20 +151,34 @@ function S.snapshot(player, who)
         status = O.R.status })
 end
 
--- 管理員總表：只給 ManipulateVehicle；位置只給 owner 資訊與最後已知點（即時追蹤屬 Phase 4 的另一權限）
+-- 管理員總表：只給 ManipulateVehicle；位置只給 owner 資訊與最後已知點（即時追蹤屬 Phase 4 的另一權限）。
+-- players：每位車主（含只有 MVCK 待轉項或個人名額設定的人）的已用／基本／上限，管理頁依此分組
 function S.adminSnapshot(player)
-    if not O.isAdmin(player) or O.state() == nil then
-        return S.send(player, "adminSnapshot", { ok = false, rows = {}, migrationAvailable = false })
+    local st = O.state()
+    if not O.isAdmin(player) or st == nil then
+        return S.send(player, "adminSnapshot", { ok = false, rows = {}, players = {}, migrationAvailable = false })
     end
-    local rows = {}
-    for _, rec in pairs(O.state().recordsByOid) do
+    local rows, users = {}, {}
+    for _, rec in pairs(st.recordsByOid) do
         rows[#rows + 1] = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
             name = rec.customName or "", reason = rec.quarantineReason, lastKnownX = rec.lastKnownX, lastKnownY = rec.lastKnownY,
             lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs }
+        if rec.ownerUser then users[rec.ownerUser] = true end
+    end
+    for _, row in ipairs(S.extraRows and S.extraRows(nil) or {}) do
+        rows[#rows + 1] = row
+        if row.owner then users[row.owner] = true end
+    end
+    for user in pairs(st.quotaOverrides) do users[user] = true end
+    -- ponytail: quotaUsed 每人各掃一次 MVCK 待轉項（玩家數×待轉數），大量待轉時才會慢；屆時改成一次掃完
+    local players = {}
+    for user in pairs(users) do
+        players[#players + 1] = { user = user, used = O.quotaUsed(user), base = O.quotaBase(user), limit = O.quotaLimit(user),
+            custom = MVM.isInt(st.quotaOverrides[user]) }
     end
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
     local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
-    S.send(player, "adminSnapshot", { ok = true, rows = rows, status = O.R.status,
+    S.send(player, "adminSnapshot", { ok = true, rows = rows, players = players, status = O.R.status,
         migrationAvailable = migrationAvailable })
 end
 

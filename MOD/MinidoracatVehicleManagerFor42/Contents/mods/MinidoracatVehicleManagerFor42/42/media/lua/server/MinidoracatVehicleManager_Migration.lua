@@ -137,14 +137,14 @@ function M.pendingCount(owner)
     return n
 end
 
--- 車主快照裡的待轉列（只讀，沒有可用操作）
+-- 待轉列（只讀，沒有可用操作）：車主快照只給自己的；who＝nil 給管理員總表全部
 function M.pendingRows(who)
     local rows = {}
     local st = O.state()
     for id, e in pairs(st and st.pendingRebindByLegacyKey or {}) do
-        if e.ownerUser == who then
-            rows[#rows + 1] = { oid = M.rowId(id), role = "OWNER", state = "PENDING_REBIND", name = "", script = e.vehicleScript,
-                lastKnownX = e.lastX, lastKnownY = e.lastY, lastKnownAtMs = e.importedAtMs, grants = {} }
+        if who == nil or e.ownerUser == who then
+            rows[#rows + 1] = { oid = M.rowId(id), role = "OWNER", owner = e.ownerUser, state = "PENDING_REBIND", name = "",
+                script = e.vehicleScript, lastKnownX = e.lastX, lastKnownY = e.lastY, lastKnownAtMs = e.importedAtMs, grants = {} }
         end
     end
     return rows
