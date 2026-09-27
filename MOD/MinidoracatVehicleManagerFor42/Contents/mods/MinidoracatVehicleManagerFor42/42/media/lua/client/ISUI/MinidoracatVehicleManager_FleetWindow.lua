@@ -377,21 +377,28 @@ function FleetWindow:layoutDetail()
     for _, c in ipairs(self.detailControls) do c:setVisible(false) end
     self.headings = {}
     local row = self.current
-    if row == nil then return end
     local b = self:bucket()
     local recovery = b ~= nil and b.status == "RECOVERY_REQUIRED"
     local x0, step = self.detailX, self.ch + GAP
     local y = self.detailTop + self.infoH + PAD
+    if self.tab == "ADMIN" then
+        if row ~= nil or (b ~= nil and b.migrationAvailable) then
+            y = self:heading("IGUI_MVM_Section_Admin", y)
+            local x = x0
+            if b ~= nil and b.migrationAvailable then x = place(self.btnMigrate, x, y) end
+            if row ~= nil and not terminalState(row) then place(self.btnAdminRelease, x, y) end
+            y = y + step
+        end
+        if row ~= nil then
+            local x = place(self.quotaEntry, x0, y)
+            place(self.btnQuota, x, y)
+        end
+        self:updateEnabled(recovery)
+        return
+    end
+    if row == nil then return end
     if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正，沒有可用操作
         if row.lastKnownX then place(self.btnMap, x0, y) end
-    elseif self.tab == "ADMIN" then
-        y = self:heading("IGUI_MVM_Section_Admin", y)
-        local x = x0
-        if not terminalState(row) then x = place(self.btnAdminRelease, x, y) end
-        place(self.btnMigrate, x, y)
-        y = y + step
-        x = place(self.quotaEntry, x0, y)
-        place(self.btnQuota, x, y)
     elseif row.role ~= "OWNER" then
         local x = x0
         if row.lastKnownX then x = place(self.btnMap, x, y) end

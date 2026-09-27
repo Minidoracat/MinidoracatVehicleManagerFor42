@@ -743,6 +743,9 @@ local n = 0
 for _ in pairs(Cl.buckets.alice.rows) do n = n + 1 end
 check(n == 1, "同一快照重播兩次不增加列")
 MVM.clientReceive("fleetSnapshot", { to = "bob", streamId = "s2", seq = 0, rows = { { oid = "o9" } } })
+MVM.clientReceive("adminSnapshot", { to = "alice", ok = true, rows = {}, migrationAvailable = true })
+check(Cl.buckets.alice.migrationAvailable and #Cl.buckets.alice.admin == 0,
+    "管理員快照保留 MVCK 來源可用狀態，沒有車輛列也能顯示匯入入口")
 check(Cl.buckets.alice.rows.o9 == nil, "不同 username 分桶")
 clientSent = {}
 MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 2, upserts = { { oid = "o2" } }, removes = {} })
@@ -1034,8 +1037,15 @@ local function seedLegacy()
     }
     gmd.MVCKByPlayerID = { alice = { [1700000000101] = true, LastKnownLogonTime = 1 } }
 end
-boot(); seedLegacy()
+boot()
 local AD5 = player("admin5", 1, 1, { admin = true })
+cmd(AD5, "adminList", {}, false)
+check(lastOf(AD5, "adminSnapshot").migrationAvailable == false, "沒有 MVCK 舊資料時不提供匯入入口")
+seedLegacy()
+cmd(AD5, "adminList", {}, false)
+local migrationSnapshot = lastOf(AD5, "adminSnapshot")
+check(migrationSnapshot.migrationAvailable and #migrationSnapshot.rows == 0,
+    "偵測到 MVCK 舊資料時提供匯入入口，不依賴已有車輛紀錄")
 check(cmd(player("eve2", 1, 1), "adminMigration", { op = "IMPORT" }).reason == "NOT_ADMIN", "非管理員不能匯入")
 check(cmd(AD5, "adminMigration", { op = "FINALIZE" }).reason == "BAD_ARGS", "只接受 IMPORT")
 -- 已載入的真車：按下匯入就當場轉正

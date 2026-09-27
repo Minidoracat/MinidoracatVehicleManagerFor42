@@ -96,6 +96,7 @@ function MVM.clientReceive(command, payload)
         b.track[payload.oid] = { x = payload.x, y = payload.y, z = payload.z, t = payload.t }
     elseif command == "adminSnapshot" then
         b.admin = payload.ok and payload.rows or nil
+        b.migrationAvailable = payload.ok and payload.migrationAvailable == true
     elseif MVM.clientHandlers and MVM.clientHandlers[command] then
         MVM.clientHandlers[command](payload)
     end

@@ -17,6 +17,10 @@ MVM.Migration = M
 local LEGACY_VEHICLES = "MVCKByVehicleSQLID"
 local DAY_MS = 86400000
 
+function M.available()
+    return ModData.exists(LEGACY_VEHICLES)
+end
+
 local function now() return getTimestampMs() end
 
 -- 大整數轉十進位字串（不依賴格式化函式；舊 ID 約 1e11–1e15，仍在 double 精確範圍內）。

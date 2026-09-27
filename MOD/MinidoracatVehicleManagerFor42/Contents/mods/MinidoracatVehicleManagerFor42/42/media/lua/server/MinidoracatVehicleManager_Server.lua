@@ -154,7 +154,7 @@ end
 -- 管理員總表：只給 ManipulateVehicle；位置只給 owner 資訊與最後已知點（即時追蹤屬 Phase 4 的另一權限）
 function S.adminSnapshot(player)
     if not O.isAdmin(player) or O.state() == nil then
-        return S.send(player, "adminSnapshot", { ok = false, rows = {} })
+        return S.send(player, "adminSnapshot", { ok = false, rows = {}, migrationAvailable = false })
     end
     local rows = {}
     for _, rec in pairs(O.state().recordsByOid) do
@@ -163,7 +163,9 @@ function S.adminSnapshot(player)
             lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs }
     end
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
-    S.send(player, "adminSnapshot", { ok = true, rows = rows, status = O.R.status })
+    local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
+    S.send(player, "adminSnapshot", { ok = true, rows = rows, status = O.R.status,
+        migrationAvailable = migrationAvailable })
 end
 
 -- -------------------------------------------------------------- validation ---
