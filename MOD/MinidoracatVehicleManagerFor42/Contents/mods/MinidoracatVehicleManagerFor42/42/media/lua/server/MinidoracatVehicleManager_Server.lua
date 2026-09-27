@@ -156,7 +156,7 @@ end
 function S.adminSnapshot(player)
     local st = O.state()
     if not O.isAdmin(player) or st == nil then
-        return S.send(player, "adminSnapshot", { ok = false, rows = {}, players = {}, migrationAvailable = false })
+        return S.send(player, "adminSnapshot", { ok = false, rows = {}, players = {}, migrationAvailable = false, override = false })
     end
     local rows, users = {}, {}
     for _, rec in pairs(st.recordsByOid) do
@@ -179,7 +179,7 @@ function S.adminSnapshot(player)
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
     local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
     S.send(player, "adminSnapshot", { ok = true, rows = rows, players = players, status = O.R.status,
-        migrationAvailable = migrationAvailable })
+        migrationAvailable = migrationAvailable, override = O.overrideActive(player) })
 end
 
 -- -------------------------------------------------------------- validation ---
@@ -221,6 +221,7 @@ local SCHEMA = {
     prepareAction = { class = "name", vehicleId = "id", ["partId?"] = "name" },
     adminList = {},
     adminMigration = { op = "migrationOp" },
+    setAdminOverride = { enabled = "bool" },
 }
 -- 不帶 requestId、不回 ACK 的命令
 local QUERIES = { fleetSubscribe = true, fleetResync = true, prepareAction = true, adminList = true }
@@ -561,6 +562,12 @@ H.adminRecover = function(player, who, a)
     end
     O.audit("WARN", "ADMIN_BYPASS", { actor = who, role = "ADMIN", oid = rec.oid, owner = rec.ownerUser, reason = a.op })
     return { ok = true }
+end
+
+-- 越權開關：只管 O.canUse 的放行；管理頁本身的功能（解除綁定、名額、匯入）照舊只看 O.isAdmin
+H.setAdminOverride = function(player, who, a)
+    if not O.setOverride(player, a.enabled) then return fail("NOT_ADMIN") end
+    return { ok = true, enabled = a.enabled }
 end
 
 -- Phase 5 階段 B：冷重啟驗證後由管理員執行

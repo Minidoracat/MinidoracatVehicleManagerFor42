@@ -73,6 +73,13 @@ function MVM.reasonText(reason)
     return t
 end
 
+-- 投影或越權狀態變了：清見證快取、重列物品欄的車上容器（ISInventoryPage.lua:1330 dirtyUI 對每位本機玩家 refreshBackpacks）
+local witnessCache, witnessCacheAt = {}, 0
+local function accessChanged()
+    witnessCache = {}
+    if ISInventoryPage and ISInventoryPage.dirtyUI then ISInventoryPage.dirtyUI() end
+end
+
 -- server → client（MP 經 OnServerCommand；SP 由 server adapter 直接呼叫）
 function MVM.clientReceive(command, payload)
     if type(payload) ~= "table" or type(payload.to) ~= "string" then return end
@@ -93,8 +100,14 @@ function MVM.clientReceive(command, payload)
         C.pending[payload.requestId] = nil
         if type(cb) == "function" then cb(payload) end
         local p = getSpecificPlayer(0)
-        if p and not payload.ok and principal(0) == payload.to then
+        local mine = p ~= nil and principal(0) == payload.to
+        if mine and not payload.ok then
             MVM.notify(p, MVM.reasonText(payload.reason), true)
+        end
+        if payload.requestKind == "setAdminOverride" and payload.ok then
+            b.adminOverride = payload.enabled == true
+            if mine then MVM.notify(p, getText(b.adminOverride and "IGUI_MVM_Override_OnToast" or "IGUI_MVM_Override_OffToast"), b.adminOverride) end
+            accessChanged()
         end
         MVM.log("ack " .. tostring(payload.requestKind) .. " ok=" .. tostring(payload.ok) .. " reason=" .. tostring(payload.reason))
     elseif command == "trackDelta" then
@@ -106,10 +119,12 @@ function MVM.clientReceive(command, payload)
         b.admin = payload.ok and payload.rows or nil
         b.adminPlayers = payload.ok and payload.players or nil
         b.migrationAvailable = payload.ok and payload.migrationAvailable == true
+        b.adminOverride = payload.ok and payload.override == true
     elseif MVM.clientHandlers and MVM.clientHandlers[command] then
         MVM.clientHandlers[command](payload)
     end
     b.rev = (b.rev or 0) + 1
+    if command == "fleetSnapshot" or command == "fleetDelta" or command == "adminSnapshot" then accessChanged() end
     if MVM.onFleetChanged and command ~= "trackDelta" then MVM.onFleetChanged(payload.to, command, payload) end
 end
 
@@ -118,8 +133,10 @@ Events.OnServerCommand.Add(function(module, command, args)
 end)
 
 -- 車上的零件見證只給 oid，用來對到自己的投影列；他人的車只知道「已被綁定」。
--- 宿主可能是任一零件（server 找不到 Engine 等時用第 0 個），選單開啟時掃一次（≤128 個）
-local function witnessOid(vehicle)
+-- 宿主可能是任一零件（server 找不到 Engine 等時用第 0 個），要掃全部零件（≤128 個）。
+-- 物品欄刷新時每個車上容器都會問一次（canAccessContainer），所以每台車的結果快取 1 秒；投影變動時整批清掉
+local WITNESS_TTL_MS = 1000
+local function scanWitness(vehicle)
     for i = 0, vehicle:getPartCount() - 1 do
         local part = vehicle:getPartByIndex(i)
         if part and part:hasModData() then
@@ -128,6 +145,16 @@ local function witnessOid(vehicle)
         end
     end
     return nil
+end
+
+local function witnessOid(vehicle)
+    local now = getTimestampMs()
+    if now - witnessCacheAt > WITNESS_TTL_MS then witnessCache, witnessCacheAt = {}, now end
+    local hit = witnessCache[vehicle]
+    if hit ~= nil then return hit or nil end
+    local oid = scanWitness(vehicle)
+    witnessCache[vehicle] = oid or false
+    return oid
 end
 
 function MVM.clientProjection(playerNum, vehicle)
@@ -139,12 +166,51 @@ function MVM.clientProjection(playerNum, vehicle)
     return row or { oid = oid, role = "OTHER" }
 end
 
+-- 本機玩家在 server 開著管理員越權（adminSnapshot 與 setAdminOverride ACK；重新登入後 client 狀態也歸零）
+function MVM.clientOverride(playerNum)
+    local who = principal(playerNum or 0)
+    local b = who and C.buckets[who]
+    return b ~= nil and b.adminOverride == true and MVM.clientIsAdmin(getSpecificPlayer(playerNum or 0))
+end
+
+-- 與 server 的 O.canUse 同順序：車主 → 分享（MANAGE 除外）→ 越權；QUARANTINED 只有越權能用
 function MVM.clientCanUse(actor, vehicle, action)
     local row = MVM.clientProjection(actor:getPlayerNum(), vehicle)
     if row == nil then return true, "UNCLAIMED" end
-    if row.role == "OWNER" then return true, "OWNER" end
-    if action ~= "MANAGE" and row.myBits and MVM.bitsAllow(row.myBits, action) then return true, row.role end
+    if row.state ~= "QUARANTINED" then
+        if row.role == "OWNER" then return true, "OWNER" end
+        if action ~= "MANAGE" and row.myBits and MVM.bitsAllow(row.myBits, action) then return true, row.role end
+    end
+    if MVM.clientOverride(actor:getPlayerNum()) then return true, "ADMIN" end
     return false, "NOT_AUTHORIZED"
+end
+
+-- 本機玩家有車輛管理權限：與 server O.isAdmin 同一個 Capability（IsoPlayer.getRole：IsoPlayer.java:7562、
+-- Role.hasCapability：Role.java:185；原版 ISChat.lua:469 同法）。client 的 checkPermissions 一律回 true（LuaManager.java:3048-3057），不能用
+function MVM.clientIsAdmin(player)
+    if not (isClient() and player and Capability) then return false end
+    local role = player:getRole()
+    return role ~= nil and role:hasCapability(Capability.ManipulateVehicle) == true
+end
+
+-- 管理角色被撤銷時收回已列出的容器；ExtraInfoPacket.java:197,224／RolesPacket.java:103-128 先更新角色再觸發事件
+local function refreshAdminAccess()
+    local p = getSpecificPlayer(0)
+    local who = principal(0)
+    local b = who and C.buckets[who]
+    if b and b.adminOverride and not MVM.clientIsAdmin(p) then
+        b.adminOverride = false
+        accessChanged()
+        if MVM.onFleetChanged then MVM.onFleetChanged(who) end
+    end
+end
+Events.RefreshCheats.Add(refreshAdminAccess)
+Events.OnRolesReceived.Add(refreshAdminAccess)
+
+-- 被車主保護擋下的提示；越權關閉的管理員多一句「到車隊視窗的管理頁開啟越權」
+function MVM.protectedText(player)
+    local admin = MVM.clientIsAdmin(player) and not MVM.clientOverride(player:getPlayerNum())
+    return getText(admin and "IGUI_MVM_ProtectedAdmin" or "IGUI_MVM_Protected")
 end
 
 -- --------------------------------------------------------- claim action ---

@@ -3,7 +3,8 @@
 --   2. 上車／換座／拖掛是 client-only 動作：依投影快取在 isValid 擋下（U 級；server watchdog 事後偵測）
 --   3. 虛擬鑰匙入口：無實體鑰匙的授權者可從選單發動、解鎖
 --   4. 顯示 server 送來的 enforcement
--- 這些都只是 UX；權威判定一律在 server。
+--   5. 車上容器（後車廂、座位、置物箱…）依權限決定列不列出
+-- 動作授權由 server 判定；容器限制僅作用於玩家端 Lua 存取入口，不是 server 搬物品權限驗證。
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Actions"
 require "MinidoracatVehicleManager_Client"
@@ -50,7 +51,7 @@ end
 local function refuse(action)
     if not action._mvmTold then
         action._mvmTold = true
-        MVM.notify(action.character, getText("IGUI_MVM_Protected"), true)
+        MVM.notify(action.character, MVM.protectedText(action.character), true)
     end
     return false
 end
@@ -128,7 +129,42 @@ MVM.clientHandlers = MVM.clientHandlers or {}
 MVM.clientHandlers.enforcement = function(payload)
     local p = getSpecificPlayer(0)
     if p == nil or payload.to ~= (isClient() and p:getUsername() or "local:0") then return end
-    local key = payload.reason == "NOT_AUTHORIZED" and "IGUI_MVM_Protected" or "IGUI_MVM_Refused"
-    MVM.notify(p, getText(key), true)
+    local text = payload.reason == "NOT_AUTHORIZED" and MVM.protectedText(p) or getText("IGUI_MVM_Refused")
+    MVM.notify(p, text, true)
     MVM.log("enforcement " .. tostring(payload.action) .. " " .. tostring(payload.reason))
+end
+
+-- ------------------------------------------------------- vehicle storage ---
+-- 下列原版 Lua 容器入口會先問 BaseVehicle.canAccessContainer（BaseVehicle.java:8329-8347 → 容器的 Lua test）：物品欄列容器
+-- （ISInventoryPage.lua:1585,1609,1764）、製作取材、搬重物與屍體、開門後自動打開後車廂都走它。MOD 車的 test 函式各自命名、
+-- 名稱存在沒有 getter 的 VehicleScript 欄位（VehicleScript.java:2169-2173），無法逐一包，所以包 Java 方法表：
+-- Kahlua 把類別方法放在全域 __classmetatables[類別].__index（KahluaUtil.java:132-134、LuaJavaClassExposer.java:224-231），
+-- `BaseVehicle.class` 是公開的類別物件（LuaJavaClassExposer.java:287）。只影響 Lua 呼叫端；Java 內部的二次檢查不經過這裡。
+-- 這是玩家端防線：server 搬物品只檢查距離與容量（ItemTransactionPacket／TransactionManager.isConsistent），
+-- 改過客戶端的人仍拿得到，與原版鎖車同級。
+-- 只管有物品容器的零件（油箱、輪胎不管）：座位與置物箱要 PASSENGER，其餘（後車廂、車斗、拖車、MOD 貨箱）要 CARGO
+function MVM.containerAction(part)
+    if part == nil or part:getItemContainer() == nil then return nil end
+    if part:getContainerSeatNumber() >= 0 or part:getId() == "GloveBox" then return "PASSENGER" end
+    return "CARGO"
+end
+
+function MVM.storageAllowed(vehicle, partIndex, chr)
+    if not (isClient() and instanceof(chr, "IsoPlayer") and chr:isLocalPlayer()) then return true end
+    local act = MVM.containerAction(vehicle:getPartByIndex(partIndex))
+    return act == nil or (MVM.clientCanUse(chr, vehicle, act))
+end
+
+if isClient() then
+    local methods = __classmetatables and BaseVehicle and BaseVehicle.class and __classmetatables[BaseVehicle.class]
+    methods = methods and methods.__index
+    local vanillaAccess = methods and methods.canAccessContainer
+    if vanillaAccess then
+        methods.canAccessContainer = function(vehicle, partIndex, chr)
+            return vanillaAccess(vehicle, partIndex, chr) and MVM.storageAllowed(vehicle, partIndex, chr)
+        end
+        MVM.log("vehicle storage guard installed")
+    else
+        MVM.log("vehicle storage guard NOT installed: BaseVehicle method table not found")
+    end
 end

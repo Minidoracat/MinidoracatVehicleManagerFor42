@@ -32,7 +32,7 @@ O.TOMBSTONE = { ORPHANED = true, DESTROYED = true, RELEASED = true }
 -- RAM derived state（§4.1）：開機由 recordsByOid 重建，不存檔
 local R = { bySqlId = {}, byKeyId = {}, byOwner = {}, status = "INIT", loaded = "none",
     denyAgg = {}, factionRefs = {}, suspectKeys = {}, lastMaintMs = 0, lastScanMs = 0,
-    shards = {}, where = {}, st = nil }
+    shards = {}, where = {}, st = nil, overrides = {} }
 O.R = R
 
 local function now() return getTimestampMs() end
@@ -81,6 +81,21 @@ end
 function O.isAdmin(player)
     if not isServer() or player == nil or Capability == nil then return false end
     return checkPermissions(player, Capability.ManipulateVehicle) == true
+end
+
+-- 管理員越權（面板開關）：只存記憶體，帳號 → 開啟當時的 IsoPlayer。重新登入（或死亡重生）換成新物件、
+-- 伺服器重啟清空，都會自動失效；判定時仍要求目前有管理權限
+function O.overrideActive(player)
+    local who = O.principal(player)
+    return who ~= nil and R.overrides[who] == player and O.isAdmin(player)
+end
+
+function O.setOverride(player, enabled)
+    if not O.isAdmin(player) then return false end
+    local who = O.principal(player)
+    R.overrides[who] = enabled and player or nil
+    O.audit("WARN", "ADMIN_OVERRIDE", { actor = who, role = "ADMIN", reason = enabled and "ON" or "OFF" })
+    return true
 end
 
 -- DropOffWhiteListAfterDeath=true 會刪帳號、同名可重註冊繼承舊車（§4.4）→ 拒新 claim
@@ -595,7 +610,9 @@ function O.grantBits(rec, user)
 end
 
 -- --------------------------------------------------------------- canUse ---
--- 權威授權。回 allowed, reason, record
+-- 權威授權。回 allowed, reason, record。順序：車主 → 分享／陣營（MANAGE 除外）→ 管理員越權 → 拒絕。
+-- 管理員身分本身不放行，要在車隊視窗開啟越權；有分享權限的管理員照一般成員記，不寫 ADMIN_BYPASS。
+-- QUARANTINED 紀錄只有越權中的管理員能用
 function O.canUse(actor, vehicle, action, context)
     if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION" end
     if actor == nil or vehicle == nil then return false, "BAD_TARGET" end
@@ -603,31 +620,26 @@ function O.canUse(actor, vehicle, action, context)
     local verdict, rec = O.lookup(vehicle)
     if rec == nil then return true, "UNCLAIMED" end
     local who = O.principal(actor)
-    local admin = O.isAdmin(actor)
-    local silent = context ~= nil and context.silent == true -- watchdog 每秒查：不重複寫 bypass
-    if rec.recordState == "QUARANTINED" then
-        if admin then
-            if not silent then O.audit("WARN", "ADMIN_BYPASS", { actor = who, oid = rec.oid, owner = rec.ownerUser, reason = action }) end
-            return true, "ADMIN", rec
+    local quarantined = rec.recordState == "QUARANTINED"
+    if not quarantined then
+        if who ~= nil and who == rec.ownerUser then return true, "OWNER", rec end
+        if action ~= "MANAGE" then
+            local bits = O.grantBits(rec, who)
+            if bits ~= nil and MVM.bitsAllow(bits, action) then return true, "MEMBER", rec end
+            if MVM.bitsAllow(rec.factionActionBits or 0, action) and O.factionAllows(rec, who) then return true, "FACTION", rec end
         end
-        O.deny(who, action, rec.oid, "QUARANTINED")
-        return false, "QUARANTINED", rec
     end
-    if who ~= nil and who == rec.ownerUser then return true, "OWNER", rec end
-    if admin then
-        if not silent then
+    if O.overrideActive(actor) then
+        -- watchdog 每秒查（silent）：不重複寫 bypass
+        if not (context ~= nil and context.silent == true) then
             O.audit("WARN", "ADMIN_BYPASS", { actor = who, oid = rec.oid, owner = rec.ownerUser,
                 reason = action .. (context and context.mod and (" " .. s(context.mod)) or "") })
         end
         return true, "ADMIN", rec
     end
-    if action ~= "MANAGE" then
-        local bits = O.grantBits(rec, who)
-        if bits ~= nil and MVM.bitsAllow(bits, action) then return true, "MEMBER", rec end
-        if MVM.bitsAllow(rec.factionActionBits or 0, action) and O.factionAllows(rec, who) then return true, "FACTION", rec end
-    end
-    O.deny(who, action, rec.oid, "NOT_AUTHORIZED")
-    return false, "NOT_AUTHORIZED", rec
+    local reason = quarantined and "QUARANTINED" or "NOT_AUTHORIZED"
+    O.deny(who, action, rec.oid, reason)
+    return false, reason, rec
 end
 
 -- server 端公開 API 換成權威實作（§8.1.1）

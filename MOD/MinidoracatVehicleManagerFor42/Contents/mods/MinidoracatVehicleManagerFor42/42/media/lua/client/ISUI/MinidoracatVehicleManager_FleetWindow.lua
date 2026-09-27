@@ -21,6 +21,13 @@ function F.bitsToList(bits)
     return out
 end
 
+-- 權限清單的顯示文字：短名稱＋語系分隔字（不顯示 PASSENGER 之類的原始代碼）
+function F.actionsText(bits)
+    local names = F.bitsToList(bits)
+    for i, a in ipairs(names) do names[i] = getText("IGUI_MVM_ActionShort_" .. a) end
+    return table.concat(names, getText("IGUI_MVM_ListSep"), 1, #names)
+end
+
 function F.listToBits(list)
     local bits = 0
     for _, a in ipairs(list) do bits = bits + MVM.ACTIONS[a] end
@@ -407,12 +414,17 @@ function FleetWindow:build()
     self.btnQuota = self:button(getText("IGUI_MVM_Btn_Quota"), FleetWindow.onQuota, "primary")
     self.btnQuotaDefault = self:button(getText("IGUI_MVM_Btn_QuotaDefault"), FleetWindow.onQuotaDefault)
     self.btnMigrate = self:button(getText("IGUI_MVM_Btn_ImportMVCK"), FleetWindow.onImportMVCK)
+    self.overrideBox = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Override_Toggle"), theme = theme, target = self,
+        onChange = FleetWindow.onOverride })
+    self.overrideBox:setVisible(false)
+    body:addChild(self.overrideBox)
     self.actionButtons = { self.btnRename, self.btnAddMember, self.btnFaction, self.btnTransfer, self.btnUnclaim,
         self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnLeave, self.btnAdminRelease, self.btnQuota,
-        self.btnQuotaDefault, self.btnMigrate }
+        self.btnQuotaDefault, self.btnMigrate, self.overrideBox }
     self.detailControls = { self.nameEntry, self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction,
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap,
-        self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnMigrate, self.btnLook }
+        self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnMigrate, self.btnLook,
+        self.overrideBox }
     for _, cb in ipairs(self.checks) do self.detailControls[#self.detailControls + 1] = cb end
     for _, b in ipairs(self.memberButtons) do
         self.actionButtons[#self.actionButtons + 1] = b
@@ -547,6 +559,15 @@ function FleetWindow:layoutDetail()
             y = self:heading("IGUI_MVM_Section_MVCK", y)
             place(self.btnMigrate, x0, y)
         end
+        -- 越權開關固定在詳情區底部：選哪一列都在同一個位置
+        local box = self.overrideBox
+        local oy = self.listTop + self.listH - (self.fh + 4) - box.height - GAP - (self.fh + 2) * 2
+        oy = self:heading("IGUI_MVM_Section_Override", oy)
+        box:setChecked(b ~= nil and b.adminOverride == true, true)
+        place(box, x0, oy)
+        oy = oy + box.height + GAP
+        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc1"), y = oy }
+        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc2"), y = oy + self.fh + 2 }
         self:updateEnabled(recovery)
         return
     end
@@ -582,8 +603,9 @@ function FleetWindow:layoutDetail()
             for i, g in ipairs(row.grants) do
                 local mb = self.memberButtons[i]
                 if mb == nil then break end
-                local acts = F.bitsToList(g.bits)
-                mb:setTitle(getText("IGUI_MVM_Btn_RemoveMember", g.user, table.concat(acts, ", ", 1, #acts)))
+                local title = getText("IGUI_MVM_Btn_RemoveMember", g.user, F.actionsText(g.bits))
+                mb:setTitle(fit(title, self.detailW - 48)) -- 八項全開時不超出詳情區
+                mb.tooltip = title -- 保留完整帳號與所有權限供查看
                 mb.internal = g.user
                 place(mb, x0, y)
                 y = y + step
@@ -660,8 +682,7 @@ function FleetWindow:draw(el)
             or F.shareText(row)
         text(el, share, x, y, "textMuted")
         if row.role == "MEMBER" or row.role == "FACTION" then
-            local acts = F.bitsToList(row.myBits)
-            text(el, getText("IGUI_MVM_YourActions", table.concat(acts, ", ", 1, #acts)), x, y + fh + 2, "textMuted")
+            text(el, getText("IGUI_MVM_YourActions", F.actionsText(row.myBits)), x, y + fh + 2, "textMuted")
         end
     end
     for _, h in ipairs(self.headings) do text(el, h.text, self.detailX, h.y, "textMuted") end
@@ -690,6 +711,7 @@ function FleetWindow:draw(el)
     elseif self.message then
         text(el, self.message, PAD, fy + 8 + fh, self.messageBad and "errorText" or "accent")
     end
+    if MVM.clientOverride(0) then text(el, getText("IGUI_MVM_Override_Active"), self.detailX, fy + 8 + fh, "errorText") end
 end
 
 -- ------------------------------------------------------------------ 操作 ---
@@ -806,6 +828,13 @@ end
 function FleetWindow:onMap()
     local row = self.current; if not row or not row.lastKnownX then return end
     if ISWorldMap.IsAllowed() then ISWorldMap.ShowWorldMap(0, row.lastKnownX, row.lastKnownY, 20) end
+end
+
+-- 越權開關：送出後以 server ACK／adminSnapshot 為準（layoutDetail 依 bucket 重設勾選狀態）
+function FleetWindow:onOverride(checked)
+    self:send("setAdminOverride", { enabled = checked == true }, function(ack)
+        return getText(ack.enabled and "IGUI_MVM_Override_OnToast" or "IGUI_MVM_Override_OffToast")
+    end)
 end
 
 -- 管理操作後重抓總表：同一連線依序處理，快照一定反映這次變更
@@ -1026,13 +1055,23 @@ local function createFloat()
         size = FLOAT_SIZE, alwaysOnTop = false, x = x, y = y,
         colors = { surface = COL.surface, hover = COL.hover, border = COL.border },
         drawContent = function(btn)
-            if not UI.Icons.draw(btn, "steeringwheel", 6, 6, FLOAT_SIZE - 12, COL.text, 1) then
-                btn:drawTextCentre("V", FLOAT_SIZE / 2, FLOAT_SIZE / 2 - 8, 1, 1, 1, 1, UIFont.Medium)
+            -- 越權中：圖示與外框改紅色，常駐提醒
+            local on = MVM.clientOverride(0)
+            local c = on and COL.errorText or COL.text
+            if not UI.Icons.draw(btn, "steeringwheel", 6, 6, FLOAT_SIZE - 12, c, 1) then
+                btn:drawTextCentre("V", FLOAT_SIZE / 2, FLOAT_SIZE / 2 - 8, c.r, c.g, c.b, 1, UIFont.Medium)
+            end
+            if on then
+                btn:drawRectBorder(0, 0, FLOAT_SIZE, FLOAT_SIZE, 1, c.r, c.g, c.b)
+                btn:drawRectBorder(1, 1, FLOAT_SIZE - 2, FLOAT_SIZE - 2, 1, c.r, c.g, c.b)
             end
         end,
         onClick = function() FleetWindow.toggle() end,
         onMoved = function() ISLayoutManager.OnPostSave() end,
-        getTooltip = function() return getText("IGUI_MVM_FleetTitle") end,
+        getTooltip = function()
+            if MVM.clientOverride(0) then return getText("IGUI_MVM_FleetTitle") .. " <LINE> " .. getText("IGUI_MVM_Override_Active") end
+            return getText("IGUI_MVM_FleetTitle")
+        end,
     })
     ISLayoutManager.RegisterWindow("MinidoracatVehicleManagerFloat", FloatLayout, F.float)
 end

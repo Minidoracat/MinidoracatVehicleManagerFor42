@@ -302,7 +302,7 @@ local function boot(diskState, keepGmd, keepGos)
     online, outbox, world, vehicleList, factions, logLines = {}, {}, {}, {}, {}, {}
     serverOpts, transmits = {}, 0
     for k in pairs(O.R.denyAgg) do O.R.denyAgg[k] = nil end
-    O.R.factionRefs, O.R.suspectKeys, O.R.lastMaintMs, O.R.lastScanMs = {}, {}, 0, 0
+    O.R.factionRefs, O.R.suspectKeys, O.R.lastMaintMs, O.R.lastScanMs, O.R.overrides = {}, {}, 0, 0, {}
     S.R.acks, S.R.rate, S.R.attempts, S.R.streams = {}, {}, {}, {}
     G.R.intents, G.R.due, G.R.lastRun = {}, {}, 0
     MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.lastRun = {}, {}, 0
@@ -593,14 +593,56 @@ local nr = rec(t.oid)
 check(t.ok and r.recordState == "RELEASED" and nr.ownerUser == "bob" and nr.epoch ~= r.epoch and #nr.grants == 0, "舊 RELEASED、新 owner、新 epoch、分享清空")
 check(witness(car).oid == nr.oid and O.canUse(B, car, "MANAGE") and not O.canUse(A, car, "DRIVE"), "見證換成新紀錄；原 owner 失去權限")
 
-out("情境 13：admin capability＋audit")
+out("情境 13：admin capability＋越權開關＋audit")
 boot()
 A, B = player("alice", 0, 0), player("bob", 1, 1)
 local ADM = player("admin", 1, 1, { admin = true })
 car = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1)
 ack = claim(A, car)
-local nlog = #logLines
-check(O.canUse(ADM, car, "DRIVE") and logLines[#logLines]:find("ADMIN_BYPASS", 1, true), "admin bypass 可用且寫 ADMIN_BYPASS")
+do
+    local function logged(event, from, extra)
+        for i = from + 1, #logLines do
+            if logLines[i]:find(event, 1, true) and (extra == nil or logLines[i]:find(extra, 1, true)) then return true end
+        end
+        return false
+    end
+    local n0 = #logLines
+    check(O.canUse(ADM, car, "DRIVE") == false and not logged("ADMIN_BYPASS", n0), "越權關閉：沒有權限的管理員被拒，不寫 ADMIN_BYPASS")
+    local ADM2 = player("admin2", 1, 1, { admin = true })
+    cmd(A, "addMember", { expectedOid = ack.oid, username = "admin2", actionBits = MVM.ACTIONS.PASSENGER })
+    n0 = #logLines
+    local ok, why = O.canUse(ADM2, car, "PASSENGER")
+    check(ok and why == "MEMBER" and not logged("ADMIN_BYPASS", n0), "分享者兼管理員：走 MEMBER，不記越權")
+    check(cmd(B, "setAdminOverride", { enabled = true }).reason == "NOT_ADMIN" and O.canUse(B, car, "DRIVE") == false,
+        "非管理員設定越權被拒")
+    n0 = #logLines
+    local on = cmd(ADM, "setAdminOverride", { enabled = true })
+    check(on.ok and on.enabled == true and logged("ADMIN_OVERRIDE", n0, "\tON\t"), "開啟越權：ACK 帶 enabled、寫 ADMIN_OVERRIDE ON")
+    cmd(ADM, "adminList", {}, false)
+    cmd(B, "adminList", {}, false)
+    check(lastOf(ADM, "adminSnapshot").override == true and lastOf(B, "adminSnapshot").override == false,
+        "adminSnapshot 回報自己的越權狀態")
+    n0 = #logLines
+    ok, why = O.canUse(ADM, car, "DRIVE")
+    check(ok and why == "ADMIN" and logged("ADMIN_BYPASS", n0), "越權中：放行並寫 ADMIN_BYPASS")
+    cmd(ADM2, "setAdminOverride", { enabled = true })
+    n0 = #logLines
+    ok, why = O.canUse(ADM2, car, "PASSENGER")
+    check(ok and why == "MEMBER" and not logged("ADMIN_BYPASS", n0), "分享者兼管理員開著越權：有分享的動作仍走 MEMBER，不記越權")
+    cmd(ADM2, "setAdminOverride", { enabled = false })
+    check(O.canUse(player("admin", 1, 1, { admin = true }), car, "DRIVE") == false, "重新登入（新的 IsoPlayer 物件）：越權自動失效")
+    ADM.admin = false
+    check(O.canUse(ADM, car, "DRIVE") == false, "管理權限被拔掉：越權跟著失效")
+    ADM.admin = true
+    rec(ack.oid).recordState = "QUARANTINED"
+    check(O.canUse(A, car, "DRIVE") == false and O.canUse(ADM2, car, "PASSENGER") == false and O.canUse(ADM, car, "DRIVE"),
+        "QUARANTINED：車主、分享者都拒，只有越權中的管理員能用")
+    rec(ack.oid).recordState = "ACTIVE"
+    n0 = #logLines
+    local off = cmd(ADM, "setAdminOverride", { enabled = false })
+    check(off.ok and off.enabled == false and logged("ADMIN_OVERRIDE", n0, "\tOFF\t") and O.canUse(ADM, car, "DRIVE") == false,
+        "關閉越權：寫 ADMIN_OVERRIDE OFF，之後又被拒")
+end
 check(cmd(B, "adminSetQuota", { username = "bob", amount = 10 }).reason == "NOT_ADMIN", "非 admin 不能設 quota")
 check(cmd(ADM, "adminSetQuota", { username = "bob", amount = 10 }).ok and O.quotaLimit("bob") == 10, "admin 設個人 quota")
 serverMode = false
@@ -766,6 +808,98 @@ MVM.clientReceive("mutationAck", { to = "alice", requestId = "r", ok = false, re
 clientSent = {}
 Cl.request(getSpecificPlayer(0), "reportLost", { expectedOid = "o2" })
 check(#clientSent == 0, "收到 PROTOCOL_MISMATCH 後 client 停止送 mutation")
+do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 BaseVehicle.canAccessContainer 的方法表）
+    online = {}
+    local me = player("carl", 1, 1)
+    function me:isLocalPlayer() return self.remote ~= true end
+    function me:getRole() return { hasCapability = function(_, cap) return me.admin == true and cap == "ManipulateVehicle" end } end
+    local dirty = 0
+    ISInventoryPage = { dirtyUI = function() dirty = dirty + 1 end }
+    ISTimedActionQueue = { add = function() end, addAfter = function() end }
+    for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do
+        _G[n] = { isValid = function() return true end }
+    end
+    local vanilla = { canAccessContainer = function(v) return v.vanillaNo ~= true end }
+    BaseVehicle = { class = "BaseVehicleClass" }
+    __classmetatables = { BaseVehicleClass = { __index = vanilla } }
+    assert(loadfile(MEDIA .. "/client/MinidoracatVehicleManager_ClientGuards.lua"))()
+    local access = vanilla.canAccessContainer
+    -- 零件：座位（容器座號 1）、置物箱、車斗、MOD 貨箱、油箱（有 script 容器但不是物品容器）
+    local ids = { "Engine", "SeatFrontRight", "GloveBox", "TruckBed", "ModCargoBox", "GasTank" }
+    local spec = { SeatFrontRight = 1, GloveBox = -1, TruckBed = -1, ModCargoBox = -1 }
+    local function car4(id)
+        local v = vehicle(id, 900 + id, 9900 + id, "Base.PickUp", 1, 1, ids)
+        for pid, seat in pairs(spec) do
+            v.parts[pid].getItemContainer = function() return {} end
+            v.parts[pid].getContainerSeatNumber = function() return seat end
+        end
+        v.parts.GasTank.getItemContainer = function() return nil end
+        v.parts.GasTank.getContainerSeatNumber = function() return -1 end
+        local count = v.getPartCount
+        v.scans = 0
+        function v:getPartCount() self.scans = self.scans + 1; return count(self) end
+        return v
+    end
+    local function idx(v, pid) for i, pt in ipairs(v.order) do if pt.id == pid then return i - 1 end end end
+    local function can(v, pid, who) return access(v, idx(v, pid), who or me) end
+    local free, bound = car4(41), car4(42)
+    rawset(bound.parts.Engine.md, "MinidoracatVehicleManager", { oid = "oS" })
+    check(MVM.containerAction(bound.parts.SeatFrontRight) == "PASSENGER" and MVM.containerAction(bound.parts.GloveBox) == "PASSENGER"
+        and MVM.containerAction(bound.parts.TruckBed) == "CARGO" and MVM.containerAction(bound.parts.ModCargoBox) == "CARGO"
+        and MVM.containerAction(bound.parts.GasTank) == nil, "容器對應：座位／置物箱→PASSENGER、其餘物品容器→CARGO、非物品容器不管")
+    check(can(free, "TruckBed") and can(free, "SeatFrontRight"), "未綁定的車：容器照原版開放")
+    check(not can(bound, "TruckBed") and not can(bound, "ModCargoBox") and not can(bound, "SeatFrontRight")
+        and not can(bound, "GloveBox") and can(bound, "GasTank"), "他人的車：物品容器都不列出，油箱照原版")
+    local remote = player("dora", 1, 1)
+    function remote:isLocalPlayer() return false end
+    check(can(bound, "TruckBed", remote), "只管本機玩家：別人的角色照原版")
+    MVM.clientReceive("fleetSnapshot", { to = "carl", streamId = "k1", seq = 0,
+        rows = { { oid = "oS", role = "MEMBER", state = "ACTIVE", myBits = MVM.ACTIONS.PASSENGER } } })
+    check(can(bound, "SeatFrontRight") and can(bound, "GloveBox") and not can(bound, "TruckBed") and not can(bound, "ModCargoBox"),
+        "只有搭乘：座位與置物箱可用，後車廂與 MOD 貨箱不列出")
+    local d0 = dirty
+    MVM.clientReceive("fleetDelta", { to = "carl", streamId = "k1", seq = 1, removes = {},
+        upserts = { { oid = "oS", role = "MEMBER", state = "ACTIVE", myBits = MVM.ACTIONS.PASSENGER + MVM.ACTIONS.CARGO } } })
+    check(dirty > d0 and can(bound, "TruckBed") and can(bound, "ModCargoBox"), "補上後車廂權限：重列物品欄，貨箱可用")
+    MVM.clientReceive("fleetDelta", { to = "carl", streamId = "k1", seq = 2, removes = {},
+        upserts = { { oid = "oS", role = "OWNER", state = "ACTIVE", grants = {} } } })
+    bound.vanillaNo = true
+    check(not can(bound, "TruckBed"), "原版 test 不給（門關著、距離）時照原版拒絕")
+    bound.vanillaNo = nil
+    check(can(bound, "TruckBed") and can(bound, "SeatFrontRight"), "車主：全部可用")
+    MVM.clientReceive("fleetDelta", { to = "carl", streamId = "k1", seq = 3, removes = { "oS" }, upserts = {} })
+    check(MVM.protectedText(me) == "IGUI_MVM_Protected", "一般玩家被擋：只說受車主保護")
+    me.admin = true
+    check(not can(bound, "TruckBed") and MVM.protectedText(me) == "IGUI_MVM_ProtectedAdmin",
+        "管理員越權關閉：一樣不列出，提示多一句去管理頁開啟越權")
+    d0 = dirty
+    MVM.clientReceive("adminSnapshot", { to = "carl", ok = true, rows = {}, players = {}, override = true })
+    check(MVM.clientOverride(0) and dirty > d0 and can(bound, "TruckBed") and MVM.clientCanUse(me, bound, "DRIVE"),
+        "越權中（adminSnapshot）：容器與動作都放行、重列物品欄")
+    local toast
+    HaloTextHelper.addBadText = function(_, t) toast = t end
+    HaloTextHelper.addGoodText = HaloTextHelper.addBadText
+    MVM.clientReceive("mutationAck", { to = "carl", requestId = "r-ov", requestKind = "setAdminOverride", ok = true, enabled = false })
+    check(not MVM.clientOverride(0) and toast == "IGUI_MVM_Override_OffToast" and not can(bound, "TruckBed"),
+        "關閉越權（ACK）：跳通知，容器回到不列出")
+    HaloTextHelper.addBadText, HaloTextHelper.addGoodText = function() end, function() end
+    MVM.clientReceive("mutationAck", { to = "carl", requestId = "r-ov2", requestKind = "setAdminOverride", ok = true, enabled = true })
+    me.admin = false
+    check(not MVM.clientOverride(0) and not can(bound, "TruckBed"), "撤銷管理員角色：舊越權 ACK 不得繼續開別人的容器")
+    d0 = dirty
+    fire("RefreshCheats")
+    check(not Cl.buckets.carl.adminOverride and dirty > d0, "收到角色更新事件：清掉越權快取並重列物品欄")
+    -- 見證快取：同一秒內問多個容器只掃一次零件，過了 1 秒才重掃
+    local s0 = bound.scans
+    for _ = 1, 5 do can(bound, "TruckBed"); can(bound, "GloveBox") end
+    local once = bound.scans - s0
+    nowMs = nowMs + 1100
+    can(bound, "TruckBed")
+    check(once <= 1 and bound.scans - s0 == once + 1, "見證快取：1 秒內多次查詢只掃一次零件，逾時才重掃")
+    me.admin = nil
+    ISInventoryPage, ISTimedActionQueue, BaseVehicle, __classmetatables = nil, nil, nil, nil
+    for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
+end
 isClient = serverIsClient
 
 out("情境 25／31：reportLost finalize／cancel、inactivity")
@@ -911,6 +1045,8 @@ check(#FU.filter(rowsT, "SHARED", "CAROL") == 1 and #FU.filter(rowsT, "OWNED", "
 check(#FU.filter(nil, "OWNED", "") == 0, "快照未到時回空清單")
 local l = FU.bitsToList(MVM.ACTIONS.DRIVE + MVM.ACTIONS.TRACK + MVM.ACTIONS.MANAGE)
 check(#l == 2 and l[1] == "DRIVE" and l[2] == "TRACK", "權限位轉清單（MANAGE 不列）")
+check(FU.actionsText(MVM.ACTIONS.CARGO + MVM.ACTIONS.PASSENGER) == "IGUI_MVM_ActionShort_PASSENGERIGUI_MVM_ListSepIGUI_MVM_ActionShort_CARGO"
+    and FU.actionsText(0) == "", "權限名稱顯示語系短名稱，依固定順序以語系分隔字連接，不露出原始代碼")
 check(FU.listToBits({ "CARGO", "FUEL" }) == 12, "清單轉權限位")
 check(FU.stateText({ state = "PENDING_RELEASE", releaseDueAtMs = nowMs + 90 * 60000 }, nowMs) == "IGUI_MVM_State_PENDING_RELEASE(2)", "等待釋放剩餘小時無條件進位")
 check(FU.stateText({ state = "QUARANTINED" }, nowMs) == "IGUI_MVM_State_QUARANTINED", "狀態文字照 server 狀態")
@@ -1343,12 +1479,13 @@ nowMs = nowMs + 1000
 G.watchdog()
 check(ST.vehicle == nil and ST.lastChange == "EXIT_VEHICLE", "action 2：先 EXIT_VEHICLE 再 server exit")
 SB.WatchdogAction = 1
+cmd(ADM, "setAdminOverride", { enabled = true })
 car.seats[0] = ADM; ADM.vehicle = car
 local logs = #logLines
 nowMs = nowMs + 1000; G.watchdog(); nowMs = nowMs + 1000; G.watchdog()
 local bypass = 0
 for i = logs + 1, #logLines do if logLines[i]:find("ADMIN_BYPASS", 1, true) then bypass = bypass + 1 end end
-check(bypass == 0, "admin 在車上：watchdog 不洗 ADMIN_BYPASS")
+check(bypass == 0 and lastEnforcement(ADM) == nil, "越權中的 admin 在車上：watchdog 不執法、也不洗 ADMIN_BYPASS")
 car.seats[0] = nil; ADM.vehicle = nil
 local tower = vehicle(2, 202, 5002, "Base.CarNormal", 1, 1)
 tower.seats[0] = ST; ST.vehicle = tower; tower.towing = car
