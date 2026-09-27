@@ -167,6 +167,31 @@ function F.adminItems(rows, players, query, expanded)
     return out
 end
 
+-- 批次名額的選取：picked＝帳號 → true，跨搜尋與重建保留。沒有車主的隔離紀錄組（user＝""）不能選。
+-- 伺服器一次最多收 BATCH_MAX 位（Server.lua S.BATCH_MAX）
+F.BATCH_MAX = 500
+function F.pickable(row) return row ~= nil and row.kind == "PLAYER" and row.user ~= "" end
+
+function F.togglePick(picked, row)
+    if not F.pickable(row) then return false end
+    picked[row.user] = not picked[row.user] or nil
+    return true
+end
+
+-- 全選目前清單：目前搜尋結果裡的玩家列
+function F.pickShown(picked, items)
+    for _, it in ipairs(items) do if F.pickable(it) then picked[it.user] = true end end
+end
+
+function F.clearPicks(picked) for user in pairs(picked) do picked[user] = nil end end
+
+-- 送給伺服器的帳號清單（依帳號排序，長度就是已選人數）
+function F.pickedList(picked)
+    local list, keys = {}, {}
+    for user in pairs(picked) do list[#list + 1] = user; keys[user] = user:lower() end
+    return MVM.sortByKey(list, keys)
+end
+
 -- 找到身邊這筆紀錄的車（解除綁定／轉讓／重新核發需要車在身邊）。先以見證對 oid；
 -- WITNESS_STALE 的見證可能不見或對錯，改找身邊同車型、沒有帶著自己其他有效列見證的車，交給 server 以 native 欄位驗證
 function F.findLoaded(row)
@@ -229,8 +254,9 @@ local STATE_TOKEN = { ACTIVE = "text", WITNESS_STALE = "accent", PENDING_RELEASE
 local function stateToken(row) return STATE_TOKEN[row.state] or "textFaint" end
 
 -- 清單列：選取狀態存在 list，cell 只是投影；文字在 bind 時算好，render 不配置。
--- 管理頁的玩家列畫展開箭頭與右側「已用 / 上限」，車輛列縮排在玩家底下
+-- 管理頁的玩家列最左畫批次勾選框（BOX_W 寬的點擊區），再畫展開箭頭與右側「已用 / 上限」，車輛列縮排在玩家底下
 local INDENT = 24
+local BOX_W = 26
 local Cell = ISPanel:derive("MVMFleetCell")
 function Cell:render()
     local row = self.row
@@ -245,6 +271,15 @@ function Cell:render()
     local fh = fontH(FS)
     local x = self.indent
     if self.player then
+        if self.box then
+            local by = math.floor((h - 14) / 2)
+            if self.fleet.picked[row.user] then
+                theme:fill(self, x + 6, by, 14, 14, "accent", "rect")
+            else
+                theme:border(self, x + 6, by, 14, 14, "textMuted", "rect")
+            end
+            x = x + BOX_W
+        end
         if not UI.Icons.draw(self, row.open and "chevronDown" or "chevronRight", x + 10, math.floor((h - 16) / 2), 16, COL.textMuted, 1) then
             text(self, row.open and "-" or "+", x + 14, math.floor((h - fh) / 2), "textMuted")
         end
@@ -273,7 +308,7 @@ MVM.FleetWindow = FleetWindow
 
 function FleetWindow.new()
     local self = setmetatable({ tab = "OWNED", query = "", selectedOid = nil, current = nil, pending = nil, message = nil,
-        messageBad = false, dirty = true, lastNearCheck = 0, headings = {}, expanded = {} }, FleetWindow)
+        messageBad = false, dirty = true, lastNearCheck = 0, headings = {}, expanded = {}, picked = {} }, FleetWindow)
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
     local w = math.min(940, math.floor(sw * 0.92))
     local h = math.min(680, math.floor(sh * 0.9))
@@ -340,14 +375,15 @@ function FleetWindow:build()
         createCell = function(l)
             local c = Cell:new(0, 0, 0, 0)
             c.background = false
-            c.list = l
+            c.list, c.fleet = l, self
             return c
         end,
         bindCell = function(_, c, row, index)
             c.row, c.index = row, index
             c.player = row.kind == "PLAYER"
+            c.box = self.tab == "ADMIN" and F.pickable(row)
             c.indent = (self.tab == "ADMIN" and not c.player) and INDENT or 0
-            local w = c.width - c.indent - 36 - 10
+            local w = c.width - c.indent - 36 - 10 - (c.box and BOX_W or 0)
             if c.player then
                 local info = row.info
                 c.count = info and (info.used .. " / " .. info.limit) or ""
@@ -377,6 +413,17 @@ function FleetWindow:build()
         onKey = function(_, key, row, index) return self:treeKey(key, row, index) end,
         colors = { thumb = COL.textFaint, thumbHover = COL.textMuted, track = COL.hover } })
     self.list:initialise()
+    -- 點玩家列的勾選框只切換批次選取，不改反白與展開；其餘點擊照清單原本的選取
+    local listDown = self.list.onMouseDown
+    self.list.onMouseDown = function(l, x, y)
+        local i = l:indexAt(x, y)
+        local row = i and l:getItems()[i]
+        if self.tab == "ADMIN" and x < BOX_W and F.pickable(row) then
+            self:togglePick(row)
+            return true
+        end
+        return listDown(l, x, y)
+    end
     body:addChild(self.list)
 
     self.detailX = PAD * 2 + self.listW
@@ -413,6 +460,15 @@ function FleetWindow:build()
     self.quotaEntry = self:field(80, nil, true)
     self.btnQuota = self:button(getText("IGUI_MVM_Btn_Quota"), FleetWindow.onQuota, "primary")
     self.btnQuotaDefault = self:button(getText("IGUI_MVM_Btn_QuotaDefault"), FleetWindow.onQuotaDefault)
+    -- 手把沒有勾選框可點：玩家詳情的「加入批次／移出批次」
+    self.btnPick = self:button(getText("IGUI_MVM_Btn_PickAdd"), FleetWindow.onPick)
+    self.btnPickShown = self:button(getText("IGUI_MVM_Btn_PickShown"), FleetWindow.onPickShown)
+    self.btnPickClear = self:button(getText("IGUI_MVM_Btn_PickClear"), FleetWindow.onPickClear)
+    self.batchEntry = self:field(80, "0-100", true)
+    self.btnBatch = self:button(getText("IGUI_MVM_Btn_BatchQuota"), FleetWindow.onBatchQuota, "primary")
+    self.btnBatchDefault = self:button(getText("IGUI_MVM_Btn_QuotaDefault"), FleetWindow.onBatchDefault)
+    self.defaultEntry = self:field(80, "0-20", true)
+    self.btnDefaultQuota = self:button(getText("IGUI_MVM_Btn_Apply"), FleetWindow.onDefaultQuota, "primary")
     self.btnMigrate = self:button(getText("IGUI_MVM_Btn_ImportMVCK"), FleetWindow.onImportMVCK)
     self.overrideBox = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Override_Toggle"), theme = theme, target = self,
         onChange = FleetWindow.onOverride })
@@ -420,11 +476,12 @@ function FleetWindow:build()
     body:addChild(self.overrideBox)
     self.actionButtons = { self.btnRename, self.btnAddMember, self.btnFaction, self.btnTransfer, self.btnUnclaim,
         self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnLeave, self.btnAdminRelease, self.btnQuota,
-        self.btnQuotaDefault, self.btnMigrate, self.overrideBox }
+        self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnMigrate, self.overrideBox }
     self.detailControls = { self.nameEntry, self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction,
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap,
-        self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnMigrate, self.btnLook,
-        self.overrideBox }
+        self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
+        self.btnPickShown, self.btnPickClear, self.batchEntry, self.btnBatch, self.btnBatchDefault, self.defaultEntry,
+        self.btnDefaultQuota, self.btnMigrate, self.btnLook, self.overrideBox }
     for _, cb in ipairs(self.checks) do self.detailControls[#self.detailControls + 1] = cb end
     for _, b in ipairs(self.memberButtons) do
         self.actionButtons[#self.actionButtons + 1] = b
@@ -455,10 +512,11 @@ function FleetWindow:highlight(i)
     self:layoutDetail()
 end
 
--- 管理頁樹狀清單的左右鍵（鍵盤焦點框與手把方向同）：右＝展開／進到第一台車，左＝收合／回到車主。
--- 回 false 的鍵交回框架（手把會移到上／下一個控制項）
+-- 管理頁樹狀清單的左右鍵（鍵盤焦點框與手把方向同）：右＝展開／進到第一台車，左＝收合／回到車主；
+-- Space＝切換反白中玩家的批次選取（不展開）。回 false 的鍵交回框架（手把會移到上／下一個控制項）
 function FleetWindow:treeKey(key, row, index)
     if self.tab ~= "ADMIN" or row == nil or index == nil then return false end
+    if key == Keyboard.KEY_SPACE then return self:togglePick(row) end
     local right, left = key == Keyboard.KEY_RIGHT, key == Keyboard.KEY_LEFT
     if not (right or left) then return false end
     local items = self.list:getItems()
@@ -519,8 +577,8 @@ end
 
 local function place(ctrl, x, y) ctrl:setX(x); ctrl:setY(y); ctrl:setVisible(true); return x + ctrl.width + GAP end
 
-function FleetWindow:heading(key, y)
-    self.headings[#self.headings + 1] = { text = getText(key), y = y }
+function FleetWindow:heading(key, y, arg)
+    self.headings[#self.headings + 1] = { text = arg ~= nil and getText(key, arg) or getText(key), y = y }
     return y + self.fh + 4
 end
 
@@ -542,7 +600,11 @@ function FleetWindow:layoutDetail()
                 local fill = row.user .. ":" .. info.base
                 if self.quotaEntry.forKey ~= fill then self.quotaEntry.forKey = fill; self.quotaEntry:setText(tostring(info.base)) end
                 local x = place(self.btnQuota, place(self.quotaEntry, x0, y), y)
-                if info.custom then place(self.btnQuotaDefault, x, y) end
+                if info.custom then x = place(self.btnQuotaDefault, x, y) end
+                if F.pickable(row) then
+                    self.btnPick:setTitle(getText(self.picked[row.user] and "IGUI_MVM_Btn_PickRemove" or "IGUI_MVM_Btn_PickAdd"))
+                    place(self.btnPick, x, y)
+                end
                 y = y + step + PAD
             end
         elseif row ~= nil then
@@ -555,13 +617,31 @@ function FleetWindow:layoutDetail()
                 y = y + step + PAD
             end
         end
+        -- 批次設定名額：全選目前清單常駐；有選取才出現名額欄與送出按鈕
+        local n = #F.pickedList(self.picked)
+        y = self:heading("IGUI_MVM_Section_Batch", y, n)
+        local x = place(self.btnPickShown, x0, y)
+        if n > 0 then
+            place(self.btnPickClear, x, y)
+            y = y + step
+            place(self.btnBatchDefault, place(self.btnBatch, place(self.batchEntry, x0, y), y), y)
+        end
+        y = y + step + PAD
         if b ~= nil and b.migrationAvailable then
             y = self:heading("IGUI_MVM_Section_MVCK", y)
             place(self.btnMigrate, x0, y)
         end
-        -- 越權開關固定在詳情區底部：選哪一列都在同一個位置
+        -- 全服預設名額與越權開關固定在詳情區底部：選哪一列都在同一個位置
         local box = self.overrideBox
         local oy = self.listTop + self.listH - (self.fh + 4) - box.height - GAP - (self.fh + 2) * 2
+        local dy = oy - PAD - (self.fh + 4) - step - (self.fh + 2) * 2
+        dy = self:heading("IGUI_MVM_Section_DefaultQuota", dy)
+        local def = b and b.adminDefaultQuota
+        if def ~= nil and self.defaultEntry.forValue ~= def then self.defaultEntry.forValue = def; self.defaultEntry:setText(tostring(def)) end
+        place(self.btnDefaultQuota, place(self.defaultEntry, x0, dy), dy)
+        dy = dy + step
+        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_DefaultQuota_Desc1"), y = dy }
+        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_DefaultQuota_Desc2"), y = dy + self.fh + 2 }
         oy = self:heading("IGUI_MVM_Section_Override", oy)
         box:setChecked(b ~= nil and b.adminOverride == true, true)
         place(box, x0, oy)
@@ -733,9 +813,10 @@ function FleetWindow:send(command, args, okText)
     end)
 end
 
--- 確認框：框架 Dialog（模態、只回呼一次）；self.modal 留給 E2E 以 UI.Dialog.close 按確認
+-- 確認框：框架 Dialog（模態、只回呼一次）；self.modal 留給 E2E 以 UI.Dialog.close 按確認。arg 可以是兩個參數的 table
 function FleetWindow:confirm(textKey, arg, fn)
-    self.modal = UI.Dialog.show({ title = getText("IGUI_MVM_FleetTitle"), text = getText(textKey, arg), theme = theme,
+    local body = type(arg) == "table" and getText(textKey, arg[1], arg[2]) or getText(textKey, arg)
+    self.modal = UI.Dialog.show({ title = getText("IGUI_MVM_FleetTitle"), text = body, theme = theme,
         confirmText = getText("UI_Ok"), cancelText = getText("UI_Cancel"), danger = true,
         onResult = function(ok) self.modal = nil; if ok then fn(self) end end })
 end
@@ -850,17 +931,65 @@ function FleetWindow:onAdminRelease()
     end)
 end
 
+-- 名額欄的整數；超出範圍或不是整數回 nil
+local function wholeIn(field, lo, hi)
+    local n = tonumber(field:getText() or "")
+    if n == nil or n < lo or n > hi or n ~= math.floor(n) then return nil end
+    return n
+end
+
 -- 基本名額（上限＝基本＋付費）；伺服器只收 0–100 的整數，-1＝恢復伺服器預設
 function FleetWindow:onQuota()
     local row = self.current; if not (row and row.kind == "PLAYER" and row.info) then return end
-    local n = tonumber(self.quotaEntry:getText() or "")
-    if n == nil or n < 0 or n > 100 or n ~= math.floor(n) then return self:say("IGUI_MVM_NeedQuotaRange") end
-    self:adminSend("adminSetQuota", { username = row.user, amount = n })
+    local n = wholeIn(self.quotaEntry, 0, 100)
+    if n == nil then return self:say("IGUI_MVM_NeedQuotaRange") end
+    self:adminSend("adminSetQuota", { usernames = { row.user }, amount = n })
 end
 
 function FleetWindow:onQuotaDefault()
     local row = self.current; if not (row and row.kind == "PLAYER" and row.info) then return end
-    self:adminSend("adminSetQuota", { username = row.user, amount = -1 })
+    self:adminSend("adminSetQuota", { usernames = { row.user }, amount = -1 })
+end
+
+-- 批次選取變了：清單勾選框每幀讀 picked，詳情區的已選人數與按鈕要重排
+function FleetWindow:togglePick(row)
+    if not F.togglePick(self.picked, row) then return false end
+    self:layoutDetail()
+    return true
+end
+
+function FleetWindow:onPick() self:togglePick(self.current) end
+function FleetWindow:onPickShown() F.pickShown(self.picked, self.list:getItems()); self:layoutDetail() end
+function FleetWindow:onPickClear() F.clearPicks(self.picked); self:layoutDetail() end
+
+-- 送出前確認；超過一次上限就請管理員改用全服預設名額
+function FleetWindow:batch(amount, textKey)
+    local users = F.pickedList(self.picked)
+    if #users == 0 then return end
+    if #users > F.BATCH_MAX then
+        self.message, self.messageBad = getText("IGUI_MVM_BatchTooMany", F.BATCH_MAX), true
+        return
+    end
+    self:confirm(textKey, { #users, amount }, function(w)
+        w:adminSend("adminSetQuota", { usernames = users, amount = amount }, function(ack)
+            return getText("IGUI_MVM_BatchDone", ack.count or #users)
+        end)
+    end)
+end
+
+function FleetWindow:onBatchQuota()
+    local n = wholeIn(self.batchEntry, 0, 100)
+    if n == nil then return self:say("IGUI_MVM_NeedQuotaRange") end
+    self:batch(n, "IGUI_MVM_ConfirmBatchQuota")
+end
+
+function FleetWindow:onBatchDefault() self:batch(-1, "IGUI_MVM_ConfirmBatchReset") end
+
+-- 全服預設名額＝沙盒 ClaimsPerPlayer（0–20）；伺服器存檔成功才回 ok
+function FleetWindow:onDefaultQuota()
+    local n = wholeIn(self.defaultEntry, 0, 20)
+    if n == nil then return self:say("IGUI_MVM_NeedDefaultRange") end
+    self:adminSend("adminSetDefaultQuota", { amount = n }, function(ack) return getText("IGUI_MVM_DefaultQuotaSaved", ack.amount) end)
 end
 
 function FleetWindow:onImportMVCK()

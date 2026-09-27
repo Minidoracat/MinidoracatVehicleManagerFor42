@@ -123,6 +123,22 @@ SandboxVars = { MinidoracatVehicleManager = { ClaimsPerPlayer = 3, MaxMembersPer
     ClaimDistance = 2.5, AllowFactionShare = true, InactivityReleaseDays = 0, InactivityGraceDays = 7,
     ReleaseFinalizeHours = 24, TombstoneRetentionDays = 14, NameMaxBytes = 32 } }
 local SB = SandboxVars.MinidoracatVehicleManager
+-- SandboxOptions：set 只改 Java 端的值，toLua 才投影到 SandboxVars；saveServerLuaFile 回 SBOX.saveOk，成功才記下「檔案」內容
+SBOX = { values = {}, saveOk = true, saves = 0, sets = 0, file = nil }
+function getSandboxOptions()
+    return { set = function(_, name, v) SBOX.sets = SBOX.sets + 1; SBOX.values[name] = v end,
+        toLua = function()
+            for name, v in pairs(SBOX.values) do
+                local page, key = name:match("^(.-)%.(.+)$")
+                SandboxVars[page][key] = v
+            end
+        end,
+        saveServerLuaFile = function(_, server)
+            SBOX.saves = SBOX.saves + 1
+            if SBOX.saveOk then SBOX.file = { server = server, ClaimsPerPlayer = SandboxVars.MinidoracatVehicleManager.ClaimsPerPlayer } end
+            return SBOX.saveOk
+        end }
+end
 
 local serverOpts = {}
 function getServerOptions() return { getBoolean = function(_, k) return serverOpts[k] == true end } end
@@ -643,12 +659,116 @@ do
     check(off.ok and off.enabled == false and logged("ADMIN_OVERRIDE", n0, "\tOFF\t") and O.canUse(ADM, car, "DRIVE") == false,
         "關閉越權：寫 ADMIN_OVERRIDE OFF，之後又被拒")
 end
-check(cmd(B, "adminSetQuota", { username = "bob", amount = 10 }).reason == "NOT_ADMIN", "非 admin 不能設 quota")
-check(cmd(ADM, "adminSetQuota", { username = "bob", amount = 10 }).ok and O.quotaLimit("bob") == 10, "admin 設個人 quota")
+check(cmd(B, "adminSetQuota", { usernames = { "bob" }, amount = 10 }).reason == "NOT_ADMIN", "非 admin 不能設 quota")
+check(cmd(ADM, "adminSetQuota", { usernames = { "bob" }, amount = 10 }).ok and O.quotaLimit("bob") == 10, "admin 設個人 quota")
 serverMode = false
 check(O.isAdmin(ADM) == false, "SP 不把 checkPermissions 當 admin")
 serverMode = true
 check(cmd(ADM, "adminRecover", { expectedOid = ack.oid, op = "RELEASE" }).ok and rec(ack.oid).recordState == "RELEASED", "admin RELEASE")
+
+out("情境 13b：全服預設名額（沙盒同步）與批次個人名額")
+do
+    boot()
+    local ADMQ, BOB, ALI = player("admin", 1, 1, { admin = true }), player("bob", 1, 1), player("alice", 0, 0)
+    claim(ALI, vehicle(1, 101, 5001, "Base.CarNormal", 1, 1))
+    local function count(p, command)
+        local n = 0
+        for _, m in ipairs(outbox[p.name]) do if m.command == command then n = n + 1 end end
+        return n
+    end
+    local function logged(from, ...)
+        local want = { ... }
+        for i = from + 1, #logLines do
+            local hit = true
+            for _, w in ipairs(want) do if not logLines[i]:find(w, 1, true) then hit = false end end
+            if hit then return true end
+        end
+        return false
+    end
+    local QN = "MinidoracatVehicleManager.ClaimsPerPlayer"
+    S.minute() -- 記下目前的預設值作為比對基準
+    -- 非管理員、超出沙盒範圍
+    local sets0 = SBOX.sets
+    check(cmd(BOB, "adminSetDefaultQuota", { amount = 5 }).reason == "NOT_ADMIN" and SBOX.sets == sets0 and SB.ClaimsPerPlayer == 3,
+        "非管理員不能改全服預設名額，沙盒不動")
+    check(cmd(ADMQ, "adminSetDefaultQuota", { amount = 21 }).reason == "BAD_ARGS" and cmd(ADMQ, "adminSetDefaultQuota", { amount = -1 }).reason == "BAD_ARGS"
+        and cmd(ADMQ, "adminSetDefaultQuota", { amount = 2.5 }).reason == "BAD_ARGS" and SBOX.sets == sets0,
+        "預設名額只收 0–20 的整數（同沙盒範圍）")
+    -- 存檔失敗：記憶體改回原值、回 SAVE_FAILED、不廣播也不重送快照
+    SBOX.saveOk = false
+    local bobSnaps, n0 = count(BOB, "fleetSnapshot"), #logLines
+    local failed = cmd(ADMQ, "adminSetDefaultQuota", { amount = 5 })
+    check(failed.reason == "SAVE_FAILED" and SB.ClaimsPerPlayer == 3 and SBOX.values[QN] == 3 and O.quotaBase("bob") == 3,
+        "沙盒存檔失敗：Java 端與 SandboxVars 都改回原值並回 SAVE_FAILED")
+    check(count(BOB, "sandboxSync") == 0 and count(ALI, "sandboxSync") == 0 and count(BOB, "fleetSnapshot") == bobSnaps
+        and not logged(n0, "ADMIN_QUOTA"), "存檔失敗時不通知客戶端、不重送快照、不記 ADMIN_QUOTA")
+    -- 成功：寫沙盒並存檔、通知線上客戶端、重送所有線上玩家快照、稽核舊值→新值
+    SBOX.saveOk = true
+    n0 = #logLines
+    local aliSnaps = count(ALI, "fleetSnapshot")
+    local okSet = cmd(ADMQ, "adminSetDefaultQuota", { amount = 5 })
+    check(okSet.ok and okSet.amount == 5 and SB.ClaimsPerPlayer == 5 and SBOX.file.ClaimsPerPlayer == 5
+        and SBOX.file.server == "servertest" and O.quotaBase("bob") == 5, "管理員改預設名額：寫入沙盒並存進伺服器沙盒檔")
+    check(lastOf(BOB, "sandboxSync").claimsPerPlayer == 5 and lastOf(ALI, "sandboxSync").claimsPerPlayer == 5
+        and lastOf(ADMQ, "sandboxSync").claimsPerPlayer == 5, "存檔成功後通知每位線上客戶端同步沙盒值")
+    check(count(ALI, "fleetSnapshot") == aliSnaps + 1 and lastOf(ALI, "fleetSnapshot").quota.base == 5
+        and lastOf(ALI, "fleetSnapshot").quota.used == 1 and lastOf(BOB, "fleetSnapshot").quota.base == 5,
+        "預設名額改變後重送所有線上玩家的快照，名額即時變")
+    check(logged(n0, "ADMIN_QUOTA", "DEFAULT 3->5", "admin"), "稽核 ADMIN_QUOTA 含舊值→新值")
+    cmd(ADMQ, "adminList", {}, false)
+    check(lastOf(ADMQ, "adminSnapshot").defaultQuota == 5, "管理員總表回報目前的全服預設名額")
+    -- 原版沙盒 UI 直接改值：每分鐘比對發現就重送快照；沒變就不送
+    SB.ClaimsPerPlayer = 7
+    aliSnaps, n0 = count(ALI, "fleetSnapshot"), #logLines
+    S.minute()
+    check(count(ALI, "fleetSnapshot") == aliSnaps + 1 and lastOf(ALI, "fleetSnapshot").quota.base == 7
+        and logged(n0, "ADMIN_QUOTA", "DEFAULT 5->7", "SANDBOX"), "原版途徑改了沙盒：每分鐘 tick 偵測到並重送快照")
+    S.minute()
+    check(count(ALI, "fleetSnapshot") == aliSnaps + 1, "沙盒值沒變：tick 不重送")
+    SB.ClaimsPerPlayer, SBOX.values = 3, {}
+    S.minute()
+
+    -- 批次個人名額：usernames 清單驗證
+    local function bad(list) return cmd(ADMQ, "adminSetQuota", { usernames = list, amount = 4 }).reason == "BAD_ARGS" end
+    local big = {}
+    for i = 1, 501 do big[i] = "user" .. i end
+    check(bad({}) and bad({ "carl", "carl" }) and bad(big), "批次名單：空、重複、超過 500 位都拒收")
+    check(bad({ "" }) and bad({ "a\nb" }) and bad({ string.rep("x", 51) }) and bad({ 7 }), "批次名單：不合法的帳號拒收")
+    check(bad({ x = "carl" }) and bad({ [1] = "carl", [3] = "dan" }) and bad("carl"), "批次名單：只能是連續陣列")
+    big[501] = nil
+    check(cmd(ADMQ, "adminSetQuota", { usernames = big, amount = 4 }).count == 500 and O.quotaBase("user500") == 4,
+        "剛好 500 位可以送出")
+    cmd(ADMQ, "adminSetQuota", { usernames = big, amount = -1 })
+    check(cmd(BOB, "adminSetQuota", { usernames = { "bob" }, amount = 9 }).reason == "NOT_ADMIN" and O.quotaBase("bob") == 3,
+        "非管理員不能批次設定名額")
+    bobSnaps, aliSnaps, n0 = count(BOB, "fleetSnapshot"), count(ALI, "fleetSnapshot"), #logLines
+    local set8 = cmd(ADMQ, "adminSetQuota", { usernames = { "bob", "carl", "dan" }, amount = 8 })
+    local ov = O.state().quotaOverrides
+    check(set8.ok and set8.count == 3 and ov.bob == 8 and ov.carl == 8 and ov.dan == 8 and ov.alice == nil,
+        "批次設定：三位都寫入個人名額，未選的不動")
+    check(logged(n0, "ADMIN_QUOTA", "\tbob\t", "USER DEFAULT->8") and logged(n0, "ADMIN_QUOTA", "\tcarl\t")
+        and logged(n0, "ADMIN_QUOTA", "\tdan\t"), "批次設定逐人寫 ADMIN_QUOTA（舊值→新值）")
+    check(count(BOB, "fleetSnapshot") == bobSnaps + 1 and lastOf(BOB, "fleetSnapshot").quota.base == 8
+        and count(ALI, "fleetSnapshot") == aliSnaps, "只重送受影響的線上玩家快照（離線者略過）")
+    n0 = #logLines
+    local reset = cmd(ADMQ, "adminSetQuota", { usernames = { "bob", "carl", "dan" }, amount = -1 })
+    check(reset.ok and reset.count == 3 and ov.bob == nil and ov.carl == nil and ov.dan == nil
+        and lastOf(BOB, "fleetSnapshot").quota.base == 3 and logged(n0, "ADMIN_QUOTA", "\tcarl\t", "USER 8->DEFAULT"),
+        "-1 批次恢復預設：清除個人名額並重送快照")
+    -- 管理頁列出登入過但還沒有車的玩家（已用 0）；一次掃完的已用與逐人計算相同（alice 一台受保護＋一台已解除）
+    local a2 = claim(ALI, vehicle(2, 102, 5002, "Base.CarNormal", 1, 1))
+    local r2 = rec(a2.oid)
+    cmd(ALI, "unclaim", { vehicleId = 2, expectedOid = r2.oid, expectedEpoch = r2.epoch })
+    O.noteUser("newbie")
+    cmd(ADMQ, "adminList", {}, false)
+    local newbie, same = nil, true
+    for _, pl in ipairs(lastOf(ADMQ, "adminSnapshot").players) do
+        if pl.user == "newbie" then newbie = pl end
+        if pl.used ~= O.quotaUsed(pl.user) or pl.limit ~= O.quotaLimit(pl.user) then same = false end
+    end
+    check(newbie and newbie.used == 0 and newbie.limit == 3 and not newbie.custom, "登入過但沒有車的玩家也列在管理員總表，已用 0")
+    check(same and r2.recordState == "RELEASED" and O.quotaUsed("alice") == 1, "總表的已用／上限與逐人 O.quotaUsed／O.quotaLimit 相同（已解除不計）")
+end
 
 out("情境 15／17：sentinel 與重啟")
 boot()
@@ -785,10 +905,18 @@ local n = 0
 for _ in pairs(Cl.buckets.alice.rows) do n = n + 1 end
 check(n == 1, "同一快照重播兩次不增加列")
 MVM.clientReceive("fleetSnapshot", { to = "bob", streamId = "s2", seq = 0, rows = { { oid = "o9" } } })
-MVM.clientReceive("adminSnapshot", { to = "alice", ok = true, rows = {}, migrationAvailable = true })
+MVM.clientReceive("adminSnapshot", { to = "alice", id = "snap-a", part = 1, parts = 1, ok = true, rows = {}, migrationAvailable = true })
 check(Cl.buckets.alice.migrationAvailable and #Cl.buckets.alice.admin == 0,
     "管理員快照保留 MVCK 來源可用狀態，沒有車輛列也能顯示匯入入口")
 check(Cl.buckets.alice.rows.o9 == nil, "不同 username 分桶")
+do -- 客戶端收到 sandboxSync：本機沙盒選項改值並投影到 SandboxVars；不是整數就不動
+    local QN = "MinidoracatVehicleManager.ClaimsPerPlayer"
+    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = 5 })
+    local synced = SBOX.values[QN] == 5 and SB.ClaimsPerPlayer == 5
+    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = "9" })
+    check(synced and SB.ClaimsPerPlayer == 5, "客戶端收到 sandboxSync：set＋toLua 更新本機沙盒，非整數忽略")
+    SB.ClaimsPerPlayer, SBOX.values = 3, {}
+end
 clientSent = {}
 MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 2, upserts = { { oid = "o2" } }, removes = {} })
 check(Cl.buckets.alice.rows.o2 == nil and clientSent[1] and clientSent[1].command == "fleetResync", "跳號 → 丟棄並 resync")
@@ -873,7 +1001,7 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     check(not can(bound, "TruckBed") and MVM.protectedText(me) == "IGUI_MVM_ProtectedAdmin",
         "管理員越權關閉：一樣不列出，提示多一句去管理頁開啟越權")
     d0 = dirty
-    MVM.clientReceive("adminSnapshot", { to = "carl", ok = true, rows = {}, players = {}, override = true })
+    MVM.clientReceive("adminSnapshot", { to = "carl", id = "snap-c", part = 1, parts = 1, ok = true, rows = {}, players = {}, override = true })
     check(MVM.clientOverride(0) and dirty > d0 and can(bound, "TruckBed") and MVM.clientCanUse(me, bound, "DRIVE"),
         "越權中（adminSnapshot）：容器與動作都放行、重列物品欄")
     local toast
@@ -1086,6 +1214,19 @@ do -- 管理頁：依車主分組（玩家依帳號排序、沒有車主的隔�
     local items = FU.adminItems(adminRows, adminPlayers, "", {})
     check(items[2].summary == "IGUI_MVM_Admin_Protected(1)IGUI_MVM_SepIGUI_MVM_Admin_Rebind(1)IGUI_MVM_SepIGUI_MVM_Admin_History(1)"
         and items[4].summary == "IGUI_MVM_Admin_NoVehicles", "玩家摘要只列非零的狀態筆數，沒有車時明說")
+    -- 批次選取：切換、沒有車主的組不能選、全選目前清單（只含搜尋結果裡的玩家）、清除、計數
+    local picked = {}
+    local function names() return table.concat(FU.pickedList(picked), ",") end
+    check(FU.togglePick(picked, items[2]) and names() == "alice" and FU.togglePick(picked, items[2]) and names() == "",
+        "勾選框切換：選取後再按一次取消")
+    check(not FU.togglePick(picked, items[1]) and names() == "", "沒有車主的隔離紀錄組不能選")
+    check(not FU.togglePick(picked, { kind = nil, oid = "r1", owner = "bob" }) and names() == "", "車輛列不能選")
+    FU.pickShown(picked, FU.adminItems(adminRows, adminPlayers, "BOB", {}))
+    check(names() == "bob", "全選目前清單只加入搜尋結果裡的玩家")
+    FU.pickShown(picked, FU.adminItems(adminRows, adminPlayers, "", { alice = true }))
+    check(names() == "alice,bob,carl" and #FU.pickedList(picked) == 3, "全選目前清單：所有玩家列（略過車輛列與無車主組），依帳號排序計數")
+    FU.clearPicks(picked)
+    check(names() == "" and next(picked) == nil, "清除選取")
 end
 -- 見證遺失的 WITNESS_STALE 車：身邊同車型、沒有見證的車當作候選；別車型、太遠的不選
 boot()
@@ -1251,14 +1392,23 @@ end
 local ap, pendRows = adminPlayer("alice")
 check(pendRows == 2 and ap and ap.used == 3 and ap.base == 3 and ap.limit == 3 and not ap.custom,
     "管理員總表列出待轉車與每位玩家的已用／基本／上限")
-check(cmd(AD5, "adminSetQuota", { username = "alice", amount = 5 }).ok and adminPlayer("alice").custom
+do -- 總表一次掃完累計的已用／上限，要跟逐人 O.quotaUsed／O.quotaLimit 一樣（alice 有轉正的車＋待轉項）
+    cmd(AD5, "adminList", {}, false)
+    local same, n = true, 0
+    for _, pl in ipairs(lastOf(AD5, "adminSnapshot").players) do
+        n = n + 1
+        if pl.used ~= O.quotaUsed(pl.user) or pl.limit ~= O.quotaLimit(pl.user) then same = false end
+    end
+    check(same and n == 1, "總表一次掃完的已用／上限與逐人計算相同（含待轉項）")
+end
+check(cmd(AD5, "adminSetQuota", { usernames = { "alice" }, amount = 5 }).ok and adminPlayer("alice").custom
     and adminPlayer("alice").base == 5 and adminPlayer("alice").limit == 5, "管理員設定的基本名額標為自訂並算進上限")
-check(cmd(AD5, "adminSetQuota", { username = "alice", amount = -1 }).ok and not adminPlayer("alice").custom
+check(cmd(AD5, "adminSetQuota", { usernames = { "alice" }, amount = -1 }).ok and not adminPlayer("alice").custom
     and adminPlayer("alice").base == 3, "恢復預設後回到沙盒基本名額")
-cmd(AD5, "adminSetQuota", { username = "zed", amount = 2 })
+cmd(AD5, "adminSetQuota", { usernames = { "zed" }, amount = 2 })
 local zp = adminPlayer("zed")
 check(zp and zp.used == 0 and zp.custom and zp.limit == 2, "還沒有車、只設定過名額的玩家也列在總表")
-cmd(AD5, "adminSetQuota", { username = "zed", amount = -1 })
+cmd(AD5, "adminSetQuota", { usernames = { "zed" }, amount = -1 })
 local A5 = player("alice", 0, 0)
 cmd(A5, "fleetSubscribe", {}, false)
 local prow = nil
@@ -1292,6 +1442,115 @@ nowMs = nowMs + 2 * 86400000
 MG.expire(true)
 check(O.state().pendingRebindByLegacyKey[1700000000104] == nil and O.quotaUsed("alice") == 2, "逾期未對上的待轉項刪除並釋放 quota")
 SB.RebindDeadlineDays = 30
+end
+
+out("情境 13c：管理員總表分段（引擎送出緩衝區 1 MB）")
+do
+    -- TableNetworkUtils 格式：型別 1 byte；字串 2 byte 長度＋UTF-8；數字 8 byte；布林 1 byte；table 4 byte 筆數＋鍵值
+    local function sz(v)
+        local t = type(v)
+        if t == "string" then return 1 + 2 + #v end
+        if t == "number" then return 1 + 8 end
+        if t == "boolean" then return 1 + 1 end
+        if t == "table" then
+            local n = 1 + 4
+            for k, x in pairs(v) do n = n + sz(k) + sz(x) end
+            return n
+        end
+        return 0
+    end
+    boot()
+    local ADMC = player("admin", 1, 1, { admin = true })
+    -- 最壞情況：5000 位 50 字元帳號各一台車，車名 64 bytes、車型 100 字元、隔離原因、四個時間座標欄位都有值
+    local users = {}
+    for i = 1, 5000 do
+        local u = string.format("%s%05d", string.rep("u", 45), i)
+        users[i] = u
+        local p = player(u, 1, 1)
+        local a = claim(p, vehicle(i, 100000 + i, 500000 + i, "Base." .. string.rep("V", 95), 1, 1))
+        local r = rec(a.oid)
+        r.customName, r.quarantineReason = string.rep("n", 64), string.rep("R", 32)
+        r.lastKnownX, r.lastKnownY, r.lastKnownAtMs, r.releaseDueAtMs = 12345.678, 9876.543, nowMs, nowMs + 86400000
+        online[#online] = nil
+    end
+    local function parts(p)
+        local box, last = outbox[p.name], nil
+        for i = #box, 1, -1 do if box[i].command == "adminSnapshot" then last = box[i].payload.id; break end end
+        local list = {}
+        for _, m in ipairs(box) do if m.command == "adminSnapshot" and m.payload.id == last then list[#list + 1] = m.payload end end
+        return list
+    end
+    local function sameList(a, b, key)
+        if a == nil or b == nil or #a ~= #b then return false end
+        local idx = {}
+        for _, x in ipairs(b) do idx[x[key]] = x end
+        for _, x in ipairs(a) do
+            local y = idx[x[key]]
+            if y == nil then return false end
+            for k, v in pairs(x) do if type(v) ~= "table" and y[k] ~= v then return false end end
+            for k, v in pairs(y) do if type(v) ~= "table" and x[k] ~= v then return false end end
+        end
+        return true
+    end
+    local function deliver(list, order)
+        for _, i in ipairs(order) do MVM.clientReceive("adminSnapshot", list[i]) end
+    end
+    local function range(a, b) local o = {}; for i = a, b do o[#o + 1] = i end; return o end
+    -- 不分段的同一份資料作為比對基準
+    local per0 = S.ADMIN_PART_ITEMS
+    S.ADMIN_PART_ITEMS = 1e9
+    cmd(ADMC, "adminList", {}, false)
+    local whole = parts(ADMC)[1]
+    S.ADMIN_PART_ITEMS = per0
+    cmd(ADMC, "adminList", {}, false)
+    local ps = parts(ADMC)
+    local maxSize, shape = 0, #ps >= 3
+    for i, pt in ipairs(ps) do
+        maxSize = math.max(maxSize, sz(pt))
+        if pt.part ~= i or pt.parts ~= #ps then shape = false end
+    end
+    out(string.format("  info  5000 位＋5000 筆：%d 段，最大一段 %d bytes（不分段 %d bytes）", #ps, maxSize, sz(whole)))
+    check(shape and maxSize < 200 * 1024 and sz(whole) > 1000000, "最壞情況（不分段會超過 1 MB）：每段依序編號，序列化後都小於 200 KB")
+    check(ps[1].ok == true and ps[1].defaultQuota == 3 and ps[2].ok == nil and ps[2].defaultQuota == nil, "meta 只放在第 1 段")
+    local CB = MVM.Client.buckets
+    CB.admin = nil
+    deliver(ps, range(1, #ps))
+    local b = CB.admin
+    check(sameList(b.admin, whole.rows, "oid") and sameList(b.adminPlayers, whole.players, "user") and #b.adminPlayers == 5000
+        and b.adminDefaultQuota == 3 and b.adminPending == nil, "client 收齊後重組的列與玩家和不分段時完全相同")
+    cmd(ADMC, "adminList", {}, false)
+    local rev = parts(ADMC)
+    CB.admin = nil
+    local order = {}
+    for i = #rev, 1, -1 do order[#order + 1] = i end
+    deliver(rev, order)
+    check(CB.admin ~= nil and sameList(CB.admin.admin, whole.rows, "oid") and sameList(CB.admin.adminPlayers, whole.players, "user"),
+        "段到達順序不同也依段號重組成同一份資料")
+    -- 缺段：其他段都到了也不套用
+    b = CB.admin
+    local before = b.adminPlayers
+    cmd(ADMC, "adminList", {}, false)
+    local miss = parts(ADMC)
+    local most = range(1, #miss)
+    table.remove(most, 2)
+    deliver(miss, most)
+    check(b.adminPlayers == before and b.adminPending ~= nil, "缺一段：不套用半套資料，保留上一份完整總表")
+    -- 新 id 丟掉舊的未完成段：A 前半＋B 後半不能湊成一份；B 補齊前半才套用 B
+    cmd(ADMC, "adminList", {}, false)
+    local A = parts(ADMC)
+    O.mapSet("quotaOverrides", users[1], 9)
+    cmd(ADMC, "adminList", {}, false)
+    local B = parts(ADMC)
+    local k = math.floor(#A / 2)
+    deliver(A, range(1, k))
+    deliver(B, range(k + 1, #B))
+    local mixed = b.adminPlayers ~= before
+    deliver(B, range(1, k))
+    local custom = false
+    for _, pl in ipairs(b.adminPlayers) do if pl.user == users[1] then custom = pl.custom == true and pl.base == 9 end end
+    check(#A == #B and not mixed and custom and #b.adminPlayers == 5000, "收到新 id 就丟掉舊的未完成段，只套用收齊的新總表")
+    O.mapSet("quotaOverrides", users[1], nil)
+    CB.admin = nil
 end
 
 out("植入違規自檢：授權若讀車身 modData 會被情境 8 抓到")
@@ -1699,9 +1958,9 @@ local snap = lastOf(AL, "fleetSnapshot")
 local q = snap.quota
 check(q.base == 1 and q.paid == 2 and q.permanent == 1 and q.rental == 1 and q.total == 3 and q.used == 3
     and q.economy == "READY" and snap.quotaLimit == 3, "fleetSnapshot 名額分項：基本／永久／租用／總計／整合狀態")
-cmd(ADM, "adminSetQuota", { username = "alice", amount = 0 })
+cmd(ADM, "adminSetQuota", { usernames = { "alice" }, amount = 0 })
 check(O.quotaBase("alice") == 0 and O.quotaLimit("alice") == 2, "管理員個人上限取代基本（絕對值），付費名額照加")
-cmd(ADM, "adminSetQuota", { username = "alice", amount = -1 })
+cmd(ADM, "adminSetQuota", { usernames = { "alice" }, amount = -1 })
 
 -- 權益變更推送：只重送該玩家的快照
 local n = #outbox.alice

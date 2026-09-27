@@ -80,6 +80,35 @@ local function accessChanged()
     if ISInventoryPage and ISInventoryPage.dirtyUI then ISInventoryPage.dirtyUI() end
 end
 
+-- 伺服器存好新的全服預設名額後通知（沒有原版 Lua 廣播）：本機沙盒選項跟著改並投影到 SandboxVars，
+-- 否則之後從原版沙盒 UI 存檔會把舊值整份送回伺服器（GameServer.java:1694-1708）
+local function syncDefaultQuota(amount)
+    getSandboxOptions():set("MinidoracatVehicleManager.ClaimsPerPlayer", amount)
+    getSandboxOptions():toLua()
+end
+
+-- 管理員總表分段（Server.lua S.sendAdminParts：引擎送出緩衝區固定 1 MB）。同一 id 收齊全部段才一次回傳 meta（第 1 段）
+-- 與合併後的 rows／players；新 id 丟掉舊的未完成段；欄位不對、缺段都不回傳，不套用半套資料
+local function adminParts(b, payload)
+    local id, part, parts = payload.id, payload.part, payload.parts
+    if type(id) ~= "string" or not MVM.isInt(parts) or parts < 1 or not MVM.isInt(part) or part < 1 or part > parts then return nil end
+    local pend = b.adminPending
+    if pend == nil or pend.id ~= id or pend.parts ~= parts then
+        pend = { id = id, parts = parts, got = {}, n = 0 }
+        b.adminPending = pend
+    end
+    if pend.got[part] == nil then pend.n = pend.n + 1 end
+    pend.got[part] = payload
+    if pend.n < parts then return nil end
+    b.adminPending = nil
+    local rows, players = {}, {}
+    for i = 1, parts do
+        for _, row in ipairs(pend.got[i].rows or {}) do rows[#rows + 1] = row end
+        for _, pl in ipairs(pend.got[i].players or {}) do players[#players + 1] = pl end
+    end
+    return pend.got[1], rows, players
+end
+
 -- server → client（MP 經 OnServerCommand；SP 由 server adapter 直接呼叫）
 function MVM.clientReceive(command, payload)
     if type(payload) ~= "table" or type(payload.to) ~= "string" then return end
@@ -116,10 +145,18 @@ function MVM.clientReceive(command, payload)
         b.track = b.track or {}
         b.track[payload.oid] = { x = payload.x, y = payload.y, z = payload.z, t = payload.t }
     elseif command == "adminSnapshot" then
-        b.admin = payload.ok and payload.rows or nil
-        b.adminPlayers = payload.ok and payload.players or nil
-        b.migrationAvailable = payload.ok and payload.migrationAvailable == true
-        b.adminOverride = payload.ok and payload.override == true
+        local meta, rows, players = adminParts(b, payload)
+        if meta == nil then return end
+        local ok = meta.ok == true
+        b.admin = ok and rows or nil
+        b.adminPlayers = ok and players or nil
+        b.adminDefaultQuota = ok and meta.defaultQuota or nil
+        b.migrationAvailable = ok and meta.migrationAvailable == true
+        b.adminOverride = ok and meta.override == true
+    elseif command == "sandboxSync" then
+        if not MVM.isInt(payload.claimsPerPlayer) then return end
+        local ok, err = pcall(syncDefaultQuota, payload.claimsPerPlayer)
+        if not ok then MVM.log("sandbox sync failed: " .. tostring(err)) end
     elseif MVM.clientHandlers and MVM.clientHandlers[command] then
         MVM.clientHandlers[command](payload)
     end

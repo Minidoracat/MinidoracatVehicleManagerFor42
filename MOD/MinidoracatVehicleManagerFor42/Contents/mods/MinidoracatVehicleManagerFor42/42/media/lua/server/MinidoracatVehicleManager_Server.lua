@@ -146,40 +146,100 @@ function S.snapshot(player, who)
         quota.used, quota.base = O.quotaUsed(who), O.quotaBase(who)
         quota.total = quota.base + quota.paid
     end
+    -- ponytail: 單一封包送出，列數＝自己的車＋被分享的車＋陣營分享車＋MVCK 待轉列，後兩者沒有上限；
+    -- 約 1000 列（每列 0.4–1 KB）會碰到 1 MB 封包上限（見 S.sendAdminParts 的註解）。真有大陣營時照 sendAdminParts 分段
     S.send(player, "fleetSnapshot", { streamId = st.streamId, seq = 0, rows = rows,
         quotaUsed = quota and quota.used or 0, quotaLimit = quota and quota.total or 0, quota = quota,
         status = O.R.status })
 end
 
+-- 名額規則變了：重送這些線上玩家的快照（名額顯示即時更新）；users＝nil 表示全部線上玩家
+function S.resnapshot(users)
+    local online = S.online()
+    if users == nil then
+        for who, p in pairs(online) do S.snapshot(p, who) end
+        return
+    end
+    for _, who in ipairs(users) do if online[who] then S.snapshot(online[who], who) end end
+end
+
+-- 全服預設名額＝沙盒 ClaimsPerPlayer（唯一真相，帳本不另存）。R.defaultQuota 是上次看到的值：
+-- 原版沙盒 UI 送回整份選項（GameServer.java:1694-1708）會直接改掉它，每分鐘比對一次，變了就重送快照
+local DEFAULT_QUOTA_OPTION = "MinidoracatVehicleManager.ClaimsPerPlayer"
+function S.defaultQuota() return MVM.sandbox("ClaimsPerPlayer", 3) end
+
+function S.watchDefaultQuota()
+    local q, old = S.defaultQuota(), R.defaultQuota
+    R.defaultQuota = q
+    if old == nil or old == q then return end
+    O.audit("WARN", "ADMIN_QUOTA", { actor = "SANDBOX", role = "ADMIN", reason = "DEFAULT " .. tostring(old) .. "->" .. q })
+    S.resnapshot(nil)
+end
+
+-- SandboxOptions.set／toLua／saveServerLuaFile（SandboxOptions.java:572-582,279-285,683-685）：
+-- 存檔是 FileWriter，I/O 錯誤時回 false（:862-962），只有回 true 才算寫入
+local function writeDefaultQuota(opts, amount)
+    opts:set(DEFAULT_QUOTA_OPTION, amount)
+    opts:toLua()
+    return opts:saveServerLuaFile(getServerName())
+end
+
+-- 管理員總表分段送出。每條連線的送出緩衝區固定 1,000,000 bytes、不會擴充（UdpConnection.java:40-41），
+-- sendServerCommand（GameServer.java:3460-3482）在 startPacket 上鎖（UdpConnection.java:198-201）後序列化、
+-- 只接 IOException：超過時丟 BufferOverflowException，封包沒送、鎖不釋放（解鎖在 endPacket :303-305）。
+-- 所以每段最多 ADMIN_PART_ITEMS 筆（車輛列與玩家合計）：最壞一列約 0.5 KB（車名 64 bytes、帳號 50 字元），
+-- 每段遠低於 200 KB（harness 以 TableNetworkUtils 格式量測）。同一次總表各段帶同一個 id 與 part／parts，
+-- meta（ok、status、migrationAvailable、override、defaultQuota）只在第 1 段；client 收齊才替換（Client.lua）
+S.ADMIN_PART_ITEMS = 200
+function S.sendAdminParts(player, meta, rows, players)
+    local per, nr = S.ADMIN_PART_ITEMS, #rows
+    local total = nr + #players
+    local parts = math.max(1, math.ceil(total / per))
+    local id = getRandomUUID()
+    for part = 1, parts do
+        local pr, pp = {}, {}
+        for i = (part - 1) * per + 1, math.min(part * per, total) do
+            if i <= nr then pr[#pr + 1] = rows[i] else pp[#pp + 1] = players[i - nr] end
+        end
+        local payload = part == 1 and meta or {}
+        payload.id, payload.part, payload.parts, payload.rows, payload.players = id, part, parts, pr, pp
+        S.send(player, "adminSnapshot", payload)
+    end
+end
+
 -- 管理員總表：只給 ManipulateVehicle；位置只給 owner 資訊與最後已知點（即時追蹤屬 Phase 4 的另一權限）。
--- players：每位車主（含只有 MVCK 待轉項或個人名額設定的人）的已用／基本／上限，管理頁依此分組
+-- players：每位車主、MVCK 待轉項或個人名額設定的人，以及登入過但還沒有車的玩家（knownUsers），管理頁依此分組。
+-- 已用名額在同一趟掃描裡累計（結果同 O.quotaUsed：計入 quota 的紀錄＋待轉項），不逐人重掃待轉項
 function S.adminSnapshot(player)
     local st = O.state()
     if not O.isAdmin(player) or st == nil then
-        return S.send(player, "adminSnapshot", { ok = false, rows = {}, players = {}, migrationAvailable = false, override = false })
+        return S.sendAdminParts(player, { ok = false, migrationAvailable = false, override = false }, {}, {})
     end
-    local rows, users = {}, {}
+    local rows, used = {}, {}
     for _, rec in pairs(st.recordsByOid) do
         rows[#rows + 1] = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
             name = rec.customName or "", reason = rec.quarantineReason, lastKnownX = rec.lastKnownX, lastKnownY = rec.lastKnownY,
             lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs }
-        if rec.ownerUser then users[rec.ownerUser] = true end
+        local owner = rec.ownerUser
+        if owner then used[owner] = (used[owner] or 0) + (O.countsForQuota(rec) and 1 or 0) end
     end
+    -- extraRows 是 MVCK 待轉項，每筆都計入車主 quota（同 O.pendingCount）
     for _, row in ipairs(S.extraRows and S.extraRows(nil) or {}) do
         rows[#rows + 1] = row
-        if row.owner then users[row.owner] = true end
+        if row.owner then used[row.owner] = (used[row.owner] or 0) + 1 end
     end
-    for user in pairs(st.quotaOverrides) do users[user] = true end
-    -- ponytail: quotaUsed 每人各掃一次 MVCK 待轉項（玩家數×待轉數），大量待轉時才會慢；屆時改成一次掃完
+    for user in pairs(st.quotaOverrides) do used[user] = used[user] or 0 end
+    for user in pairs(st.knownUsers) do used[user] = used[user] or 0 end
     local players = {}
-    for user in pairs(users) do
-        players[#players + 1] = { user = user, used = O.quotaUsed(user), base = O.quotaBase(user), limit = O.quotaLimit(user),
+    for user, n in pairs(used) do
+        local base = O.quotaBase(user)
+        players[#players + 1] = { user = user, used = n, base = base, limit = base + (O.paidSlots and O.paidSlots(user) or 0),
             custom = MVM.isInt(st.quotaOverrides[user]) }
     end
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
     local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
-    S.send(player, "adminSnapshot", { ok = true, rows = rows, players = players, status = O.R.status,
-        migrationAvailable = migrationAvailable, override = O.overrideActive(player) })
+    S.sendAdminParts(player, { ok = true, status = O.R.status, migrationAvailable = migrationAvailable,
+        override = O.overrideActive(player), defaultQuota = S.defaultQuota() }, rows, players)
 end
 
 -- -------------------------------------------------------------- validation ---
@@ -194,10 +254,26 @@ local TYPES = {
     user = function(v) return type(v) == "string" and #v >= 1 and #v <= 50 and not v:find("%c") end,
     text = function(v) return type(v) == "string" and #v <= 256 end,
     amount = function(v) return MVM.isInt(v) and v >= -1 and v <= 100 end,
+    defaultAmount = function(v) return MVM.isInt(v) and v >= 0 and v <= 20 end, -- 同沙盒 ClaimsPerPlayer 範圍
     op = function(v) return v == "RELEASE" or v == "ACTIVATE" end,
     migrationOp = function(v) return v == "IMPORT" end,
     name = function(v) return type(v) == "string" and #v >= 1 and #v <= 64 and v:match("^[%w_]+$") ~= nil end,
 }
+-- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
+S.BATCH_MAX = 500
+function TYPES.users(v)
+    if type(v) ~= "table" then return false end
+    local n = 0
+    for _ in pairs(v) do n = n + 1 end
+    if n < 1 or n > S.BATCH_MAX then return false end
+    local seen = {}
+    for i = 1, n do
+        local user = v[i]
+        if not TYPES.user(user) or seen[user] then return false end
+        seen[user] = true
+    end
+    return true
+end
 
 -- 欄位 → 型別；? 結尾＝選填。未列出的欄位一律拒收（不讓 client 夾帶 ownerUser 之類）
 local SCHEMA = {
@@ -214,7 +290,8 @@ local SCHEMA = {
     leaveShared = { expectedOid = "uuid" },
     transfer = { vehicleId = "id", expectedOid = "uuid", expectedEpoch = "uuid", recipient = "user" },
     dismissRecord = { expectedOid = "uuid" },
-    adminSetQuota = { username = "user", amount = "amount" },
+    adminSetQuota = { usernames = "users", amount = "amount" },
+    adminSetDefaultQuota = { amount = "defaultAmount" },
     adminRecover = { expectedOid = "uuid", op = "op", ["vehicleId?"] = "id" },
     fleetSubscribe = {},
     fleetResync = {},
@@ -530,12 +607,39 @@ H.dismissRecord = function(player, who, a)
     return { ok = true }
 end
 
+-- 個人基本名額（絕對值；-1＝恢復全服預設），一次最多 BATCH_MAX 人；逐人稽核，重送受影響的線上玩家快照
 H.adminSetQuota = function(player, who, a)
     if not O.isAdmin(player) then return fail("NOT_ADMIN") end
-    O.mapSet("quotaOverrides", a.username, a.amount >= 0 and a.amount or nil)
+    local overrides = O.state().quotaOverrides
+    local value = a.amount >= 0 and a.amount or nil
+    for _, user in ipairs(a.usernames) do
+        local old = overrides[user]
+        O.mapSet("quotaOverrides", user, value)
+        O.audit("WARN", "ADMIN_QUOTA", { actor = who, role = "ADMIN", owner = user,
+            reason = "USER " .. tostring(old or "DEFAULT") .. "->" .. tostring(value or "DEFAULT") })
+    end
     O.bump(nil)
-    O.audit("WARN", "ADMIN_BYPASS", { actor = who, role = "ADMIN", owner = a.username, reason = "QUOTA " .. a.amount })
-    return { ok = true }
+    S.resnapshot(a.usernames)
+    return { ok = true, count = #a.usernames }
+end
+
+-- 全服預設名額：寫沙盒並存伺服器沙盒檔。存檔失敗：記憶體與檔案都盡力改回原值、回 SAVE_FAILED、不廣播。
+-- 成功才通知線上客戶端同步 SandboxVars（伺服器沒有原版 Lua 廣播；客戶端副本舊了，原版沙盒 UI 存檔會蓋回舊值）
+H.adminSetDefaultQuota = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    local opts = getSandboxOptions()
+    local old = S.defaultQuota()
+    local ok, saved = pcall(writeDefaultQuota, opts, a.amount)
+    if not ok or saved ~= true then
+        pcall(writeDefaultQuota, opts, old)
+        MVM.log("default quota save failed: " .. tostring(saved))
+        return fail("SAVE_FAILED")
+    end
+    R.defaultQuota = a.amount
+    O.audit("WARN", "ADMIN_QUOTA", { actor = who, role = "ADMIN", reason = "DEFAULT " .. tostring(old) .. "->" .. a.amount })
+    for _, p in pairs(S.online()) do S.send(p, "sandboxSync", { claimsPerPlayer = a.amount }) end
+    S.resnapshot(nil)
+    return { ok = true, amount = a.amount }
 end
 
 -- RELEASE：任一非終態 → RELEASED。ACTIVATE：QUARANTINED 且車已載入、三欄位相符、同 sqlId 無其他可授權紀錄 → 重寫見證 ACTIVE
@@ -646,6 +750,7 @@ function S.minute()
     for who in pairs(R.streams) do if online[who] == nil then R.streams[who] = nil end end
     O.maintain(false)
     O.scanLoaded(false)
+    S.watchDefaultQuota()
 end
 
 Events.EveryOneMinute.Add(S.minute)
