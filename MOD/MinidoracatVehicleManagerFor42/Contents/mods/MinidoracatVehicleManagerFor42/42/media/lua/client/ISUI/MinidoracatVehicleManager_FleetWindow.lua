@@ -358,10 +358,16 @@ function FleetWindow:build()
         unbindCell = function(_, c) c.row = nil end,
         onSelect = function(_, row)
             self.selectedOid, self.current = row and row.oid, row
-            -- 點玩家列＝選取並切換展開（清單在下一幀重建）
+            -- 點玩家列（或焦點框上按 Enter／手把 A）＝選取並切換展開（清單在下一幀重建）
             if row and row.kind == "PLAYER" then self.expanded[row.user] = not row.open; self.dirty = true end
             self:layoutDetail()
         end,
+        -- 鍵盤方向鍵／手把上下只移動反白：詳情跟著換，不切換展開（框架 rev 10）
+        onHighlight = function(_, row)
+            self.selectedOid, self.current = row and row.oid, row
+            self:layoutDetail()
+        end,
+        onKey = function(_, key, row, index) return self:treeKey(key, row, index) end,
         colors = { thumb = COL.textFaint, thumbHover = COL.textMuted, track = COL.hover } })
     self.list:initialise()
     body:addChild(self.list)
@@ -426,6 +432,52 @@ function FleetWindow:bucket()
 end
 
 function FleetWindow:selectedRow() return self.current end
+
+-- 鍵盤／手把把反白移到第 i 列（同滑鼠以外的移動：詳情跟著換，不切換展開）
+function FleetWindow:highlight(i)
+    local row = self.list:getItems()[i]
+    if row == nil then return end
+    self.list:setSelectedIndex(i)
+    self.list:scrollToIndex(i)
+    self.selectedOid, self.current = row.oid, row
+    self:layoutDetail()
+end
+
+-- 管理頁樹狀清單的左右鍵（鍵盤焦點框與手把方向同）：右＝展開／進到第一台車，左＝收合／回到車主。
+-- 回 false 的鍵交回框架（手把會移到上／下一個控制項）
+function FleetWindow:treeKey(key, row, index)
+    if self.tab ~= "ADMIN" or row == nil or index == nil then return false end
+    local right, left = key == Keyboard.KEY_RIGHT, key == Keyboard.KEY_LEFT
+    if not (right or left) then return false end
+    local items = self.list:getItems()
+    if row.kind == "PLAYER" then
+        if right and not row.open then
+            self.expanded[row.user] = true
+            self.dirty = true
+            return true
+        end
+        if left and row.open then
+            self.expanded[row.user] = false
+            self.dirty = true
+            return true
+        end
+        local nextRow = items[index + 1]
+        if right and nextRow ~= nil and nextRow.kind ~= "PLAYER" then
+            self:highlight(index + 1)
+            return true
+        end
+        return false
+    end
+    if left then
+        for i = index - 1, 1, -1 do
+            if items[i].kind == "PLAYER" then
+                self:highlight(i)
+                return true
+            end
+        end
+    end
+    return false
+end
 
 -- keyed replace：重建清單時保留選取的 oid（管理頁的玩家列以 player:帳號 當鍵）
 function FleetWindow:rebuild()
@@ -832,6 +884,8 @@ function IconCell:prerender()
 end
 function IconCell:onMouseUp() Look.pick(self.look, self); return true end
 function IconCell:onMouseDown() return true end
+-- 鍵盤 Enter／手把 A（框架 Focus 的 activate）：與點擊同一條路徑
+function IconCell:forceClick() Look.pick(self.look, self) end
 
 function Look.pick(L, cell) L.icon = cell.internal end
 
@@ -868,7 +922,8 @@ function Look.open(fleet, row)
         local col, line = (i - 1) % perRow, math.floor((i - 1) / perRow)
         local b = IconCell:new(PAD + col * (cell + GAP), y + line * (cell + GAP), cell, cell)
         b.background = false
-        b.internal, b.look = key, L
+        -- 框架 Focus 的一組目標：方向鍵在圖示之間走、Enter／A 選取
+        b.internal, b.look, b._focusKind, b._focusGroup = key, L, "button", "icons"
         b:initialise()
         body:addChild(b)
         L.iconButtons[i] = b
