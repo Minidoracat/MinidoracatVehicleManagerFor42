@@ -3,8 +3,14 @@
 --   匯入 pendingRebindByLegacyKey；已載入的車當場轉正，其餘等車被載入時轉正。
 --   可重複執行：已匯入過的舊 ID 不重複匯入（MVCK 還在時新綁的車，再按一次就補進來）。
 --   **不刪 MVCK 的資料**：伺服器之後自行從 Mods= 移除 MVCK 即可；兩個 MOD 並存期間兩邊的保護都會生效。
--- 轉正：車身 SQLID 命中待轉項，且車型相同、SQLID 內嵌的綁定當時 sqlId 等於此車 server 端 sqlId，才建立正式紀錄。
---   車身 modData 可被 client 覆寫（Phase 0 trust-mp），所以只看 SQLID 不夠。
+-- 轉正（車身 SQLID 命中待轉項 E，且車型相同）：
+--   規則 1：SQLID 內嵌的綁定當時 sqlId 等於此車 server 端 sqlId。
+--   規則 2（換號，稽核 REBOUND_MOVED）：內嵌 sqlId 不同。正式服的 rSemiTruck 多槽拖車（MSW）裝車時刪車、卸車時
+--     addVehicleDebug 生新車並還原整份 modData：車身 SQLID 與車型保留，sqlId 換新。必須同時：
+--     (a) 此車 sqlId 不是另一筆同車型待轉項的內嵌 sqlId（那筆的原車很可能就是這台，留給規則 1）；
+--     (b) 已載入的車裡沒有同車型、正好位在 E 內嵌 sqlId 的車（有的話那台才是原車，這台是偽造的）。
+--   車身 modData 可被 client 覆寫（Phase 0 trust-mp），server sqlId 不行。規則 2 的取捨：原車沒載入時，
+--   改過的 client 可以把 E 的 SQLID 寫到一台沒被占住的同車型車上搶先轉正。
 if isClient() then return end
 require "MinidoracatVehicleManager_OwnershipSystem"
 require "MinidoracatVehicleManager_Server"
@@ -40,12 +46,16 @@ function M.intStr(n)
     return neg and ("-" .. s) or s
 end
 
--- MVCK 的舊 ID＝tonumber(秒級時間戳 .. 綁定當時 sqlId)。時間戳固定 10 位，拆法唯一
+-- MVCK 的舊 ID＝tonumber(秒級時間戳 .. 綁定當時 sqlId)。時間戳固定 10 位，拆法唯一；sqlId 不會有前導 0
+function M.embedded(legacyId)
+    if not MVM.isInt(legacyId) or legacyId < 1e10 then return nil end
+    local tail = M.intStr(legacyId):sub(11)
+    if #tail > 1 and tail:sub(1, 1) == "0" then return nil end
+    return tonumber(tail)
+end
+
 function M.embeddedSqlId(legacyId, sqlId)
-    if not MVM.isInt(legacyId) or not MVM.isInt(sqlId) or sqlId < 0 then return false end
-    local p = 10 ^ #tostring(math.floor(sqlId))
-    local prefix = math.floor(legacyId / p)
-    return legacyId - prefix * p == sqlId and prefix >= 1e9 and prefix < 1e10
+    return MVM.isInt(sqlId) and sqlId >= 0 and M.embedded(legacyId) == sqlId
 end
 
 local function validOwner(v) return type(v) == "string" and #v >= 1 and #v <= 50 and not v:find("%c") end
@@ -96,7 +106,24 @@ function M.importAll(actor)
     return true, out
 end
 
--- lookup 對「無紀錄」的車呼叫：命中待轉項且車型、內嵌 sqlId 都相符才轉正
+-- 規則 2 的 (a)(b)：回 nil＝可以轉正，否則回拒絕原因。只在換號時才掃待轉項 O(P) 與已載入的車
+local function movedRefusal(legacy, e, vehicle)
+    local sqlId = vehicle:getSqlId()
+    for id, other in pairs(O.state().pendingRebindByLegacyKey) do
+        if id ~= legacy and other.vehicleScript == e.vehicleScript and M.embeddedSqlId(id, sqlId) then return "REBIND_MOVED_TAKEN" end
+    end
+    local original = M.embedded(legacy)
+    local it = getCell():getVehicles():iterator()
+    while it:hasNext() do
+        local v = it:next()
+        if v ~= vehicle and v:getSqlId() == original and v:getScriptName() == e.vehicleScript and not v:isRemovedFromWorld() then
+            return "REBIND_MOVED_ORIGINAL_LOADED"
+        end
+    end
+    return nil
+end
+
+-- lookup 對「無紀錄」的車呼叫：命中待轉項且車型相同，再依規則 1／2 轉正
 function M.rebind(vehicle)
     local st = O.state()
     local pend = st and st.pendingRebindByLegacyKey
@@ -106,11 +133,17 @@ function M.rebind(vehicle)
     local e = pend[legacy]
     if e == nil then return nil end
     local sqlId = vehicle:getSqlId()
-    if vehicle:getScriptName() ~= e.vehicleScript or not M.embeddedSqlId(legacy, sqlId) then
+    local reason, refused = "REBOUND", nil
+    if vehicle:getScriptName() ~= e.vehicleScript then
+        refused = "REBIND_MISMATCH"
+    elseif not M.embeddedSqlId(legacy, sqlId) then
+        reason, refused = "REBOUND_MOVED", movedRefusal(legacy, e, vehicle)
+    end
+    if refused then
         local key = tostring(legacy) .. "/" .. tostring(sqlId)
         if not M.mismatched[key] then
             M.mismatched[key] = true
-            O.audit("WARN", "MIGRATE", { owner = e.ownerUser, vehicle = sqlId, reason = "REBIND_MISMATCH" })
+            O.audit("WARN", "MIGRATE", { owner = e.ownerUser, vehicle = sqlId, reason = refused })
         end
         return nil
     end
@@ -119,7 +152,7 @@ function M.rebind(vehicle)
     O.mapSet("pendingRebindByLegacyKey", legacy, nil)
     local rec = O.createRecord(e.ownerUser, vehicle, host)
     rec.claimedAtMs = e.claimedAtMs
-    O.audit("INFO", "MIGRATE", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = rec.sqlIdHint, reason = "REBOUND" })
+    O.audit("INFO", "MIGRATE", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = rec.sqlIdHint, reason = reason })
     S.push({ [rec.ownerUser] = true }, { oid = M.rowId(legacy) }, true) -- 撤掉待轉列
     S.push(S.audience(rec), rec, false)
     return rec

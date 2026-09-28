@@ -1420,18 +1420,18 @@ boot(disk, true); gmd = gmdSaved
 A5 = player("alice", 0, 0)
 cmd(A5, "fleetSubscribe", {}, false)
 check(O.state().pendingRebindByLegacyKey[1700000000102] ~= nil and O.ready(), "待轉項跨重啟保留")
--- 偽造：別台車身寫同一個舊 ID，但 server sqlId 不是內嵌的 102
+-- 偽造：別台同型車身寫同一個舊 ID（server sqlId 不是內嵌的 102），原車在場 → 規則 2 的 (b) 擋下
+local van = vehicle(3, 102, 7003, "Base.Van", 1, 1)
+van:getModData().SQLID = 1700000000102
 local decoy = vehicle(2, 555, 7002, "Base.Van", 1, 1)
 decoy:getModData().SQLID = 1700000000102
-check(O.lookup(decoy) == "UNCLAIMED" and O.state().pendingRebindByLegacyKey[1700000000102] ~= nil, "車身 SQLID 被偽造到別台車：不轉正")
+check(O.lookup(decoy) == "UNCLAIMED" and O.state().pendingRebindByLegacyKey[1700000000102] ~= nil, "車身 SQLID 被偽造到別台同型車、原車在場：不轉正")
 local nlog = #logLines
 O.lookup(decoy)
 check(#logLines == nlog, "不符只記一次")
-local van = vehicle(3, 102, 7003, "Base.Van", 1, 1)
-van:getModData().SQLID = 1700000000102
 local v5, r5 = O.lookup(van)
 check(v5 == "AUTHORIZED" and r5.ownerUser == "alice" and O.state().pendingRebindByLegacyKey[1700000000102] == nil,
-    "真車之後被載入：轉正為 ACTIVE、刪待轉項")
+    "原車被查到：轉正為 ACTIVE、刪待轉項")
 local removedPending = false
 for _, m in ipairs(outbox.alice) do if m.command == "fleetDelta" then for _, r in ipairs(m.payload.removes) do if r == "legacy-1700000000102" then removedPending = true end end end end
 check(removedPending, "車主收到撤掉待轉列的 delta")
@@ -1442,6 +1442,46 @@ nowMs = nowMs + 2 * 86400000
 MG.expire(true)
 check(O.state().pendingRebindByLegacyKey[1700000000104] == nil and O.quotaUsed("alice") == 2, "逾期未對上的待轉項刪除並釋放 quota")
 SB.RebindDeadlineDays = 30
+end
+
+do
+out("情境 P5b：換號的車（MSW 拖車裝卸後 sqlId 換新、車身 SQLID 與車型保留）")
+boot()
+local ADm = player("adminM", 1, 1, { admin = true })
+local L = { moved = 1700000000201, mm = 1700000000301, a1 = 1700000000401, a2 = 1700000000402, b = 1700000000501,
+    c1 = 17000000012047, c2 = 17000000022047 }
+local function entry(owner, model) return { OwnerPlayerID = owner, CarModel = model, ClaimDateTime = 1700000000 } end
+gmd.MVCKByVehicleSQLID = { [L.moved] = entry("bob", "Base.SemiTruck"), [L.mm] = entry("bob", "Base.Van"),
+    [L.a1] = entry("carol", "Base.Truck"), [L.a2] = entry("dave", "Base.Truck"), [L.b] = entry("erin", "Base.Pickup"),
+    [L.c1] = entry("p0159", "Base.85chevyStepVan"), [L.c2] = entry("p0164", "Base.93fordF350") }
+local function car(id, sqlId, model, legacy)
+    local v = vehicle(id, sqlId, 8000 + id, model, 1, 1)
+    v:getModData().SQLID = legacy
+    return v
+end
+local moved = car(1, 700, "Base.SemiTruck", L.moved)   -- 換號：內嵌 201，現在 700
+local wrongModel = car(2, 800, "Base.CarNormal", L.mm) -- 車型不同
+local taken = car(3, 402, "Base.Truck", L.a1)          -- 換號後的 402 是 a2（同車型）內嵌的 sqlId
+local fake = car(4, 900, "Base.Pickup", L.b)           -- 偽造：同型、b 的原車在場
+local orig = car(5, 501, "Base.Pickup", L.b)
+local stepVan = car(6, 3379, "Base.85chevyStepVan", L.c1) -- 正式服撞號：2047 換到 3379，2047 回收給 F350
+local f350 = car(7, 2047, "Base.93fordF350", L.c2)
+local pend = O.state().pendingRebindByLegacyKey
+local im = cmd(ADm, "adminMigration", { op = "IMPORT" })
+local function owner(v) local verdict, rec = O.lookup(v); return verdict == "AUTHORIZED" and rec.ownerUser or nil end
+local function logged(text) for _, l in ipairs(logLines) do if l:find(text, 1, true) then return true end end return false end
+check(im.ok and im.imported == 7 and im.rebound == 4 and im.pending == 3, "匯入：規則 1／2 當場轉正 4 台，3 筆留待轉")
+check(owner(moved) == "bob" and pend[L.moved] == nil and logged("REBOUND_MOVED"), "換號的車以規則 2 轉正（稽核 REBOUND_MOVED）")
+check(owner(wrongModel) == nil and pend[L.mm] ~= nil and logged("REBIND_MISMATCH"), "車型不同一律不轉正")
+check(owner(taken) == nil and pend[L.a1] ~= nil and pend[L.a2] ~= nil and logged("REBIND_MOVED_TAKEN"),
+    "換號後的 sqlId 是另一筆同車型待轉項的內嵌 sqlId：不轉正")
+taken:getModData().SQLID = L.a2
+check(owner(taken) == "dave" and pend[L.a2] == nil and pend[L.a1] ~= nil, "那一筆的原車照規則 1 轉正")
+check(owner(fake) == nil and owner(orig) == "erin" and logged("REBIND_MOVED_ORIGINAL_LOADED"),
+    "原車在場時，偽造 SQLID 的同型車不轉正，原車照規則 1 轉正")
+check(owner(stepVan) == "p0159" and owner(f350) == "p0164", "2047 撞號：換號的 StepVan 與拿到回收 2047 的 F350 各歸其主")
+check(MVM.Migration.embedded(17000000012047) == 2047 and MVM.Migration.embedded(17000000010) == 0
+    and MVM.Migration.embedded(1700000000) == nil and MVM.Migration.embedded(17000000010047) == nil, "內嵌 sqlId 拆出（前導 0 不是 sqlId）")
 end
 
 out("情境 13c：管理員總表分段（引擎送出緩衝區 1 MB）")
