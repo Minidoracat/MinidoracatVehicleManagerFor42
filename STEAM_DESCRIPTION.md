@@ -3,65 +3,47 @@
 
 [hr][/hr]
 
-[h2]✨ 這是什麼[/h2]
-多人伺服器的車輛綁定與保護系統：把車綁在自己的帳號上，別人就不能開你的車、偷你的油、拆你的零件或把車拖走。可以分享給朋友或陣營，並在車隊視窗與小地圖上管理自己的車。
+多人伺服器的車輛綁定與保護系統：把車綁在帳號上，別人就不能動你的車。可分享給朋友或陣營，並用車隊視窗管理。
 
-[h2]🔒 綁定與保護[/h2]
+[h2]📦 需要安裝[/h2]
 [list]
-[*] 在車旁右鍵「車輛管理 → 綁定車輛」，確認保護範圍後完成綁定
-[*] 綁在帳號上，角色死亡不會失去車輛；每人可綁定數量由伺服器設定
-[*] 未經允許的玩家無法：開關車門、解鎖、上車、發動、加油抽油、放氣、裝拆零件、修理、砸車窗、拖曳，也不能裝卸自動駕駛的 GPS／自駕模組
-[*] 被擋下時會看到「這台車受車主保護」，車況維持原樣
-[*] 車主不需要實體鑰匙就能解鎖、開門（不觸發警報）與發動（伺服器可關閉）
+[*] [b]必裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
+[*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url]（在地圖上追蹤車輛）
+[*] 支援 Build 42.20.4+；以多人為主要用途（單人也能用，但不支援分割畫面第二位玩家）
 [/list]
 
-[h2]🤝 分享[/h2]
+[h2]🚀 快速上手[/h2]
+[olist]
+[*] 在車旁右鍵開啟車輛管理選單，綁定這台車
+[*] 按畫面右側的方向盤按鈕開啟車隊視窗
+[*] 在車隊視窗把車分享給朋友或陣營，逐項勾選允許的動作
+[/olist]
+
+[h2]✨ 主要功能[/h2]
 [list]
-[*] 分享給指定玩家或自己的陣營，逐項勾選：搭乘、駕駛、後車廂、加油、安裝修理、拆零件、拖曳、查看位置
-[*] 預設是私人，不會自動分享給任何人
-[*] 改名、分享、解除綁定、轉讓只有車主能做
-[*] 陣營改名、解散或換領袖時，陣營分享會自動暫停，要車主重新確認
+[*] [b]綁在帳號上[/b]：角色死亡也不會失去車輛
+[*] [b]車輛保護[/b]：沒有權限的人不能開車、抽油、拆零件或拖車
+[*] [b]虛擬鑰匙[/b]：車主不需要實體鑰匙就能解鎖、開門與發動（伺服器可關閉）
+[*] [b]逐項分享[/b]：分享給指定玩家或陣營，預設私人
+[*] [b]車隊視窗[/b]：查看自己與分享的車，可改名、轉讓或回報遺失
+[*] [b]小地圖追蹤[/b]（選用）：自己的車與可查看位置的分享車會顯示在地圖上
+[*] [b]從 MVCK 移轉[/b]：管理員一鍵匯入 MVCK 的既有綁定
 [/list]
+📖 [b]保護範圍、分享權限、管理員工具與常見問題：[/b][url={VM_GUIDE_ZH}]Vehicle Manager 完整說明：車輛綁定、保護與車隊[/url]
 
-[h2]🗂️ 車隊視窗[/h2]
+[h2]🔗 Minidoracat 全系列[/h2]
+其他作品都在[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全系列收藏[/url]，依需求自選訂閱。
+
+[h2]💬 回報與交流[/h2]
 [list]
-[*] 畫面右側的方向盤按鈕開啟
-[*] 查看自己的車、別人分享給你的車與最後出現位置
-[*] 改名、分享、轉讓、解除綁定、回報遺失（等待一段時間後自動釋放）
-[*] 管理員另有管理頁，可處理有問題的綁定
+[*] [url=https://discord.gg/Gur2V67]Discord[/url]
 [/list]
-
-[h2]🗺️ 小地圖追蹤（選用）[/h2]
-同時安裝 Minidoracat MiniMap 時，自己的車與被允許「查看位置」的分享車會顯示在小地圖與世界地圖上；沒有權限的人看不到。
-
-[h2]⚠️ 保護範圍[/h2]
-[list]
-[*] 保護的是一般玩家操作；武器、殭屍與碰撞造成的損傷不在保護範圍
-[*] 使用作弊客戶端的人可能短暫坐上座位，伺服器約一秒內會發現並處置（管理員可設定只記錄或移出車外）
-[*] 所有判斷都在伺服器進行，客戶端只收到自己有權看的資料
-[/list]
-
-[h2]🔁 從 Mysterious Vehicle Claim Key 移轉[/h2]
-管理員在管理頁按一下「從 MVCK 匯入全部綁定」：已載入的車立刻轉入，其餘在車輛下次出現時轉入。不會刪除 MVCK 的資料，確認後自行移除 MVCK 即可。請先完整備份存檔。
-
-[h2]📋 MOD 資訊[/h2]
-[list]
-[*] [b]Workshop ID:[/b] 尚未指派
-[*] [b]Mod ID:[/b] MinidoracatVehicleManagerFor42
-[*] [b]支援版本:[/b] Build 42.20.4+
-[*] [b]單人 / 多人:[/b] 皆支援（多人為主要用途；單人不支援分割畫面第二位玩家）
-[*] [b]必要依賴:[/b] Minidoracat UI Framework（MinidoracatUIFor42）
-[*] [b]選用整合:[/b] Minidoracat MiniMap（地圖追蹤）
-[/list]
-
-[h2]💬 意見回饋與交流[/h2]
-[list]
-[*] [url=https://discord.gg/Gur2V67]Discord 社群[/url]
-[/list]
-
 
 [h2]☕ 支持作者[/h2]
 MOD 永遠免費。喜歡的話可以請我喝杯咖啡，贊助會用在伺服器與 MOD 開發上。
 [url=https://ko-fi.com/minidoracat][img]https://raw.githubusercontent.com/Minidoracat/workshop-resources/refs/heads/main/badges/badge_kofi.png[/img][/url]
 
 [b]#Minidoracat[/b]
+
+Workshop ID: 尚未指派
+Mod ID: MinidoracatVehicleManagerFor42

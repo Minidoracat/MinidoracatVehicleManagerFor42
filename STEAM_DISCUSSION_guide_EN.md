@@ -1,0 +1,91 @@
+<!-- Steam 討論區貼文稿源（English）；簡介只放摘要，詳細內容以本串為準 -->
+<!-- 討論串網址：（待建立） -->
+<!-- 標題：📖 Vehicle Manager Guide: Claims, Protection & Fleet -->
+
+[b]繁體中文版：[/b][url={VM_GUIDE_ZH}]Vehicle Manager 完整說明：車輛綁定、保護與車隊[/url]
+
+Vehicle Manager lets you claim a car to your account so other players can no longer drive it, siphon its fuel, strip its parts or tow it away. You can share it with friends or your faction and manage your cars from a fleet window and the minimap. This thread covers every feature in detail, the admin tools and common questions.
+
+[h2]🚀 Quick start[/h2]
+[olist]
+[*] The server enables this mod and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]; add [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] if you want to see your cars on the map
+[*] Right-click next to a car, choose "Vehicle Manager → Claim vehicle", and confirm what the protection covers
+[*] Open the fleet window with the steering wheel button on the right side of the screen to view, rename or share your cars
+[/olist]
+
+[h2]🔒 Claiming and protection[/h2]
+[list]
+[*] Claims belong to your account, so you keep your cars when your character dies; the server sets how many cars each player can claim
+[*] Players without permission cannot: open or close doors, unlock, get in, start the engine, add or siphon fuel, deflate tires, install or remove parts, repair, smash windows, tow, or install/remove AutoDrive GPS and autopilot modules
+[*] When blocked they see "This vehicle is protected by its owner" and the car stays as it was
+[*] Containers follow permissions: the trunk, truck bed, trailers and modded cargo boxes need the "trunk" permission, seats and the glovebox need "ride"; without permission they do not show up in the inventory
+[*] Owners can unlock, open doors (without the alarm) and start the car without a physical key (servers can turn this off)
+[/list]
+
+[h2]🤝 Sharing[/h2]
+[list]
+[*] Share with specific players or your faction and pick each permission: ride, drive, trunk, fuel, install/repair, remove parts, tow, see location
+[*] Private by default; nothing is shared automatically
+[*] Only the owner can rename, share, unclaim or transfer, and these rights cannot be shared
+[*] If the faction is renamed, disbanded or gets a new leader, faction sharing pauses until the owner confirms again
+[/list]
+
+[h2]🗂️ Fleet window[/h2]
+[list]
+[*] Open it with the steering wheel button on the right side of the screen
+[*] See your cars, cars shared with you and where they were last seen
+[*] Rename, share, transfer or unclaim
+[*] [b]Report lost[/b]: the claim is released after a waiting period; the car stays protected meanwhile, and if the server sees it again soon the release is cancelled
+[/list]
+
+[h2]🗺️ Minimap tracking (optional)[/h2]
+With Minidoracat MiniMap installed, your cars and shared cars you may "see location" of show on the minimap and world map. Nobody else can see them. Each car can have its own map icon, color and size; these settings are stored only on your computer.
+
+[h2]🛠️ Admin tools[/h2]
+[list]
+[*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin
+[*] By default admins are blocked like any other player. To use someone else's car, turn on "Override: use any vehicle" in the Admin tab: every use is logged, the steering wheel button gets a red frame while it is on, and it turns off automatically when you log in again or the server restarts
+[/list]
+
+[h2]⚠️ What is protected[/h2]
+[list]
+[*] Normal player actions are protected; damage from weapons, zombies and crashes is not
+[*] Someone using a cheating client may briefly get into a seat; the server notices within about a second and acts on it (admins choose between logging only or removing them from the car)
+[*] Whether a car's containers are listed is decided on the player's side, so a modified client may still take items from them, the same as vanilla locked cars; opening and closing the trunk door is still blocked by the server
+[*] Every decision is made on the server; clients only receive data they are allowed to see
+[/list]
+
+[h2]🔁 Moving from Mysterious Vehicle Claim Key (admins)[/h2]
+[olist]
+[*] Make a full backup of the save (including the world save folder)
+[*] Add this mod to the server (MVCK can stay for now) and start the server
+[*] Press "Import all claims from MVCK" in the Admin tab of the fleet window: loaded vehicles move over at once, the rest the next time they load; the window shows how many were imported, bound now and still waiting
+[*] You can press it again; it only picks up claims made in MVCK since, without duplicates, and never deletes MVCK data
+[*] Once you are happy, remove MVCK from the server yourself. While both mods run, both protections apply
+[/olist]
+MVCK sharing permissions are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default).
+
+[h2]❓ FAQ[/h2]
+[b]Q: My character died. Is the car still mine?[/b]
+A: Yes. Claims belong to your account, not your character.
+
+[b]Q: Are crashes, zombies or gunfire covered?[/b]
+A: No. Protection covers player actions such as opening doors, getting in, starting the engine and removing parts; weapon, zombie and crash damage work as in vanilla.
+
+[b]Q: I am an admin. Why can't I open other players' cars?[/b]
+A: By default admins are blocked like any other player. Turn on "Override: use any vehicle" in the Admin tab of the fleet window; every use is logged.
+
+[b]Q: Does it work without MiniMap?[/b]
+A: Yes. MiniMap only shows your cars on the map; claiming, protection, sharing and the fleet window all work without it.
+
+[b]Q: Can my friends see where my car is?[/b]
+A: Only people you gave the "see location" permission. By default nobody can.
+
+[b]Q: I lost my car. What now?[/b]
+A: Check where it was last seen in the fleet window. If it is really gone, press "Report lost"; the claim is released after a waiting period so you can claim another car.
+
+[b]Q: Does it work in singleplayer?[/b]
+A: Yes, but it is made for multiplayer; the second split-screen player is not supported.
+
+[h2]💬 Reporting problems[/h2]
+Please report issues on [url=https://discord.gg/Gur2V67]Discord[/url] with what happened, what you were doing at the time, and whether it was singleplayer or multiplayer.
