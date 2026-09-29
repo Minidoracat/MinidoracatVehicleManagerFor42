@@ -22,7 +22,8 @@ local SCHEMA_VERSION = 1
 -- 全伺服器的 GOS 系統數（原版 5 個＋所有 MOD）以 1 byte 送給客戶端（SGlobalObjects.java:103-104），客戶端用有號 byte 讀
 -- （CGlobalObjects.java:105），超過 127 所有 MOD 的客戶端 GOS 都會壞：開新分片前總數必須低於 systemBudget（留空間給別的 MOD）。
 -- 本 MOD 自己最多 60 片（約 12 萬筆）。
-O.SHARDED_MAPS = { "recordsByOid", "ownerActivity", "knownUsers", "quotaOverrides", "pendingRebindByLegacyKey", "migratedLegacyIds" }
+O.SHARDED_MAPS = { "recordsByOid", "ownerActivity", "knownUsers", "quotaOverrides", "pendingRebindByLegacyKey", "migratedLegacyIds",
+    "identityBindings" }
 O.SHARD_LIMITS = { records = 2000, entries = 20000, shards = 60, systemBudget = 100 }
 local DAY_MS, HOUR_MS = 86400000, 3600000
 
@@ -67,18 +68,122 @@ local function flushDenies()
 end
 
 -- ------------------------------------------------------------- identity ---
--- MP：server username；SP：本機 slot（SP 的 username 是角色姓名，換角色即變，§4.4）
--- MP 的分割畫面第 2～4 位玩家沒有身分：名稱由客戶端自由填，伺服器只擋空字串與在線重名（ConnectCoopPacket.parse），
--- 就以它當 username（GameServer.receivePlayerConnect）。E2E identity-mp 實測可取用離線玩家的名稱
+-- 家族約定 pz-family-docs/conventions.md「玩家身分」。MP：登入名；SP：本機 slot（SP 的 username 是角色姓名，換角色即變，§4.4）。
+-- 伺服器上的 getUsername() 是客戶端送的名字：重生與分割畫面加入只擋空字串與在線重名（ConnectCoopPacket.java:72-97），
+-- 直接設成 username（GameServer.java:2848）；E2E identity-mp／respawn-name-mp 實測可冒用離線玩家。所以
+-- 分割畫面第 2～4 位玩家一律沒有身分；Steam 模式下名字要對上綁定表的 SteamID（連線驗證過的 Steam 帳號，GameServer.java:2843-2844）。
+-- 第一次管理員匯入前，沒有綁定的名字沿用名字判定（既有玩家不會在匯入前全部失去身分）；no-steam 沒有驗證因子。
+-- getSteamID 進 Lua 會捨入到 16 的倍數（Long→Double，KahluaNumberConverter.java:103-116）：只拿 number 比對，不轉字串
+O.steamMode = function() return getSteamModeActive() == true end -- E2E 在 no-steam 伺服器覆寫
+O.sidOf = function(player) return player:getSteamID() end
+
 function O.principal(player)
     if player == nil then return nil end
-    if isServer() then
-        if player:getPlayerNum() ~= 0 then return nil end
-        local name = player:getUsername()
-        if type(name) ~= "string" or name == "" then return nil end
-        return name
+    if not isServer() then return "local:" .. tostring(player:getPlayerNum()) end
+    if player:getPlayerNum() ~= 0 then return nil end
+    local name = player:getUsername()
+    if type(name) ~= "string" or name == "" then return nil end
+    if not O.steamMode() then return name end
+    local st = O.state()
+    if st == nil then return nil end
+    local b = st.identityBindings[name]
+    if b == nil then return st.identityImportedAtMs == nil and name or nil end
+    if b.reserved or b.sid ~= O.sidOf(player) then return nil end
+    return name
+end
+
+-- 伺服器上 OnNewGame 只由 CreatePlayerPacket 觸發（首次進場、重生、分割畫面加入都會送），觸發前名字＝連線登入名、
+-- SteamID＝連線（CreatePlayerPacket.java:296-301）→ 可信的綁定來源。已綁定（或保留）的名字不改，只記 BIND_CONFLICT
+function O.onNewGame(player)
+    if not isServer() or player == nil or not O.steamMode() or not O.ready() then return end
+    local name, sid = player:getUsername(), O.sidOf(player)
+    if type(name) ~= "string" or name == "" or type(sid) ~= "number" or sid <= 0 then return end
+    local b = O.state().identityBindings[name]
+    if b == nil then
+        O.mapSet("identityBindings", name, { sid = sid, atMs = now(), src = "NEWGAME" })
+        O.bump(nil)
+        O.audit("INFO", "BIND", { actor = name, reason = "NEWGAME" })
+    elseif b.reserved or b.sid ~= sid then
+        O.audit("WARN", "BIND_CONFLICT", { actor = name, reason = b.reserved and "RESERVED" or "SID_MISMATCH" })
     end
-    return "local:" .. tostring(player:getPlayerNum())
+end
+Events.OnNewGame.Add(O.onNewGame)
+
+-- 第一次匯入後，帳本要記一個還沒綁定的名字（MVCK 匯入的車主）→ 保留，日後同名新帳號不會被 OnNewGame 自動綁上
+function O.reserveUnbound(name)
+    local st = O.state()
+    if name == nil or st.identityImportedAtMs == nil or st.identityBindings[name] ~= nil then return false end
+    O.mapSet("identityBindings", name, { reserved = true, atMs = now(), src = "IMPORT" })
+    O.audit("WARN", "BIND_RESERVED", { owner = name })
+    return true
+end
+
+-- 管理員匯入 whitelist：rows＝{ u＝帳號, s＝精確 SteamID 字串或 "" }（Server.lua 已驗格式）。
+-- tonumber 就是 Double.parseDouble（KahluaUtil.java:293），和 Long→Double 同為就近捨入，得到同一個數。
+-- 沒綁定的新增；SteamID 不同或保留中的列成衝突（記在記憶體，管理員確認後 rebindConflicts）；
+-- 帳本裡有車、有分享或 MVCK 待轉，卻不在 whitelist 的名字（帳號已刪，或分割畫面／改名留下的）→ 保留
+function O.importIdentities(rows, actor)
+    local st, t = O.state(), now()
+    local res = { bound = 0, same = 0, missing = 0, reserved = 0, conflicts = {}, collisions = {} }
+    local listed, bySid, sids = {}, {}, {}
+    for _, row in ipairs(rows) do
+        local name = row.u
+        listed[name] = true
+        if row.s == "" then
+            res.missing = res.missing + 1
+        else
+            local sid = tonumber(row.s)
+            local first = bySid[sid]
+            if first == nil then
+                bySid[sid] = row
+            elseif first.s ~= row.s then -- 兩個 Steam 帳號捨入成同一個數：彼此無法區分，列給管理員
+                if not first.collided then first.collided = true; res.collisions[#res.collisions + 1] = first.u end
+                res.collisions[#res.collisions + 1] = name
+            end
+            sids[name] = sid
+            local b = st.identityBindings[name]
+            if b == nil then
+                O.mapSet("identityBindings", name, { sid = sid, atMs = t, src = "IMPORT" })
+                res.bound = res.bound + 1
+            elseif not b.reserved and b.sid == sid then
+                res.same = res.same + 1
+            else
+                res.conflicts[#res.conflicts + 1] = name
+            end
+        end
+    end
+    st.identityImportedAtMs = t
+    local function reserve(name)
+        if name ~= nil and not listed[name] and O.reserveUnbound(name) then res.reserved = res.reserved + 1 end
+    end
+    for _, rec in pairs(st.recordsByOid) do
+        if O.AUTHORIZABLE[rec.recordState] then
+            reserve(rec.ownerUser)
+            for _, g in ipairs(rec.grants or {}) do reserve(g.user) end
+        end
+    end
+    for _, e in pairs(st.pendingRebindByLegacyKey) do reserve(e.ownerUser) end
+    R.identityConflicts = { names = res.conflicts, sids = sids }
+    O.bump(nil)
+    O.audit("WARN", "IDENTITY_IMPORT", { actor = actor, role = "ADMIN", count = #rows, reason = "bound=" .. res.bound
+        .. " same=" .. res.same .. " missing=" .. res.missing .. " reserved=" .. res.reserved
+        .. " conflicts=" .. #res.conflicts .. " collisions=" .. #res.collisions })
+    for _, name in ipairs(res.conflicts) do O.audit("WARN", "BIND_CONFLICT", { actor = actor, owner = name, reason = "IMPORT" }) end
+    for _, name in ipairs(res.collisions) do O.audit("WARN", "BIND_CONFLICT", { actor = actor, owner = name, reason = "COLLISION" }) end
+    return res
+end
+
+-- 管理員確認：上次匯入列出的衝突全部改綁成 whitelist 的 SteamID（保留名解除保留）。回改綁數；沒有匯入結果回 nil
+function O.rebindConflicts(actor)
+    local c = R.identityConflicts
+    if c == nil then return nil end
+    R.identityConflicts = nil
+    for _, name in ipairs(c.names) do
+        O.mapSet("identityBindings", name, { sid = c.sids[name], atMs = now(), src = "REBIND" })
+        O.audit("WARN", "BIND_MOVE", { actor = actor, role = "ADMIN", owner = name })
+    end
+    if #c.names > 0 then O.bump(nil) end
+    return #c.names
 end
 
 function O.isAdmin(player)

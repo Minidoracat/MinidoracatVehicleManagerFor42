@@ -144,6 +144,16 @@ local serverOpts = {}
 function getServerOptions() return { getBoolean = function(_, k) return serverOpts[k] == true end } end
 Capability = { ManipulateVehicle = "ManipulateVehicle" }
 function checkPermissions(p, cap) return p.admin == true and cap == "ManipulateVehicle" end
+local steamActive = false -- true＝Steam 伺服器（身分要對上綁定的 SteamID）
+function getSteamModeActive() return steamActive end
+-- Kahlua 的數字都是 double：tonumber 是 Double.parseDouble（KahluaUtil.java:293），Long 轉 Lua 也是 double。
+-- Lua 5.4 對整數字串回 64 位元整數，SteamID 這種超過 2^53 的值要照 Kahlua 捨入，身分比對才測得到捨入
+local rawTonumber = tonumber
+function tonumber(v, base)
+    local n = rawTonumber(v, base)
+    if math.type(n) == "integer" and (n > 2 ^ 53 or n < -2 ^ 53) then return n + 0.0 end
+    return n
+end
 
 -- 陣營
 local factions = {}
@@ -162,7 +172,9 @@ Faction = { getFaction = function(name) for _, f in ipairs(factions) do if f.nam
 -- 玩家
 local online, outbox = {}, {}
 local function player(name, x, y, opts)
-    local p = { _cls = "IsoPlayer", name = name, x = x or 0, y = y or 0, z = 0, num = 0, admin = opts and opts.admin }
+    local p = { _cls = "IsoPlayer", name = name, x = x or 0, y = y or 0, z = 0, num = 0, admin = opts and opts.admin,
+        sid = opts and opts.sid or 0 }
+    function p:getSteamID() return self.sid + 0.0 end
     function p:getUsername() return self.name end
     function p:getX() return self.x end
     function p:getY() return self.y end
@@ -320,7 +332,8 @@ local function boot(diskState, keepGmd, keepGos)
     serverOpts, transmits = {}, 0
     for k in pairs(O.R.denyAgg) do O.R.denyAgg[k] = nil end
     O.R.factionRefs, O.R.suspectKeys, O.R.lastMaintMs, O.R.lastScanMs, O.R.overrides = {}, {}, 0, 0, {}
-    S.R.acks, S.R.rate, S.R.attempts, S.R.streams = {}, {}, {}, {}
+    S.R.acks, S.R.rate, S.R.attempts, S.R.streams, S.R.unverified = {}, {}, {}, {}, {}
+    O.R.identityConflicts, steamActive = nil, false
     G.R.intents, G.R.due, G.R.lastRun = {}, {}, 0
     MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.lastRun = {}, {}, 0
     for k in pairs(tx) do tx[k] = nil end
@@ -1483,6 +1496,111 @@ check(owner(fake) == nil and owner(orig) == "erin" and logged("REBIND_MOVED_ORIG
 check(owner(stepVan) == "p0159" and owner(f350) == "p0164", "2047 撞號：換號的 StepVan 與拿到回收 2047 的 F350 各歸其主")
 check(MVM.Migration.embedded(17000000012047) == 2047 and MVM.Migration.embedded(17000000010) == 0
     and MVM.Migration.embedded(1700000000) == nil and MVM.Migration.embedded(17000000010047) == nil, "內嵌 sqlId 拆出（前導 0 不是 sqlId）")
+end
+
+do
+out("情境 44：SteamID 身分——改名與分割畫面不能冒用；綁定只來自 OnNewGame、管理員匯入與確認改綁")
+boot()
+local SID = { alice = 76561198000000016, alice2 = 76561198000000080, bob = 76561198000000032,
+    eve = 76561198000000048, admin = 76561198000000064 }
+local function newGame(name, sid) -- CreatePlayerPacket 的暫時物件：名字＝登入名、SteamID＝連線，不在線上名單
+    local p = { name = name, sid = sid }
+    function p:getUsername() return self.name end
+    function p:getPlayerNum() return 0 end
+    function p:getSteamID() return self.sid + 0.0 end
+    fire("OnNewGame", p)
+end
+local function bind(name) return O.state().identityBindings[name] end
+local function audited(text) for _, l in ipairs(logLines) do if l:find(text, 1, true) then return true end end return false end
+local A = player("alice", 1, 1, { sid = SID.alice })
+local AD = player("admin", 1, 1, { admin = true, sid = SID.admin })
+local GH = player("ghost", 1, 1, { sid = SID.eve })
+local v, gv = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1), vehicle(2, 102, 5002, "Base.CarNormal", 1, 1)
+local c = claim(A, v)
+check(O.principal(A) == "alice" and c.ok and claim(GH, gv).ok, "no-steam：帳號名即身分")
+newGame("alice", SID.alice)
+check(bind("alice") == nil, "no-steam：OnNewGame 不綁定（沒有驗證因子）")
+steamActive = true
+check(O.principal(A) == "alice" and O.principal(GH) == "ghost", "Steam 模式、第一次匯入前：沒綁定的名字照舊，既有玩家不失去身分")
+newGame("alice", SID.alice)
+check(bind("alice") ~= nil and bind("alice").sid == SID.alice and bind("alice").src == "NEWGAME", "OnNewGame 以登入名與連線 SteamID 綁定")
+newGame("alice", SID.eve)
+check(bind("alice").sid == SID.alice and audited("BIND_CONFLICT"), "已綁定的名字換 SteamID 再進場：不改綁，記 BIND_CONFLICT")
+local spoof = player("alice", 1, 1, { sid = SID.eve }) -- 重生後改名成 alice，SteamID 仍是自己的
+check(O.principal(spoof) == nil and not O.canUse(spoof, v, "DRIVE"), "改名成 alice、SteamID 不符：沒有身分，不能開 alice 的車")
+check(O.principal(A) == "alice" and O.canUse(A, v, "DRIVE") and S.online().alice == A, "本尊照常；在線名單只有本尊，推播不會送給冒名者")
+local real = O.principal
+O.principal = function(p) if p:getPlayerNum() ~= 0 then return nil end return p:getUsername() end
+check(O.canUse(spoof, v, "DRIVE") == true, "（預期）植入只看名字的舊判定讓冒名者通過——證明斷言能分辨")
+O.principal = real
+local epoch = rec(c.oid).epoch
+local deny = cmd(spoof, "unclaim", { vehicleId = v.id, expectedOid = c.oid, expectedEpoch = epoch })
+check(deny ~= nil and deny.reason == "IDENTITY_UNVERIFIED" and deny.to == "alice" and rec(c.oid).recordState == "ACTIVE",
+    "冒名者的命令被拒並收到「身分未確認」，車照舊")
+check(cmd(spoof, "unclaim", { vehicleId = v.id, expectedOid = c.oid, expectedEpoch = epoch }) == nil, "一分鐘內不重複通知")
+local coop = player("carl", 1, 1, { sid = SID.alice })
+coop.num = 1
+check(O.principal(coop) == nil and cmd(coop, "prepareClaim", { vehicleId = 2 }) == nil, "分割畫面玩家（序號 1）沒有身分，也不回")
+
+rec(c.oid).grants = { { user = "friend", bits = 1 } }
+O.mapSet("pendingRebindByLegacyKey", 1700000000999, { legacyVehicleId = 1700000000999, ownerUser = "mvckOld", vehicleScript = "Base.Van" })
+local rows = { { u = "alice", s = "76561198000000016" }, { u = "bob", s = "76561198000000030" },
+    { u = "dan", s = "76561198000000031" }, { u = "carol", s = "" }, { u = "admin", s = "76561198000000064" } }
+check(cmd(A, "adminIdentity", { op = "IMPORT", rows = rows }).reason == "NOT_ADMIN", "一般玩家不能匯入")
+check(cmd(AD, "adminIdentity", { op = "IMPORT", rows = { { u = "bob", s = "7.6561198E16" } } }).reason == "BAD_ARGS"
+    and cmd(AD, "adminIdentity", { op = "IMPORT", rows = { { u = "bob", s = " 76561198000000030" } } }).reason == "BAD_ARGS",
+    "SteamID 不是 17 位數字字串就拒收（tonumber 會吃科學記號與空白）")
+local im = cmd(AD, "adminIdentity", { op = "IMPORT", rows = rows })
+check(im.ok and im.bound == 3 and im.same == 1 and im.missing == 1 and im.conflicts == 0 and im.collisions == 2,
+    "匯入：新綁 3、相同 1、沒有 SteamID 1；bob 與 dan 精確值不同卻捨入成同一個數，列為碰撞")
+check(bind("bob").sid == SID.bob and O.principal(player("bob", 1, 1, { sid = 76561198000000030 })) == "bob",
+    "精確字串 tonumber 後等於連線 SteamID 進 Lua 的值（同樣捨入到 16 的倍數）")
+check(im.reserved == 3 and bind("ghost").reserved and bind("friend").reserved and bind("mvckOld").reserved,
+    "帳本有車、有分享或 MVCK 待轉，卻不在 whitelist 的名字鎖定")
+check(O.principal(GH) == nil and O.principal(player("carol", 1, 1, { sid = SID.eve })) == nil
+    and O.principal(player("zed", 1, 1, { sid = SID.eve })) == nil, "匯入後：鎖定、沒有 SteamID、從沒出現過的名字都沒有身分")
+newGame("ghost", SID.eve)
+check(bind("ghost").reserved and bind("ghost").sid == nil, "鎖定的名字不會被 OnNewGame 綁走（同名新帳號拿不到舊車）")
+newGame("zed", SID.eve)
+check(bind("zed") ~= nil and bind("zed").sid == SID.eve and O.principal(player("zed", 1, 1, { sid = SID.eve })) == "zed",
+    "匯入後的新帳號由 OnNewGame 綁定，立刻有身分")
+
+local im2 = cmd(AD, "adminIdentity", { op = "IMPORT", rows = { { u = "alice", s = "76561198000000080" }, { u = "ghost", s = "76561198000000048" },
+    { u = "admin", s = "76561198000000064" } } })
+check(im2.ok and im2.conflicts == 2 and bind("alice").sid == SID.alice and bind("ghost").reserved,
+    "whitelist 的 SteamID 變了、或鎖定的名字出現在 whitelist：列為衝突，確認前不改")
+cmd(AD, "adminList", {}, false)
+local meta = lastOf(AD, "adminSnapshot")
+check(meta.identitySteam == true and meta.identityImported == true and #meta.identityConflicts == 2, "管理頁總表帶身分狀態與衝突名單")
+local A2 = player("alice", 1, 1, { sid = SID.alice2 })
+check(O.principal(A2) == nil, "換了 Steam 帳號的 alice 在確認前沒有身分")
+local rb = cmd(AD, "adminIdentity", { op = "REBIND" })
+check(rb.ok and rb.rebound == 2 and O.principal(A2) == "alice" and O.principal(A) == nil and bind("ghost").sid == SID.eve,
+    "確認改綁：新 Steam 帳號取得 alice、舊的失去；鎖定的名字解除並綁定")
+check(cmd(AD, "adminIdentity", { op = "REBIND" }).reason == "IMPORT_FIRST", "沒有待確認的匯入結果時不能改綁")
+
+nowMs = nowMs + 61000
+local AD2 = player("admin", 1, 1, { admin = true, sid = SID.alice2 }) -- 管理員換 Steam 帳號登入
+cmd(AD2, "adminList", {}, false)
+local snap = lastOf(AD2, "adminSnapshot")
+check(O.principal(AD2) == nil and snap.ok and snap.to == "admin", "身分不符的管理員仍可看總表（角色來自連線、不看名字）")
+check(cmd(AD2, "adminIdentity", { op = "IMPORT", rows = { { u = "admin", s = "76561198000000080" } } }).ok
+    and cmd(AD2, "adminIdentity", { op = "REBIND" }).ok and O.principal(AD2) == "admin", "也能匯入並確認改綁，修好自己")
+local notice = cmd(spoof, "adminIdentity", { op = "REBIND" })
+check(notice and notice.reason == "IDENTITY_UNVERIFIED", "沒通過驗證的一般玩家送管理命令：只收到身分未確認")
+steamActive = false
+check(cmd(AD2, "adminIdentity", { op = "REBIND" }).reason == "NOT_STEAM", "no-steam 伺服器不收身分匯入")
+steamActive = true
+
+GOS.save()
+boot(deepcopy(O.R.meta), true, true)
+steamActive = true
+check(O.principal(player("alice", 1, 1, { sid = SID.alice2 })) == "alice" and O.principal(player("alice", 1, 1, { sid = SID.alice })) == nil
+    and O.state().identityImportedAtMs ~= nil, "綁定與「已匯入」存檔後重啟仍在")
+local AD3 = player("admin", 1, 1, { admin = true, sid = SID.alice2 })
+gmd.MVCKByVehicleSQLID = { [1700000000777] = { OwnerPlayerID = "mvckNew", CarModel = "Base.Van", ClaimDateTime = 1700000000 } }
+local mi = cmd(AD3, "adminMigration", { op = "IMPORT" })
+check(mi.ok and mi.imported == 1 and bind("mvckNew") ~= nil and bind("mvckNew").reserved, "身分匯入後才匯入 MVCK：沒綁定的車主名稱鎖定")
 end
 
 out("情境 13c：管理員總表分段（引擎送出緩衝區 1 MB）")

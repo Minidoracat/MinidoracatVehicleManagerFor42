@@ -470,18 +470,21 @@ function FleetWindow:build()
     self.defaultEntry = self:field(80, "0-20", true)
     self.btnDefaultQuota = self:button(getText("IGUI_MVM_Btn_Apply"), FleetWindow.onDefaultQuota, "primary")
     self.btnMigrate = self:button(getText("IGUI_MVM_Btn_ImportMVCK"), FleetWindow.onImportMVCK)
+    self.btnIdentity = self:button(getText("IGUI_MVM_Btn_ImportIdentity"), FleetWindow.onImportIdentity)
+    self.btnRebind = self:button("", FleetWindow.onRebindIdentity, "danger")
     self.overrideBox = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Override_Toggle"), theme = theme, target = self,
         onChange = FleetWindow.onOverride })
     self.overrideBox:setVisible(false)
     body:addChild(self.overrideBox)
     self.actionButtons = { self.btnRename, self.btnAddMember, self.btnFaction, self.btnTransfer, self.btnUnclaim,
         self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnLeave, self.btnAdminRelease, self.btnQuota,
-        self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnMigrate, self.overrideBox }
+        self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnMigrate, self.btnIdentity,
+        self.btnRebind, self.overrideBox }
     self.detailControls = { self.nameEntry, self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction,
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap,
         self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
         self.btnPickShown, self.btnPickClear, self.batchEntry, self.btnBatch, self.btnBatchDefault, self.defaultEntry,
-        self.btnDefaultQuota, self.btnMigrate, self.btnLook, self.overrideBox }
+        self.btnDefaultQuota, self.btnMigrate, self.btnIdentity, self.btnRebind, self.btnLook, self.overrideBox }
     for _, cb in ipairs(self.checks) do self.detailControls[#self.detailControls + 1] = cb end
     for _, b in ipairs(self.memberButtons) do
         self.actionButtons[#self.actionButtons + 1] = b
@@ -627,6 +630,17 @@ function FleetWindow:layoutDetail()
             place(self.btnBatchDefault, place(self.btnBatch, place(self.batchEntry, x0, y), y), y)
         end
         y = y + step + PAD
+        -- 身分驗證（SteamID）：只有 Steam 伺服器才有；匯入前沿用帳號名判定，所以標題顯示是否已匯入
+        if b ~= nil and b.identitySteam then
+            y = self:heading(b.identityImported and "IGUI_MVM_Section_IdentityOn" or "IGUI_MVM_Section_IdentityPending", y)
+            local x = place(self.btnIdentity, x0, y)
+            local n = b.identityConflicts and #b.identityConflicts or 0
+            if n > 0 then
+                self.btnRebind:setTitle(getText("IGUI_MVM_Btn_RebindIdentity", n))
+                place(self.btnRebind, x, y)
+            end
+            y = y + step + PAD
+        end
         if b ~= nil and b.migrationAvailable then
             y = self:heading("IGUI_MVM_Section_MVCK", y)
             place(self.btnMigrate, x0, y)
@@ -997,6 +1011,55 @@ function FleetWindow:onImportMVCK()
         w:adminSend("adminMigration", { op = "IMPORT" }, function(ack)
             return getText("IGUI_MVM_MVCKImported", ack.imported or 0, ack.rebound or 0, ack.pending or 0)
         end)
+    end)
+end
+
+-- 身分匯入：向伺服器要帳號清單（requestUsers 需 SeeNetworkUsers：RequestNetworkUsersPacket.java:15；沒有能力送出，
+-- 伺服器會記成越權封包：PacketTypes.java:300-312，所以先在本機擋），收到後只取 isInWhitelist 的帳號。不在 whitelist 的列是在線的
+-- 分割畫面／改名名字，封包配的是該連線的 SteamID（NetworkUsersPacket.java:35-47）。原版管理面板同樣讀 getUsers（ISUsersList.lua:156,268,376）
+local USERS_WAIT_MS = 30000
+function FleetWindow:onImportIdentity()
+    local p = getSpecificPlayer(0)
+    local role = p and p:getRole()
+    if not (role and role:hasCapability(Capability.SeeNetworkUsers)) then return self:say("IGUI_MVM_IdentityNeedUsers") end
+    self:confirm("IGUI_MVM_ConfirmImportIdentity", nil, function(w)
+        w.wantUsersAt = getTimestampMs()
+        requestUsers()
+    end)
+end
+
+-- 事件是全域的（原版管理面板也會要清單）：只接自己 30 秒內要的那一次
+local function onUsersReceived()
+    local w = FleetWindow.instance
+    if w == nil or w.wantUsersAt == nil then return end
+    local asked = w.wantUsersAt
+    w.wantUsersAt = nil
+    if getTimestampMs() - asked > USERS_WAIT_MS then return end
+    local rows, users = {}, getUsers()
+    for i = 0, users:size() - 1 do
+        local u = users:get(i)
+        if u:isInWhitelist() then
+            local sid = u:getSteamid()
+            if type(sid) ~= "string" or sid:match("^7656119%d%d%d%d%d%d%d%d%d%d$") == nil then sid = "" end
+            rows[#rows + 1] = { u = u:getUsername(), s = sid }
+        end
+    end
+    w:adminSend("adminIdentity", { op = "IMPORT", rows = rows }, function(ack)
+        return getText("IGUI_MVM_IdentityImported", ack.bound or 0, ack.conflicts or 0, ack.reserved or 0, ack.missing or 0)
+    end)
+end
+Events.OnNetworkUsersReceived.Add(onUsersReceived)
+
+-- 衝突改綁：確認框列出前 10 個帳號
+function FleetWindow:onRebindIdentity()
+    local b = self:bucket()
+    local names = b and b.identityConflicts or {}
+    if #names == 0 then return end
+    local shown = {}
+    for i = 1, math.min(#names, 10) do shown[i] = names[i] end
+    local list = table.concat(shown, ", ") .. (#names > 10 and ", ..." or "")
+    self:confirm("IGUI_MVM_ConfirmRebindIdentity", { #names, list }, function(w)
+        w:adminSend("adminIdentity", { op = "REBIND" }, function(ack) return getText("IGUI_MVM_IdentityRebound", ack.rebound or 0) end)
     end)
 end
 

@@ -80,6 +80,7 @@ function M.importAll(actor)
             if st.ownerActivity[e.OwnerPlayerID] == nil then
                 O.mapSet("ownerActivity", e.OwnerPlayerID, { lastSuccessfulLoginAtMs = t, releaseWarnedAtMs = 0 })
             end
+            O.reserveUnbound(e.OwnerPlayerID) -- 身分已匯入但這個名字沒綁定：帳號已刪或是分割畫面名，別讓同名新帳號接收
             out.imported = out.imported + 1
         else
             out.skipped = out.skipped + 1

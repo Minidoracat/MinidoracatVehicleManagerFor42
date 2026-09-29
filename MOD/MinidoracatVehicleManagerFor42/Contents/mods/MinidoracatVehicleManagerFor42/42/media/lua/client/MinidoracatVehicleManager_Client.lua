@@ -153,6 +153,9 @@ function MVM.clientReceive(command, payload)
         b.adminDefaultQuota = ok and meta.defaultQuota or nil
         b.migrationAvailable = ok and meta.migrationAvailable == true
         b.adminOverride = ok and meta.override == true
+        b.identitySteam = ok and meta.identitySteam == true
+        b.identityImported = ok and meta.identityImported == true
+        b.identityConflicts = ok and type(meta.identityConflicts) == "table" and meta.identityConflicts or nil
     elseif command == "sandboxSync" then
         if not MVM.isInt(payload.claimsPerPlayer) then return end
         local ok, err = pcall(syncDefaultQuota, payload.claimsPerPlayer)

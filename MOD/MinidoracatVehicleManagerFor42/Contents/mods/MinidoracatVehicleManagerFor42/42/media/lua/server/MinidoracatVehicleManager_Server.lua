@@ -13,14 +13,16 @@ local ATTEMPT_TTL_MS = 30000
 local RATE_WINDOW_MS, RATE_MAX = 5000, 20
 local ACK_PER_ACTOR = 32
 
-local R = { acks = {}, ackOrder = {}, rate = {}, attempts = {}, streams = {} }
+local R = { acks = {}, ackOrder = {}, rate = {}, attempts = {}, streams = {}, unverified = {} }
 S.R = R
 
 local function now() return getTimestampMs() end
 
 -- ------------------------------------------------------------- delivery ---
+-- 沒通過 SteamID 驗證的主玩家也要收得到「身分未確認」與管理員身分匯入的回覆：以本機帳號名定址（客戶端依它分桶）。
+-- 內容一律依 principal 產生，沒有身分就不會拿到任何車隊資料
 function S.send(player, command, payload)
-    payload.to = O.principal(player)
+    payload.to = O.principal(player) or (isServer() and player:getPlayerNum() == 0 and player:getUsername() or nil)
     if isServer() then
         sendServerCommand(player, MVM.MODULE, command, payload)
     elseif MVM.clientReceive then
@@ -238,8 +240,10 @@ function S.adminSnapshot(player)
     end
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
     local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
+    local conflicts = O.R.identityConflicts
     S.sendAdminParts(player, { ok = true, status = O.R.status, migrationAvailable = migrationAvailable,
-        override = O.overrideActive(player), defaultQuota = S.defaultQuota() }, rows, players)
+        override = O.overrideActive(player), defaultQuota = S.defaultQuota(), identitySteam = O.steamMode(),
+        identityImported = st.identityImportedAtMs ~= nil, identityConflicts = conflicts and conflicts.names or nil }, rows, players)
 end
 
 -- -------------------------------------------------------------- validation ---
@@ -257,6 +261,7 @@ local TYPES = {
     defaultAmount = function(v) return MVM.isInt(v) and v >= 0 and v <= 20 end, -- 同沙盒 ClaimsPerPlayer 範圍
     op = function(v) return v == "RELEASE" or v == "ACTIVATE" end,
     migrationOp = function(v) return v == "IMPORT" end,
+    identityOp = function(v) return v == "IMPORT" or v == "REBIND" end,
     name = function(v) return type(v) == "string" and #v >= 1 and #v <= 64 and v:match("^[%w_]+$") ~= nil end,
 }
 -- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
@@ -271,6 +276,25 @@ function TYPES.users(v)
         local user = v[i]
         if not TYPES.user(user) or seen[user] then return false end
         seen[user] = true
+    end
+    return true
+end
+
+-- 身分匯入列：1..IDENTITY_ROWS_MAX 列的連續陣列，每列 { u＝合法帳號（不重複）, s＝"" 或 SteamID64 字串 }。
+-- 先驗格式才交給 tonumber：它就是 Double.parseDouble，也吃 7.6E16、前後空白、0x1p56（KahluaUtil.java:293）。
+-- 上限只是防呆：伺服器送出的 whitelist 封包本身在約 6000 帳號就會撞 1 MB 緩衝（NetworkUsersPacket）
+S.IDENTITY_ROWS_MAX = 10000
+function TYPES.identityRows(v)
+    if type(v) ~= "table" then return false end
+    local n = 0
+    for _ in pairs(v) do n = n + 1 end
+    if n < 1 or n > S.IDENTITY_ROWS_MAX then return false end
+    local seen = {}
+    for i = 1, n do
+        local r = v[i]
+        if type(r) ~= "table" or not TYPES.user(r.u) or seen[r.u] or type(r.s) ~= "string" then return false end
+        if r.s ~= "" and r.s:match("^7656119%d%d%d%d%d%d%d%d%d%d$") == nil then return false end
+        seen[r.u] = true
     end
     return true
 end
@@ -298,6 +322,7 @@ local SCHEMA = {
     prepareAction = { class = "name", vehicleId = "id", ["partId?"] = "name" },
     adminList = {},
     adminMigration = { op = "migrationOp" },
+    adminIdentity = { op = "identityOp", ["rows?"] = "identityRows" },
     setAdminOverride = { enabled = "bool" },
 }
 -- 不帶 requestId、不回 ACK 的命令
@@ -684,9 +709,46 @@ H.adminMigration = function(player, who, a)
         pending = res.pending }
 end
 
+-- 身分匯入（whitelist → 綁定表）與確認改綁衝突；no-steam 沒有 SteamID，不收
+H.adminIdentity = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    if not O.steamMode() then return fail("NOT_STEAM") end
+    local out
+    if a.op == "IMPORT" then
+        if a.rows == nil then return fail("BAD_ARGS") end
+        local res = O.importIdentities(a.rows, who)
+        out = { ok = true, bound = res.bound, same = res.same, missing = res.missing, reserved = res.reserved,
+            conflicts = #res.conflicts, collisions = #res.collisions }
+    else
+        local n = O.rebindConflicts(who)
+        if n == nil then return fail("IMPORT_FIRST") end
+        out = { ok = true, rebound = n }
+    end
+    S.resnapshot(nil) -- 剛通過驗證的線上玩家拿到自己的車隊
+    return out
+end
+
 -- -------------------------------------------------------------- dispatch ---
+-- 主玩家沒通過 SteamID 驗證（principal 回 nil）：管理員仍可看總表、匯入身分修好自己（角色來自連線、不看名字：
+-- GameServer.java:2841），以 "?帳號" 記稽核；其他命令聚合進 DENY，每分鐘最多回一次原因。分割畫面玩家不回
+local UNVERIFIED_ADMIN = { adminList = true, adminIdentity = true }
+local function unverified(command, player, args)
+    if not isServer() or player == nil or player:getPlayerNum() ~= 0 then return nil end
+    local name = tostring(player:getUsername())
+    if UNVERIFIED_ADMIN[command] and O.isAdmin(player) then return "?" .. name end
+    local known = H[command] ~= nil or QUERIES[command] ~= nil
+    O.deny("?" .. name, known and command or "UNKNOWN_COMMAND", nil, "IDENTITY_UNVERIFIED")
+    local t = now()
+    if t - (R.unverified[name] or 0) >= 60000 then
+        R.unverified[name] = t
+        S.send(player, "mutationAck", { ok = false, reason = "IDENTITY_UNVERIFIED", requestKind = command,
+            requestId = type(args) == "table" and args.requestId or nil })
+    end
+    return nil
+end
+
 function S.handle(command, player, args)
-    local who = O.principal(player)
+    local who = O.principal(player) or unverified(command, player, args)
     if who == nil then return end
     local requestId = type(args) == "table" and args.requestId or nil
     local function ack(result)
@@ -748,6 +810,7 @@ function S.minute()
     local t = now()
     for who, att in pairs(R.attempts) do if t > att.expiresAtMs then R.attempts[who] = nil end end
     for who in pairs(R.streams) do if online[who] == nil then R.streams[who] = nil end end
+    for name, at in pairs(R.unverified) do if t - at >= 60000 then R.unverified[name] = nil end end
     O.maintain(false)
     O.scanLoaded(false)
     S.watchDefaultQuota()
