@@ -69,6 +69,13 @@ local BUILTIN = {
     -- 另一個砸車窗類別：原版沒有呼叫點，但伺服器依客戶端送來的類別名稱與 new 參數建動作（NetTimedAction.parse：
     -- LuaManager.get(type)＋type.new），改機客戶端可以直接排入；complete 會 window:hit（ISSmashVehicleWindow.lua:55-68）
     { class = "ISSmashVehicleWindow", action = "SALVAGE", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },
+    -- Autotsar 拖吊（tsarslib，Workshop 3402491515）：complete 在伺服器執行（MP 下只有伺服器跑），把車的零件換進拖車後
+    -- permanentlyRemove（ATAISLoadVehicle.lua:35-58）；卸車以 addVehicleDebug 生新車還原（ATAISLaunchVehicle.lua:38-157）。
+    -- also＝同一個動作還要檢查的其他車（各自要 TOW、受保護時各自要 intent）。裝車的主目標是 a.vehicle（被裝的車），
+    -- 這樣 G.decide 的「a.vehicle 與目標不同」檢查不會誤擋
+    { class = "ATAISLoadVehicle", action = "TOW", vehicleOf = ownVehicle, stages = { "complete" },
+      also = { { vehicleOf = function(a) return a.trailer end, action = "TOW" } } },
+    { class = "ATAISLaunchVehicle", action = "TOW", vehicleOf = function(a) return a.trailer end, stages = { "complete" } },
 }
 
 local byClass = {}
@@ -80,7 +87,8 @@ local function valid(spec)
         and type(spec.stages) == "table" and #spec.stages > 0
 end
 
--- 公開：第三方在 client 與 server 都登記同一份 spec（class 名稱、requiredAction、vehicleOf、partOf、stages）
+-- 公開：第三方在 client 與 server 都登記同一份 spec（class 名稱、requiredAction、vehicleOf、partOf、stages；
+-- 選填 also＝{ { vehicleOf, action }, … } 同一動作要一併檢查的其他車）
 function MinidoracatVehicleManagerAPI.registerActionAdapter(spec)
     if not valid(spec) then
         MVM.log("registerActionAdapter rejected: need class, action, vehicleOf, stages")

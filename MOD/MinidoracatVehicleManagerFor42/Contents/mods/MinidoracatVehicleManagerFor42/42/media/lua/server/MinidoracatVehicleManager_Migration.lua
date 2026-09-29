@@ -3,6 +3,8 @@
 --   匯入 pendingRebindByLegacyKey；已載入的車當場轉正，其餘等車被載入時轉正。
 --   可重複執行：已匯入過的舊 ID 不重複匯入（MVCK 還在時新綁的車，再按一次就補進來）。
 --   **不刪 MVCK 的資料**：伺服器之後自行從 Mods= 移除 MVCK 即可；兩個 MOD 並存期間兩邊的保護都會生效。
+-- 陣營：匯入時記下 MVCK 沙盒 AllowFaction（讀不到用預設 true）；轉正當下車主有陣營、VM 沙盒允許陣營共享，
+--   就替該車開陣營共享（管理以外全部權限，同車主在車隊視窗手動開啟）。安全屋共享不帶入。
 -- 轉正（車身 SQLID 命中待轉項 E，且車型相同）：
 --   規則 1：SQLID 內嵌的綁定當時 sqlId 等於此車 server 端 sqlId。
 --   規則 2（換號，稽核 REBOUND_MOVED）：內嵌 sqlId 不同。正式服的 rSemiTruck 多槽拖車（MSW）裝車時刪車、卸車時
@@ -69,13 +71,17 @@ function M.importAll(actor)
     local pend, done = st.pendingRebindByLegacyKey, st.migratedLegacyIds
     local out = { imported = 0, already = 0, skipped = 0, rebound = 0, pending = 0 }
     local t = now()
+    -- MVCK 的陣營語意：車主所在陣營的領袖與成員對他所有綁定的車都有完整權限（MVCKShared.lua:201-225）。
+    -- 沙盒 MVCK.AllowFaction 預設 true（MVCK sandbox-options.txt:3-7）；MVCK 不在時讀不到，用預設值
+    local mvck = SandboxVars and SandboxVars.MVCK
+    local factionShare = not (mvck and mvck.AllowFaction == false)
     for id, e in pairs(src) do
         if done[id] then
             out.already = out.already + 1
         elseif MVM.isInt(id) and type(e) == "table" and validOwner(e.OwnerPlayerID) and type(e.CarModel) == "string" then
             O.mapSet("pendingRebindByLegacyKey", id, { legacyVehicleId = id, ownerUser = e.OwnerPlayerID, vehicleScript = e.CarModel,
                 claimedAtMs = MVM.isInt(e.ClaimDateTime) and e.ClaimDateTime * 1000 or t,
-                lastX = tonumber(e.LastLocationX), lastY = tonumber(e.LastLocationY), importedAtMs = t })
+                lastX = tonumber(e.LastLocationX), lastY = tonumber(e.LastLocationY), importedAtMs = t, factionShare = factionShare })
             O.mapSet("migratedLegacyIds", id, true)
             if st.ownerActivity[e.OwnerPlayerID] == nil then
                 O.mapSet("ownerActivity", e.OwnerPlayerID, { lastSuccessfulLoginAtMs = t, releaseWarnedAtMs = 0 })
@@ -155,7 +161,15 @@ function M.rebind(vehicle)
     rec.claimedAtMs = e.claimedAtMs
     O.audit("INFO", "MIGRATE", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = rec.sqlIdHint, reason = reason })
     S.push({ [rec.ownerUser] = true }, { oid = M.rowId(legacy) }, true) -- 撤掉待轉列
-    S.push(S.audience(rec), rec, false)
+    -- 安全屋共享不帶入。陣營：車主此刻有陣營才開，權限為管理以外的全部；沒有陣營就不開
+    local f = e.factionShare == true and MVM.sandbox("AllowFactionShare", true) and S.findFactionOf(rec.ownerUser) or nil
+    if f then
+        S.applyFactionShare(rec, f, MVM.SHAREABLE_MASK) -- 內含推送
+        O.audit("INFO", "ACL_CHANGE", { oid = rec.oid, owner = rec.ownerUser,
+            reason = "FACTION " .. MVM.SHAREABLE_MASK .. " MVCK_IMPORT" })
+    else
+        S.push(S.audience(rec), rec, false)
+    end
     return rec
 end
 

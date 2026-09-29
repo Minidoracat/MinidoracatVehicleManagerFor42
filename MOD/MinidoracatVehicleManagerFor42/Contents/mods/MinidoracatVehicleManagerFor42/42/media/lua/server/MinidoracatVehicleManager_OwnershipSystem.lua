@@ -30,10 +30,10 @@ local DAY_MS, HOUR_MS = 86400000, 3600000
 O.AUTHORIZABLE = { ACTIVE = true, WITNESS_STALE = true, PENDING_RELEASE = true, QUARANTINED = true }
 O.TOMBSTONE = { ORPHANED = true, DESTROYED = true, RELEASED = true }
 
--- RAM derived state（§4.1）：開機由 recordsByOid 重建，不存檔
+-- RAM derived state（§4.1）：開機由 recordsByOid 重建，不存檔。outOfWorld＝已移出世界（removedAtMs）的可授權紀錄
 local R = { bySqlId = {}, byKeyId = {}, byOwner = {}, status = "INIT", loaded = "none",
     denyAgg = {}, factionRefs = {}, suspectKeys = {}, lastMaintMs = 0, lastScanMs = 0,
-    shards = {}, where = {}, st = nil, overrides = {} }
+    shards = {}, where = {}, st = nil, overrides = {}, outOfWorld = {} }
 O.R = R
 
 local function now() return getTimestampMs() end
@@ -424,18 +424,24 @@ local function addToList(map, key, rec)
     list[#list + 1] = rec
 end
 
+-- 第三方車身標記（ClaimTags.lua 掛 O.syncClaimTags；vehicle＝nil 時它自己找已載入的車）
+local function claimTags(rec, vehicle)
+    if O.syncClaimTags then O.syncClaimTags(rec, vehicle) end
+end
+
 local function quarantine(rec, reason)
     if rec.recordState == "QUARANTINED" then return end
     rec.recordState = "QUARANTINED"
     rec.quarantineReason = reason
     O.bump(rec)
     O.audit("ERROR", "QUARANTINE", { oid = rec.oid, owner = rec.ownerUser, reason = reason })
+    claimTags(rec, nil)
 end
 
--- §4.2 規則 0／7：只索引可授權狀態；同 sqlId 兩筆或缺必要欄位 → quarantine
+-- §4.2 規則 0／7：只索引可授權、仍在世界上的紀錄；同 sqlId 兩筆或缺必要欄位 → quarantine
 function O.rebuildIndex()
     local st = O.state()
-    R.bySqlId, R.byKeyId, R.byOwner = {}, {}, {}
+    R.bySqlId, R.byKeyId, R.byOwner, R.outOfWorld = {}, {}, {}, {}
     if st == nil then return end
     for _, rec in pairs(st.recordsByOid) do
         if rec.ownerUser ~= nil then addToList(R.byOwner, rec.ownerUser, rec) end
@@ -443,8 +449,12 @@ function O.rebuildIndex()
             if not MVM.isInt(rec.sqlIdHint) or not MVM.isInt(rec.keyIdHint) or type(rec.vehicleScript) ~= "string" then
                 quarantine(rec, "SCHEMA_INVALID")
             end
-            addToList(R.bySqlId, rec.sqlIdHint, rec)
-            R.byKeyId[rec.keyIdHint] = rec.sqlIdHint
+            if rec.removedAtMs then
+                R.outOfWorld[rec.oid] = rec
+            else
+                addToList(R.bySqlId, rec.sqlIdHint, rec)
+                R.byKeyId[rec.keyIdHint] = rec.sqlIdHint
+            end
         end
     end
     for _, list in pairs(R.bySqlId) do
@@ -452,12 +462,18 @@ function O.rebuildIndex()
     end
 end
 
+-- 冪等：重複呼叫（移出後又轉終態）不會出錯
 local function unindex(rec)
     local list = R.bySqlId[rec.sqlIdHint]
     if list then
         for i = #list, 1, -1 do if list[i] == rec then table.remove(list, i) end end
         if #list == 0 then R.bySqlId[rec.sqlIdHint] = nil end
     end
+end
+
+function O.hasOutOfWorld()
+    for _ in pairs(R.outOfWorld) do return true end
+    return false
 end
 
 -- -------------------------------------------------------------- witness ---
@@ -487,6 +503,7 @@ local function writeWitness(vehicle, part, rec)
 end
 
 local function stripWitness(vehicle, part)
+    claimTags(nil, vehicle) -- 見證剝除＝這台車不再受保護，第三方標記一起清
     if part == nil or readWitness(part) == nil then return end
     rawset(part:getModData(), WITNESS_KEY, nil)
     vehicle:transmitPartModData(part)
@@ -501,6 +518,7 @@ function O.setState(rec, newState, reason, fields)
     if O.TOMBSTONE[newState] then
         rec.endedAtMs = now()
         unindex(rec)
+        R.outOfWorld[rec.oid] = nil
     end
     if newState ~= "PENDING_RELEASE" then rec.pendingReleaseAtMs, rec.releaseDueAtMs, rec.releaseReason = 0, 0, nil end
     O.bump(rec)
@@ -508,6 +526,7 @@ function O.setState(rec, newState, reason, fields)
     f.oid, f.epoch, f.owner, f.reason = rec.oid, rec.epoch, rec.ownerUser, (reason or old .. "->" .. newState)
     O.audit("INFO", newState == "PENDING_RELEASE" and "PENDING_RELEASE" or "STATE", f)
     if O.onRecordChanged then O.onRecordChanged(rec, nil) end
+    if O.TOMBSTONE[newState] or newState == "QUARANTINED" or old == "QUARANTINED" then claimTags(rec, nil) end
 end
 
 local function markObserved(rec, vehicle)
@@ -516,6 +535,59 @@ local function markObserved(rec, vehicle)
         -- 期間內觀測到同一台車 → 取消 finalize，owner 要到車旁 unclaim（§4.5）
         O.setState(rec, "ACTIVE", "RELEASE_CANCELLED_OBSERVED")
     end
+end
+
+local function verdictOf(rec) return rec.recordState == "QUARANTINED" and "QUARANTINED" or "AUTHORIZED" end
+
+-- 車被永久移除（拖車 MOD 裝車、管理員刪車、燒毀車拆解…）：同一台車（三欄位一致）的可授權紀錄標成「已移出世界」，
+-- 記下時間、原 sqlId 與最後位置並取消索引。重啟後 VehiclesDB2 會回收舊 sqlId（AGENTS API 表 allocateID 列），
+-- 取消索引才不會把拿到舊號的別台車判成 SQLID_RECYCLED → ORPHANED。紀錄照常計入名額；車以同一份零件見證
+-- 回到世界時由 lookup 接回。帳本不可寫（非 READY）就不處理
+function O.onPermanentlyRemove(vehicle)
+    if O.state() == nil or not O.ready() then return end
+    local sqlId, keyId, script = native(vehicle)
+    local hits = {}
+    for _, rec in ipairs(R.bySqlId[sqlId] or {}) do
+        if rec.keyIdHint == keyId and rec.vehicleScript == script and O.AUTHORIZABLE[rec.recordState] then hits[#hits + 1] = rec end
+    end
+    local t = now()
+    for _, rec in ipairs(hits) do
+        unindex(rec)
+        if R.byKeyId[keyId] == sqlId then R.byKeyId[keyId] = nil end
+        R.outOfWorld[rec.oid] = rec
+        rec.removedAtMs, rec.removedSqlId = t, sqlId
+        rec.lastKnownX, rec.lastKnownY, rec.lastKnownZ, rec.lastKnownAtMs = vehicle:getX(), vehicle:getY(), vehicle:getZ(), t
+        O.bump(rec)
+        O.audit("INFO", "REMOVED_FROM_WORLD", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = sqlId,
+            x = rec.lastKnownX, y = rec.lastKnownY, z = rec.lastKnownZ })
+        if O.onRecordChanged then O.onRecordChanged(rec, nil) end
+    end
+end
+
+-- 見證指到「已移出世界」的同一台車（epoch、車型、keyId 都相同）＝拖車卸下的原車（MSW／Autotsar 卸車時還原零件 modData
+-- 與 keyId），接回到新 sqlId。回 record；不符回 nil 與原因（被指到的紀錄本身不動）
+local function adopt(vehicle, host, w, sqlId, keyId, script)
+    local rec = O.state().recordsByOid[w.oid]
+    if rec == nil then return nil, "NO_RECORD" end
+    if not O.AUTHORIZABLE[rec.recordState] then return nil, "RECORD_ENDED" end
+    if not rec.removedAtMs then return nil, "RECORD_IN_WORLD" end
+    if rec.epoch ~= w.epoch then return nil, "EPOCH_MISMATCH" end
+    if rec.vehicleScript ~= script then return nil, "SCRIPT_MISMATCH" end
+    if rec.keyIdHint ~= keyId then return nil, "KEYID_MISMATCH" end
+    local from = rec.removedSqlId
+    rec.removedAtMs, rec.removedSqlId = nil, nil
+    R.outOfWorld[rec.oid] = nil
+    rec.sqlIdHint, rec.witnessPartId = sqlId, host:getId()
+    R.bySqlId[sqlId] = { rec }
+    R.byKeyId[keyId] = sqlId
+    rec.lastKnownX, rec.lastKnownY, rec.lastKnownZ, rec.lastKnownAtMs = vehicle:getX(), vehicle:getY(), vehicle:getZ(), now()
+    O.bump(rec)
+    O.audit("INFO", "REATTACHED", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = sqlId,
+        reason = "sqlId " .. s(from) .. "->" .. s(sqlId), x = rec.lastKnownX, y = rec.lastKnownY, z = rec.lastKnownZ })
+    markObserved(rec, vehicle)
+    if O.onRecordChanged then O.onRecordChanged(rec, nil) end
+    claimTags(rec, vehicle)
+    return rec
 end
 
 -- ---------------------------------------------------------------- lookup ---
@@ -542,9 +614,11 @@ function O.lookup(vehicle)
     local w = readWitness(host)
     if rec == nil then
         if w ~= nil then
-            -- 規則 6：沒有 record 的見證沒有權威，剝除即可
+            local back, why = adopt(vehicle, host, w, sqlId, keyId, script)
+            if back then return verdictOf(back), back end
+            -- 規則 6：沒有可接回 record 的見證沒有權威，剝除即可
             stripWitness(vehicle, host)
-            O.audit("WARN", "ORPHAN_WITNESS_STRIPPED", { vehicle = sqlId, oid = w.oid })
+            O.audit("WARN", "ORPHAN_WITNESS_STRIPPED", { vehicle = sqlId, oid = w.oid, reason = why })
             return "UNCLAIMED_WITNESS_STRIPPED", nil
         end
         -- Phase 5：MVCK 待轉項在車第一次被觀測時轉正
@@ -583,6 +657,13 @@ function O.lookup(vehicle)
         O.bump(q)
         O.audit("ERROR", "QUARANTINE", { oid = q.oid, vehicle = sqlId, reason = "WITNESS_CONFLICT" })
         return "QUARANTINED", q
+    end
+    -- 拖車卸下的車拿到被回收的舊號：舊紀錄照常 ORPHANED，車上帶的若是另一筆移出紀錄的見證仍要接回
+    local own = O.hostPart(vehicle, nil)
+    local w2 = readWitness(own)
+    if w2 ~= nil then
+        local back = adopt(vehicle, own, w2, sqlId, keyId, script)
+        if back then return verdictOf(back), back end
     end
     return "UNCLAIMED_ORPHANED_OLD", nil
 end
@@ -642,6 +723,7 @@ function O.createRecord(owner, vehicle, host)
     end
     writeWitness(vehicle, host, rec)
     O.bump(rec)
+    claimTags(rec, vehicle)
     return rec
 end
 
@@ -836,10 +918,12 @@ function O.observeLogin(owner)
     if (act.releaseWarnedAtMs or 0) ~= 0 then act.releaseWarnedAtMs = 0; O.bump(nil) end
 end
 
--- 已載入車輛：reconcile 身分並低頻收斂 lastKnown（§7.3：不存每次 sample）
+-- 已載入車輛：reconcile 身分並低頻收斂 lastKnown（§7.3：不存每次 sample）；第三方車身標記也在這裡比對修正
+-- （陣營成員變動、client 經 transmitModData 竄改後，下次觀測修回）
 function O.observeVehicle(vehicle)
     if not O.ready() then return end
     local verdict, rec = O.lookup(vehicle)
+    claimTags((verdict == "AUTHORIZED" or verdict == "QUARANTINED") and rec or nil, vehicle)
     if rec == nil or verdict ~= "AUTHORIZED" then return end
     local x, y = vehicle:getX(), vehicle:getY()
     if math.abs(x - (rec.lastKnownX or 0)) + math.abs(y - (rec.lastKnownY or 0)) >= 2 then
@@ -873,3 +957,27 @@ function ISRemoveBurntVehicle:complete()
     end
     return result
 end
+
+-- 伺服器（含 SP）包 BaseVehicle 方法表的 permanentlyRemove（同 ClientGuards 包 canAccessContainer 的做法：方法表在
+-- __classmetatables[BaseVehicle.class].__index，KahluaUtil.java:132-134、LuaJavaClassExposer.java:224-231,287）。
+-- MSW（MSW_Common_Commands.lua:2239）與 Autotsar（ATAISLoadVehicle.lua:50,54）都從 Lua 呼叫它；Java 內部呼叫不經過這裡。
+-- 本 MOD 的處理包在 pcall 裡、在原函式之前做（車的三欄位還讀得到），原函式一定照常執行
+local ORIG_REMOVE_KEY = "MinidoracatVehicleManager_permanentlyRemove"
+function O.installRemoveHook()
+    local methods = __classmetatables and BaseVehicle and BaseVehicle.class and __classmetatables[BaseVehicle.class]
+    methods = methods and methods.__index
+    local orig = methods and (rawget(methods, ORIG_REMOVE_KEY) or methods.permanentlyRemove)
+    if orig == nil then
+        MVM.log("vehicle removal hook NOT installed: BaseVehicle method table not found")
+        return false
+    end
+    rawset(methods, ORIG_REMOVE_KEY, orig) -- Lua 重載時不疊包
+    methods.permanentlyRemove = function(vehicle, ...)
+        local ok, err = pcall(O.onPermanentlyRemove, vehicle)
+        if not ok then MVM.log("removal hook failed: " .. tostring(err)) end
+        return orig(vehicle, ...)
+    end
+    MVM.log("vehicle removal hook installed")
+    return true
+end
+O.installRemoveHook()

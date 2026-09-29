@@ -51,8 +51,8 @@ function B.build(bucket, now)
             elseif row.lastKnownX then x, y = row.lastKnownX, row.lastKnownY end
             if x then
                 local c, icon, _, size = A.get(row)
-                -- 停好的車最後位置就是準的，不該變淡；只有狀態異常（待重新核發、待釋放、隔離）才淡化
-                local shown = row.state == "ACTIVE" and "live" or state
+                -- 停好的車最後位置就是準的，不該變淡；只有狀態異常（待重新核發、待釋放、隔離、暫時不在世界上）才淡化
+                local shown = (row.state == "ACTIVE" and not row.removedAtMs) and "live" or state
                 local m = { id = oid, x = x, y = y, texture = iconTexture(icon), r = c.r, g = c.g, b = c.b,
                     label = MVM.FleetUI.displayName(row), state = shown }
                 if badge then

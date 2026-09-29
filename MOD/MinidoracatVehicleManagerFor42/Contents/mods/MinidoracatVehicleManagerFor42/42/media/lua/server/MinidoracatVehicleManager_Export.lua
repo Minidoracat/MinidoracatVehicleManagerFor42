@@ -111,7 +111,9 @@ function X.utc(ms)
 end
 
 -- ---------------------------------------------------------------- export ---
-local VEHICLE_FIELDS = { "owner", "name", "model", "state", "claimedAt", "lastKnown", "sharedWith", "faction", "oid", "sqlId" }
+-- 移出世界（拖車裝走、被移除）的車不給 sqlId：舊號重啟後會被別台車回收，改給 outOfWorldSince（接回後恢復新 sqlId）
+local VEHICLE_FIELDS = { "owner", "name", "model", "state", "claimedAt", "lastKnown", "sharedWith", "faction", "oid", "sqlId",
+    "outOfWorldSince" }
 
 local function actionsOf(bits)
     local out = arr({})
@@ -132,7 +134,8 @@ function X.document()
         local row = obj(VEHICLE_FIELDS, {
             owner = rec.ownerUser, name = rec.customName ~= "" and rec.customName or nil,
             model = tostring(rec.vehicleScript or "?"):gsub("^.-%.", ""), state = rec.recordState,
-            claimedAt = X.utc(rec.claimedAtMs), sharedWith = shared, oid = oid, sqlId = rec.sqlIdHint,
+            claimedAt = X.utc(rec.claimedAtMs), sharedWith = shared, oid = oid,
+            sqlId = not rec.removedAtMs and rec.sqlIdHint or nil, outOfWorldSince = X.utc(rec.removedAtMs),
             lastKnown = rec.lastKnownX and obj({ "x", "y", "z", "at" }, { x = math.floor(rec.lastKnownX), y = math.floor(rec.lastKnownY),
                 z = math.floor(rec.lastKnownZ or 0), at = X.utc(rec.lastKnownAtMs) }) or nil,
             faction = rec.factionShare and obj({ "name", "state", "actions" }, { name = rec.factionName, state = rec.factionState,

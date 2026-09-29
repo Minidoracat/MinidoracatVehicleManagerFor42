@@ -38,6 +38,7 @@
     "IGUI_MVM_State_WITNESS_STALE": "保護中・車両のそばで識別の再発行が必要",
     "IGUI_MVM_State_PENDING_RELEASE": "登録解除待ち・残り %1 時間",
     "IGUI_MVM_State_QUARANTINED": "隔離中・管理者が必要",
+    "IGUI_MVM_State_OUT_OF_WORLD": "保護中・現在ワールドにありません（トレーラーに積載中か、削除された可能性）",
     "IGUI_MVM_State_ORPHANED": "紛失・車両が置き換わりました",
     "IGUI_MVM_State_DESTROYED": "焼失して撤去",
     "IGUI_MVM_State_RELEASED": "登録解除済み・保護対象外",

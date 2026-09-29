@@ -60,13 +60,15 @@ function F.onMap(row)
     return row.role == "OWNER" or MVM.bitsAllow(row.myBits or 0, "TRACK")
 end
 
--- 狀態只照 server 的 recordState；釋放倒數以 server 給的到期時間換算
+-- 狀態只照 server 的 recordState；釋放倒數以 server 給的到期時間換算。
+-- removedAtMs：車暫時不在世界上（拖車裝走或被移除），紀錄仍受保護；待釋放與隔離照原狀態顯示
 function F.stateText(row, now)
     local s = row.state
     if s == "PENDING_RELEASE" then
         local hours = math.max(0, math.ceil(((row.releaseDueAtMs or now) - now) / 3600000))
         return getText("IGUI_MVM_State_PENDING_RELEASE", hours)
     end
+    if row.removedAtMs and (s == "ACTIVE" or s == "WITNESS_STALE") then return getText("IGUI_MVM_State_OUT_OF_WORLD") end
     return getText("IGUI_MVM_State_" .. tostring(s))
 end
 
@@ -251,7 +253,10 @@ end
 
 local STATE_TOKEN = { ACTIVE = "text", WITNESS_STALE = "accent", PENDING_RELEASE = "accent", PENDING_REBIND = "accent",
     QUARANTINED = "errorText" }
-local function stateToken(row) return STATE_TOKEN[row.state] or "textFaint" end
+local function stateToken(row)
+    if row.removedAtMs and (row.state == "ACTIVE" or row.state == "WITNESS_STALE") then return "accent" end
+    return STATE_TOKEN[row.state] or "textFaint"
+end
 
 -- 清單列：選取狀態存在 list，cell 只是投影；文字在 bind 時算好，render 不配置。
 -- 管理頁的玩家列最左畫批次勾選框（BOX_W 寬的點擊區），再畫展開箭頭與右側「已用 / 上限」，車輛列縮排在玩家底下

@@ -95,8 +95,24 @@ local function canUseAny(actor, vehicle, actions, context)
     return false, reason, rec, actions[1]
 end
 
+-- 一台車的判定：受保護的車（有紀錄）要有權限；伺服器上每台受保護的車各要消費一筆 intent（消費記在 a[flag]）
+local function judge(spec, a, vehicle, part, actions, flag)
+    local ok, reason, rec, act = canUseAny(a.character, vehicle, actions, { part = part, op = spec.class, silent = a[flag] == true })
+    if rec == nil or not ok then return rec == nil, reason, rec, act end
+    if isServer() and not a[flag] then
+        if not takeIntent(O.principal(a.character), spec.class, vehicle, part) then
+            O.audit("WARN", "ACTOR_MISMATCH", { actor = O.principal(a.character), oid = rec.oid, owner = rec.ownerUser,
+                reason = spec.class })
+            return false, "ACTOR_MISMATCH", rec, act
+        end
+        a[flag] = true
+    end
+    return true, reason, rec, act
+end
+
 -- 每個突變 stage 都重新判定目前的目標與權限（中途撤權、轉讓、剛被綁定都要擋）；
 -- 只有 intent 的消費記在 action 實例上（一個動作只消費一次，雙層包裝也一樣）。一旦拒絕就整個動作都拒絕。
+-- spec.also 的車（例：拖吊的拖車）在主目標通過後逐台判定，規則相同
 function G.decide(spec, a)
     if a._mvmAllow == false then return false end
     local allow, rec, reason, act = true, nil, nil, nil
@@ -108,20 +124,12 @@ function G.decide(spec, a)
         elseif a.vehicle ~= nil and a.vehicle ~= vehicle then
             allow, reason = false, "TARGET_MISMATCH" -- action 自帶的 vehicle 與實際目標不一致
         else
-            local ok
-            ok, reason, rec, act = canUseAny(a.character, vehicle, MVM.requiredActions(spec, a),
-                { part = part, op = spec.class, silent = a._mvmIntent == true })
-            if rec == nil then
-                allow = true
-            elseif not ok then
-                allow = false
-            elseif isServer() and not a._mvmIntent then
-                if takeIntent(O.principal(a.character), spec.class, vehicle, part) then
-                    a._mvmIntent = true
-                else
-                    allow, reason = false, "ACTOR_MISMATCH"
-                    O.audit("WARN", "ACTOR_MISMATCH", { actor = O.principal(a.character), oid = rec.oid, owner = rec.ownerUser,
-                        reason = spec.class })
+            allow, reason, rec, act = judge(spec, a, vehicle, part, MVM.requiredActions(spec, a), "_mvmIntent")
+            for i, extra in ipairs(spec.also or {}) do
+                local other = allow and extra.vehicleOf(a) or nil
+                if other ~= nil and other ~= vehicle then
+                    local ok2, reason2, rec2 = judge(spec, a, other, nil, { extra.action }, "_mvmIntentAlso" .. i)
+                    if not ok2 then allow, reason, rec = false, reason2, rec2 end
                 end
             end
         end

@@ -249,6 +249,9 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:getVehicleTowedBy() return self.towedBy end
     function v:hasModData() return self.bodyMd ~= nil end
     function v:getModData() self.bodyMd = self.bodyMd or {}; return self.bodyMd end
+    function v:transmitModData() count("body") end
+    -- 經 Java 方法表呼叫（伺服器包 permanentlyRemove 的方法表，見 VEHICLE_METHODS）
+    function v:permanentlyRemove() return VEHICLE_METHODS.permanentlyRemove(self) end
     world[id] = v
     vehicleList[#vehicleList + 1] = v
     return v
@@ -257,7 +260,10 @@ function getVehicleById(id) return world[id] end
 function getCell() return { getVehicles = function() return javaList(vehicleList) end } end
 
 -- 原版 timed action 與 UI（server 包 ISRemoveBurntVehicle，client 包選單）
-ISRemoveBurntVehicle = { complete = function(self) self.vehicle.removed = true; return true end }
+-- BaseVehicle 的 Java 方法表（__classmetatables[BaseVehicle.class].__index）：OwnershipSystem 載入時包 permanentlyRemove
+VEHICLE_METHODS = { permanentlyRemove = function(v) v.removed = true end }
+BaseVehicle, __classmetatables = { class = "BaseVehicleClass" }, { BaseVehicleClass = { __index = VEHICLE_METHODS } }
+ISRemoveBurntVehicle = { complete = function(self) self.vehicle:permanentlyRemove(); return true end }
 ISBaseTimedAction = { derive = function(self, name) local c = setmetatable({ Type = name }, { __index = self }); c.__index = c; return c end,
     new = function(cls, chr) return setmetatable({ character = chr }, cls) end, perform = function() end }
 ISVehicleMenu = { FillMenuOutsideVehicle = function() end }
@@ -311,6 +317,8 @@ require("MinidoracatVehicleManager_Tracking")
 require("MinidoracatVehicleManager_Migration")
 require("MinidoracatVehicleManager_Export")
 require("MinidoracatVehicleManager_Economy")
+require("MinidoracatVehicleManager_ClaimTags")
+BaseVehicle, __classmetatables = nil, nil
 local MVM = MinidoracatVehicleManager
 local O, S = MVM.Own, MVM.Srv
 local G = MVM.Guards
@@ -332,7 +340,7 @@ local function boot(diskState, keepGmd, keepGos)
     serverOpts, transmits = {}, 0
     for k in pairs(O.R.denyAgg) do O.R.denyAgg[k] = nil end
     O.R.factionRefs, O.R.suspectKeys, O.R.lastMaintMs, O.R.lastScanMs, O.R.overrides = {}, {}, 0, 0, {}
-    S.R.acks, S.R.rate, S.R.attempts, S.R.streams, S.R.unverified = {}, {}, {}, {}, {}
+    S.R.acks, S.R.rate, S.R.attempts, S.R.streams, S.R.unverified, S.R.recheck = {}, {}, {}, {}, {}, {}
     O.R.identityConflicts, steamActive = nil, false
     G.R.intents, G.R.due, G.R.lastRun = {}, {}, 0
     MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.lastRun = {}, {}, 0
@@ -2282,6 +2290,311 @@ MVM.BillingWindow, MVM.BillingUI = savedWindow, savedBillingUI
 MinidoracatEconomy = nil
 E.init()
 SB.ClaimsPerPlayer = 3
+end)(); -- 分號：下一個情境也是 IIFE
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+-- from 起有一行同時含全部字串
+local function logged(from, ...)
+    local want = { ... }
+    for i = from, #logLines do
+        local all = true
+        for _, w in ipairs(want) do if not logLines[i]:find(w, 1, true) then all = false end end
+        if all then return true end
+    end
+    return false
+end
+local function mark() return #logLines + 1 end
+local WK = "MinidoracatVehicleManager"
+local function carry(v, w) rawset(v.parts.Engine.md, WK, w); return v end
+
+out("情境 T1：MVCK 匯入帶入陣營共享（旗標在匯入時記下，陣營在轉正當下才查）")
+boot()
+local ADT = player("adminT", 1, 1, { admin = true })
+local function legacyCar(id, sqlId)
+    local v = vehicle(id, sqlId, 7000 + id, "Base.CarNormal", 1, 1)
+    v:getModData().SQLID = 1700000000000 + sqlId
+    return v
+end
+local function importWith(mvck, entries)
+    gmd.MVCKByVehicleSQLID = gmd.MVCKByVehicleSQLID or {}
+    for sqlId, owner in pairs(entries) do
+        gmd.MVCKByVehicleSQLID[1700000000000 + sqlId] = { OwnerPlayerID = owner, CarModel = "Base.CarNormal", ClaimDateTime = 1700000000 }
+    end
+    SandboxVars.MVCK = mvck
+    local ack = cmd(ADT, "adminMigration", { op = "IMPORT" })
+    SandboxVars.MVCK = nil
+    return ack
+end
+local function recOf(v) local verdict, r = O.lookup(v); return verdict == "AUTHORIZED" and r or nil end
+newFaction("Wolves", "fo1", { "fm1" })
+newFaction("Bears", "bo", { "fo2", "fo3", "fo5" })
+local FM = player("fm1", 1, 1)
+local c1, c2 = legacyCar(1, 101), legacyCar(2, 102)
+local l0 = mark()
+local im = importWith({ AllowFaction = true }, { [101] = "fo1", [102] = "nf1", [104] = "fo4" })
+local r1, r2 = recOf(c1), recOf(c2)
+check(im.ok and im.rebound == 2 and im.pending == 1 and r1 and r2, "AllowFaction=true 匯入：已載入的兩台當場轉正、一筆待轉")
+check(r1.factionShare and r1.factionState == "GRANTED" and r1.factionActionBits == MVM.SHAREABLE_MASK
+    and O.canUse(FM, c1, "DRIVE") and O.canUse(FM, c1, "TOW") and not O.canUse(FM, c1, "MANAGE")
+    and logged(l0, "ACL_CHANGE", r1.oid, "MVCK_IMPORT"), "車主有陣營：開陣營共享，成員拿到管理以外的全部權限，稽核 MVCK_IMPORT")
+check(not r2.factionShare and not logged(l0, r2.oid, "MVCK_IMPORT"), "車主沒有陣營：不開陣營共享，也不寫陣營稽核")
+local c3 = legacyCar(3, 103)
+importWith({ AllowFaction = false }, { [103] = "fo2" })
+local r3 = recOf(c3)
+check(r3 and not r3.factionShare, "MVCK 沙盒 AllowFaction=false：車主有陣營也不開")
+local c5 = legacyCar(5, 105)
+importWith(nil, { [105] = "fo3" })
+local r5 = recOf(c5)
+check(r5 and r5.factionShare and r5.factionActionBits == MVM.SHAREABLE_MASK, "讀不到 MVCK 沙盒（MVCK 不在）：照 MVCK 預設開")
+newFaction("Deer", "fo4", {})
+SandboxVars.MVCK = { AllowFaction = false }
+local r4 = recOf(legacyCar(4, 104))
+SandboxVars.MVCK = nil
+check(r4 and r4.ownerUser == "fo4" and r4.factionShare and r4.factionName == "Deer",
+    "匯入時沒陣營、轉正前才加入：旗標用匯入當時的，陣營看轉正當下")
+SB.AllowFactionShare = false
+local c6 = legacyCar(6, 106)
+importWith({ AllowFaction = true }, { [106] = "fo5" })
+SB.AllowFactionShare = true
+local r6 = recOf(c6)
+check(r6 and not r6.factionShare, "VM 沙盒關閉陣營共享：不開")
+
+out("情境 T2：拖車裝走（移出世界）與依見證接回")
+boot()
+local OW, ST = player("tow1", 1, 1), player("tstr", 1, 1)
+cmd(OW, "fleetSubscribe", {}, false)
+local car = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1)
+local r = rec(claim(OW, car).oid)
+l0 = mark()
+local free, look = vehicle(2, 102, 5002, "Base.CarNormal", 1, 1), vehicle(3, 101, 9999, "Base.CarNormal", 1, 1)
+free:permanentlyRemove(); look:permanentlyRemove()
+check(free.removed and look.removed and r.removedAtMs == nil and not logged(l0, "REMOVED_FROM_WORLD"),
+    "未綁定的車、同 sqlId 但 keyId 不同的車被移除：照原版移除，紀錄不動")
+check(cmd(OW, "reportLost", { expectedOid = r.oid }).ok and r.recordState == "PENDING_RELEASE", "車主先回報遺失（待釋放）")
+car.x, car.y = 7, 8
+car:permanentlyRemove()
+local drow = lastOf(OW, "fleetDelta").upserts[1]
+check(car.removed and r.removedAtMs == nowMs and r.removedSqlId == 101 and r.lastKnownX == 7 and r.recordState == "PENDING_RELEASE"
+    and logged(l0, "REMOVED_FROM_WORLD", r.oid), "受保護的車被移除：記下移出時間、原 sqlId、最後位置並稽核，狀態不變")
+check(drow.oid == r.oid and drow.removedAtMs == r.removedAtMs and O.quotaUsed("tow1") == 1, "車主收到帶 removedAtMs 的列；照常計入名額")
+local l1 = mark()
+O.lookup(vehicle(4, 104, 5001, "Base.CarNormal", 1, 1)) -- 卸車剛生出的車，零件見證還沒還原
+check(not logged(l1, "KEYID_COLLISION_SUSPECT"), "移出時一併取消 keyId 索引：同 keyId 的新車不當成撞號")
+check(O.lookup(vehicle(5, 101, 7777, "Base.CarNormal", 1, 1)) == "UNCLAIMED" and r.recordState == "PENDING_RELEASE",
+    "移出時取消 sqlId 索引：同號的別台車不會讓紀錄 ORPHANED")
+local car2 = vehicle(6, 201, 6001, "Base.CarNormal", 1, 1)
+local rIn = rec(claim(OW, car2).oid)
+local clone = carry(vehicle(7, 202, 6001, "Base.CarNormal", 1, 1), { oid = rIn.oid, epoch = rIn.epoch })
+l1 = mark()
+check(O.lookup(clone) == "UNCLAIMED_WITNESS_STRIPPED" and witness(clone) == nil and logged(l1, "ORPHAN_WITNESS_STRIPPED", "RECORD_IN_WORLD")
+    and rIn.sqlIdHint == 201 and rIn.removedAtMs == nil and O.lookup(car2) == "AUTHORIZED",
+    "見證被複製到同型同 keyId 的別台車、原車仍在世界上：剝除，紀錄不動")
+local W = { oid = r.oid, epoch = r.epoch }
+for _, b in ipairs({ { carry(vehicle(8, 301, 5001, "Base.Van", 1, 1), W), "SCRIPT_MISMATCH", "車型不同" },
+    { carry(vehicle(9, 302, 5999, "Base.CarNormal", 1, 1), W), "KEYID_MISMATCH", "keyId 不同" },
+    { carry(vehicle(10, 303, 5001, "Base.CarNormal", 1, 1), { oid = r.oid, epoch = "uuid-old-epoch" }), "EPOCH_MISMATCH", "epoch 不同" } }) do
+    l1 = mark()
+    check(O.lookup(b[1]) == "UNCLAIMED_WITNESS_STRIPPED" and witness(b[1]) == nil and logged(l1, "ORPHAN_WITNESS_STRIPPED", b[2])
+        and r.removedAtMs ~= nil and r.sqlIdHint == 101, b[3] .. "：見證剝除，紀錄仍是移出中")
+end
+local disk, g2 = GOS.snapshot(), deepcopy(gmd)
+boot(disk, true); gmd = g2
+OW, ST = player("tow1", 1, 1), player("tstr", 1, 1)
+cmd(OW, "fleetSubscribe", {}, false)
+r = rec(r.oid)
+check(O.ready() and r.removedAtMs ~= nil and O.lookup(vehicle(1, 101, 8888, "Base.CarNormal", 1, 1)) == "UNCLAIMED"
+    and r.recordState == "PENDING_RELEASE", "重啟後舊號回收給別台車：移出中的紀錄不索引，不會 ORPHANED")
+local back = vehicle(11, 555, 5001, "Base.CarNormal", 4, 4)
+l1 = mark()
+fire("OnSpawnVehicleEnd", back)
+local early = r.removedAtMs ~= nil
+carry(back, { oid = r.oid, epoch = r.epoch }) -- 拖車 MOD 生車之後才還原零件 modData
+fire("OnTick")
+check(early and r.removedAtMs == nil and r.sqlIdHint == 555 and logged(l1, "REATTACHED", r.oid, "sqlId 101->555"),
+    "卸下的車（新 sqlId）在生車後下一個 tick 依見證接回")
+check(r.recordState == "ACTIVE" and O.canUse(OW, back, "DRIVE") and not O.canUse(ST, back, "DRIVE"),
+    "接回時取消待釋放；車主可用、他人仍被拒")
+drow = lastOf(OW, "fleetDelta").upserts[1]
+check(drow.oid == r.oid and drow.removedAtMs == nil, "車主收到接回後的列（沒有 removedAtMs）")
+local YO = player("yown", 1, 1)
+local car3 = vehicle(12, 401, 9401, "Base.CarNormal", 1, 1)
+local r3t = rec(claim(OW, car3).oid)
+local rY = rec(claim(YO, vehicle(13, 402, 9402, "Base.CarNormal", 1, 1)).oid)
+car3:permanentlyRemove()
+world[13].removed = true -- Y 的車被引擎直接刪掉（不經 Lua），之後 402 回收
+local vLand, got = O.lookup(carry(vehicle(14, 402, 9401, "Base.CarNormal", 1, 1), { oid = r3t.oid, epoch = r3t.epoch }))
+check(rY.recordState == "ORPHANED" and vLand == "AUTHORIZED" and got == r3t and r3t.sqlIdHint == 402 and r3t.removedAtMs == nil,
+    "卸下的車拿到回收號：舊紀錄照常 ORPHANED，車上見證的移出紀錄照樣接回")
+l1 = mark()
+intent(OW, "ISRemoveBurntVehicle", back)
+ISRemoveBurntVehicle.complete(A("ISRemoveBurntVehicle", { character = OW, vehicle = back }))
+check(back.removed and r.recordState == "DESTROYED" and not logged(l1, "REATTACHED") and not O.hasOutOfWorld(),
+    "燒毀車拆解移除：照樣 DESTROYED，不會被當成拖車接回")
+local rdisk, rg = GOS.snapshot(), deepcopy(gmd)
+rdisk.ledgerRevision = rdisk.ledgerRevision - 3
+boot(rdisk, true); gmd = rg
+local car2b = vehicle(6, 201, 6001, "Base.CarNormal", 1, 1)
+G.watchdog()
+car2b:permanentlyRemove()
+check(O.R.status == "RECOVERY_REQUIRED" and car2b.removed and rec(rIn.oid).removedAtMs == nil, "帳本 RECOVERY_REQUIRED：照原版移除、不改紀錄")
+boot()
+local origHook = O.onPermanentlyRemove
+O.onPermanentlyRemove = function() error("boom") end
+local ev = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1)
+local okCall = pcall(function() ev:permanentlyRemove() end)
+local nHook = 0
+O.onPermanentlyRemove = function() nHook = nHook + 1 end
+BaseVehicle, __classmetatables = { class = "BaseVehicleClass" }, { BaseVehicleClass = { __index = VEHICLE_METHODS } }
+O.installRemoveHook()
+BaseVehicle, __classmetatables = nil, nil
+vehicle(2, 102, 5002, "Base.CarNormal", 1, 1):permanentlyRemove()
+O.onPermanentlyRemove = origHook
+check(okCall and ev.removed, "移除 hook 出錯：原函式照常執行")
+check(nHook == 1, "Lua 重載後再裝一次 hook：不疊包")
+
+out("情境 T3：Autotsar 拖吊（ATAISLoadVehicle／ATAISLaunchVehicle）")
+vclass("ATAISLoadVehicle", { "complete" })
+vclass("ATAISLaunchVehicle", { "complete" })
+G.install("T3")
+boot()
+local AO, AS, AM = player("aow", 1, 1), player("astr", 1, 1), player("amem", 1, 1)
+local acar, atr = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1), vehicle(2, 102, 5002, "Base.TrailerWrecker", 1, 1)
+local stTr, loose = vehicle(3, 103, 5003, "Base.TrailerWrecker", 1, 1), vehicle(4, 104, 5004, "Base.CarNormal", 1, 1)
+local rc, rt = rec(claim(AO, acar).oid), rec(claim(AO, atr).oid)
+local function loadA(p, trailer, v) return A("ATAISLoadVehicle", { character = p, trailer = trailer, vehicle = v }) end
+local function launchA(p, trailer) return A("ATAISLaunchVehicle", { character = p, trailer = trailer }) end
+check(stage(loadA(AS, stTr, loose), "complete") == true and calls("ATAISLoadVehicle.complete") == 1, "車與拖車都沒綁定：照原版，不要求 intent")
+check(stage(loadA(AS, stTr, acar), "complete") == false and lastEnforcement(AS).reason == "NOT_AUTHORIZED",
+    "陌生人把受保護的車裝上自己的拖車 → 拒")
+check(stage(loadA(AS, atr, loose), "complete") == false and calls("ATAISLoadVehicle.complete") == 1, "陌生人用別人受保護的拖車裝車 → 拒")
+check(stage(launchA(AS, atr), "complete") == false and calls("ATAISLaunchVehicle.complete") == 0, "陌生人從受保護的拖車卸車 → 拒")
+intent(AO, "ATAISLoadVehicle", acar)
+l0 = mark()
+local la = loadA(AO, atr, acar)
+check(stage(la, "complete") == false and la._mvmReason == "ACTOR_MISMATCH" and logged(l0, "ACTOR_MISMATCH"),
+    "車主只替被裝的車送 intent、沒替拖車送 → ACTOR_MISMATCH")
+intent(AO, "ATAISLoadVehicle", acar); intent(AO, "ATAISLoadVehicle", atr)
+la = loadA(AO, atr, acar)
+check(stage(la, "complete") == true and la._mvmReason ~= "TARGET_MISMATCH" and calls("ATAISLoadVehicle.complete") == 2,
+    "車與拖車都有 intent：車主裝自己的車（主目標是被裝的車，不會 TARGET_MISMATCH）")
+check(stage(loadA(AO, atr, acar), "complete") == false, "intent 已消費：同一動作再來一次（冒充）被拒")
+intent(AO, "ATAISLoadVehicle", atr)
+check(stage(loadA(AO, atr, loose), "complete") == true, "車主把未綁定的車裝上自己的拖車：只要拖車的 intent")
+cmd(AO, "addMember", { expectedOid = rc.oid, username = "amem", actionBits = MVM.ACTIONS.TOW })
+cmd(AO, "addMember", { expectedOid = rt.oid, username = "amem", actionBits = MVM.ACTIONS.DRIVE })
+intent(AM, "ATAISLoadVehicle", acar)
+check(stage(loadA(AM, stTr, acar), "complete") == true, "有 TOW 的成員：可把車裝上未綁定的拖車")
+intent(AM, "ATAISLaunchVehicle", atr)
+check(stage(launchA(AM, atr), "complete") == false, "拖車成員沒有 TOW：不能卸車")
+intent(AO, "ATAISLaunchVehicle", atr)
+check(stage(launchA(AO, atr), "complete") == true and calls("ATAISLaunchVehicle.complete") == 1, "車主有 intent：卸車")
+
+out("情境 T4：MSW 相容車身鍵（SDVCOwner／SDVCAllowedEnter）")
+boot()
+local CT = MVM.ClaimTags
+activeMods.rSemiTruck = true
+local CO = player("cow", 1, 1)
+for _, n in ipairs({ "cbob", "ccar", "cdan", "p,q", "cfm" }) do player(n, 1, 1) end
+local function md(v, k) return v.bodyMd and rawget(v.bodyMd, k) end
+local tcar = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1)
+local b0 = tx.body or 0
+local rT = rec(claim(CO, tcar).oid)
+check(md(tcar, "SDVCOwner") == "cow" and md(tcar, "SDVCAllowedEnter") == nil and md(tcar, CT.MARK) == true and tx.body == b0 + 1,
+    "綁定：寫車主與標記鍵並 transmitModData")
+cmd(CO, "addMember", { expectedOid = rT.oid, username = "ccar", actionBits = MVM.ACTIONS.TOW + MVM.ACTIONS.DRIVE })
+cmd(CO, "addMember", { expectedOid = rT.oid, username = "cbob", actionBits = MVM.ACTIONS.TOW })
+cmd(CO, "addMember", { expectedOid = rT.oid, username = "cdan", actionBits = MVM.ACTIONS.DRIVE })
+cmd(CO, "addMember", { expectedOid = rT.oid, username = "p,q", actionBits = MVM.ACTIONS.TOW })
+check(md(tcar, "SDVCAllowedEnter") == "cbob,ccar", "分享變更當下同步：只列有 TOW 的成員、依帳號排序，含逗號的名字不寫")
+newFaction("Crows", "cow", { "cfm" })
+cmd(CO, "setFactionShare", { expectedOid = rT.oid, expectedEpoch = rT.epoch, enabled = true, actionBits = MVM.ACTIONS.TOW })
+check(md(tcar, "SDVCAllowedEnter") == "cbob,ccar,cfm", "陣營共享有 TOW：陣營成員也列入")
+local b1 = tx.body
+O.observeVehicle(tcar)
+check(tx.body == b1, "內容相同：觀測時不重寫")
+rawset(tcar.bodyMd, "SDVCOwner", "cdan"); rawset(tcar.bodyMd, "SDVCAllowedEnter", "cdan")
+O.observeVehicle(tcar)
+check(md(tcar, "SDVCOwner") == "cow" and md(tcar, "SDVCAllowedEnter") == "cbob,ccar,cfm" and tx.body == b1 + 1, "玩家端竄改：下次觀測修回")
+O.setState(rT, "QUARANTINED", "TEST")
+check(md(tcar, "SDVCOwner") == CT.LOCKED .. rT.oid and md(tcar, "SDVCAllowedEnter") == nil, "QUARANTINED：車主寫成鎖定值、名單清空")
+O.setState(rT, "ACTIVE", "TEST")
+check(md(tcar, "SDVCOwner") == "cow" and md(tcar, "SDVCAllowedEnter") == "cbob,ccar,cfm", "離開 QUARANTINED：恢復")
+local unsafe = true
+for _, n in ipairs({ "", "false", "a,b", "a@b", "a;b", " a", "a ", CT.LOCKED .. rT.oid }) do if CT.safe(n) then unsafe = false end end
+check(unsafe and CT.safe("alice") and CT.safe("Mr Smith"), "名字檢查：空字串、false、逗號、@、;、頭尾空白都不收")
+local odd = vehicle(2, 102, 5002, "Base.CarNormal", 1, 1)
+local rOdd = O.createRecord("cbob,cow", odd, odd.parts.Engine) -- MVCK 匯入的車主名沒經過帳號規則
+check(md(odd, "SDVCOwner") == CT.LOCKED .. rOdd.oid and md(odd, "SDVCAllowedEnter") == nil, "車主名不能寫進 MSW：整台寫成鎖定值")
+tcar.bodyMd.owner, tcar.bodyMd.WG_Claim_Owner = "x", "y"
+check(cmd(CO, "unclaim", { vehicleId = 1, expectedOid = rT.oid, expectedEpoch = rT.epoch }).ok and md(tcar, "SDVCOwner") == nil
+    and md(tcar, "SDVCAllowedEnter") == nil and md(tcar, CT.MARK) == nil and md(tcar, "owner") == "x" and md(tcar, "WG_Claim_Owner") == "y",
+    "解除綁定：只清本 MOD 寫的鍵，別的 MOD 的鍵不動")
+local foreign = vehicle(3, 103, 5003, "Base.CarNormal", 1, 1)
+foreign:getModData().SDVCOwner = "someone"
+O.observeVehicle(foreign)
+check(md(foreign, "SDVCOwner") == "someone", "沒有本 MOD 標記的 SDVCOwner（別的 MOD 寫的）不動")
+local stray = carry(vehicle(4, 104, 5004, "Base.CarNormal", 1, 1), { oid = "uuid-gone", epoch = "e" })
+stray:getModData().SDVCOwner, stray:getModData()[CT.MARK] = "cow", true
+O.observeVehicle(stray)
+check(witness(stray) == nil and md(stray, "SDVCOwner") == nil and md(stray, CT.MARK) == nil, "孤兒見證被剝除時，本 MOD 的鍵一起清")
+local mcar = vehicle(5, 105, 5005, "Base.CarNormal", 1, 1)
+local rM = rec(claim(CO, mcar).oid)
+mcar:permanentlyRemove()
+local mback = carry(vehicle(6, 555, 5005, "Base.CarNormal", 1, 1), { oid = rM.oid, epoch = rM.epoch })
+O.observeVehicle(mback)
+check(rM.sqlIdHint == 555 and md(mback, "SDVCOwner") == "cow" and md(mback, CT.MARK) == true, "接回的車寫上車主")
+activeMods.rSemiTruck = nil
+local plain = vehicle(7, 107, 5007, "Base.CarNormal", 1, 1)
+claim(CO, plain)
+check(not CT.enabled() and plain.bodyMd == nil, "MSW 沒啟用：不寫車身鍵")
+activeMods.rSemiTruck, serverMode = true, false
+check(not CT.enabled(), "單人（非伺服器）：不寫車身鍵")
+activeMods.rSemiTruck, serverMode = nil, true
+
+out("情境 T5：客戶端 MSW 裝卸防護與拖吊 also intent")
+local savedIsClient = isClient
+isClient = function() return true end
+online = {}
+local me = player("kow", 1, 1)
+function me:getRole() return nil end
+local queued = 0
+ISTimedActionQueue = { add = function() queued = queued + 1 end, addAfter = function() end }
+for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do
+    _G[n] = { isValid = function() return true end }
+end
+MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil
+handlers.OnGameStart = handlers.OnGameStart or {}
+local nStart = #handlers.OnGameStart
+assert(loadfile(MEDIA .. "/client/MinidoracatVehicleManager_ClientGuards.lua"))()
+-- MSW 的類別在本 MOD 之後才載入：進遊戲時補包
+MSW_ISLoadVehicle = { isValid = function() return true end }
+MSW_ISLaunchVehicle = { isValid = function() return true end }
+for i = nStart + 1, #handlers.OnGameStart do handlers.OnGameStart[i]() end
+local myCar = carry(vehicle(61, 901, 9901, "Base.CarNormal", 1, 1), { oid = "kMyCar" })
+local myTr = carry(vehicle(62, 902, 9902, "Base.Trailer", 1, 1), { oid = "kMyTr" })
+local theirCar = carry(vehicle(63, 903, 9903, "Base.CarNormal", 1, 1), { oid = "kTheirCar" })
+local theirTr = carry(vehicle(64, 904, 9904, "Base.Trailer", 1, 1), { oid = "kTheirTr" })
+local looseC = vehicle(65, 905, 9905, "Base.CarNormal", 1, 1)
+MVM.clientReceive("fleetSnapshot", { to = "kow", streamId = "kt", seq = 0, rows = {
+    { oid = "kMyCar", role = "OWNER", state = "ACTIVE" }, { oid = "kMyTr", role = "OWNER", state = "ACTIVE" } } })
+local function mswLoad(tr, v) return setmetatable({ character = me, trailer = tr, vehicle = v }, { __index = MSW_ISLoadVehicle }):isValid() end
+local function mswLaunch(tr) return setmetatable({ character = me, trailer = tr }, { __index = MSW_ISLaunchVehicle }):isValid() end
+check(mswLoad(myTr, myCar) and mswLoad(myTr, looseC) and mswLaunch(myTr), "MSW：自己的車裝上自己的拖車、自己的拖車卸車都放行")
+check(not mswLoad(myTr, theirCar), "MSW：別人受保護的車不能裝上拖車")
+check(not mswLoad(theirTr, myCar) and not mswLoad(theirTr, looseC), "MSW：別人受保護的拖車不能拿來裝車（進遊戲時補包的類別）")
+check(not mswLaunch(theirTr), "MSW：不能從別人受保護的拖車卸車")
+clientSent = {}
+ISTimedActionQueue.add(A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = theirCar }))
+local sentFor = {}
+for _, m in ipairs(clientSent) do if m.command == "prepareAction" then sentFor[m.args.vehicleId] = m.args.class end end
+check(queued == 1 and sentFor[63] == "ATAISLoadVehicle" and sentFor[64] == nil and sentFor[62] == "ATAISLoadVehicle",
+    "拖吊裝車排入佇列：被裝的車與拖車（also）各送一筆 intent")
+clientSent = {}
+ISTimedActionQueue.add(A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = looseC }))
+check(#clientSent == 1 and clientSent[1].args.vehicleId == 62, "未綁定的車不送 intent，只送拖車的")
+isClient = savedIsClient
+ISTimedActionQueue, MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil, nil
+for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
 end)()
 
 out("")

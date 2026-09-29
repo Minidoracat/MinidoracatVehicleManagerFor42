@@ -38,6 +38,7 @@
     "IGUI_MVM_State_WITNESS_STALE": "受保护・需要到车旁重新核发识别",
     "IGUI_MVM_State_PENDING_RELEASE": "等待解除绑定・剩 %1 小时",
     "IGUI_MVM_State_QUARANTINED": "隔离・需要管理员",
+    "IGUI_MVM_State_OUT_OF_WORLD": "受保护・暂时不在世界上（可能在拖车上或已被移除）",
     "IGUI_MVM_State_ORPHANED": "已遗失・车辆已被替换",
     "IGUI_MVM_State_DESTROYED": "已烧毁移除",
     "IGUI_MVM_State_RELEASED": "已解除绑定・不再受保护",

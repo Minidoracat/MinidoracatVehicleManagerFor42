@@ -1,6 +1,6 @@
 -- Client 端（計畫 §8.1.3、§8.0 U 級）：
 --   1. 排入受保護類別的 timed action 時送 prepareAction（server 以連線身分記 intent）
---   2. 上車／換座／拖掛是 client-only 動作：依投影快取在 isValid 擋下（U 級；server watchdog 事後偵測）
+--   2. 上車／換座／拖掛／MSW 拖車裝卸是 client 端判定的動作：依投影快取在 isValid 擋下（U 級；server watchdog 事後偵測）
 --   3. 虛擬鑰匙入口：無實體鑰匙的授權者可從選單發動、解鎖
 --   4. 顯示 server 送來的 enforcement
 --   5. 車上容器（後車廂、座位、置物箱…）依權限決定列不列出
@@ -18,15 +18,18 @@ local MVM = MinidoracatVehicleManager
 local C = MVM.Client
 
 -- ------------------------------------------------------------------ intent ---
+-- 受保護的車（本機投影看得到見證）各送一筆；spec.also 的車（例：拖吊的拖車）也要各送一筆
 local function sendIntent(action)
     if not isClient() or type(action) ~= "table" then return end
     local spec = MVM.adapterFor(action.Type)
     if spec == nil or action.character == nil then return end
-    local vehicle = spec.vehicleOf(action)
-    if vehicle == nil or MVM.clientProjection(action.character:getPlayerNum(), vehicle) == nil then return end
-    local part = spec.partOf and spec.partOf(action) or nil
-    sendClientCommand(action.character, MVM.MODULE, "prepareAction",
-        { protocol = MVM.PROTOCOL, class = spec.class, vehicleId = vehicle:getId(), partId = part and part:getId() or nil })
+    local function send(vehicle, part)
+        if vehicle == nil or MVM.clientProjection(action.character:getPlayerNum(), vehicle) == nil then return end
+        sendClientCommand(action.character, MVM.MODULE, "prepareAction",
+            { protocol = MVM.PROTOCOL, class = spec.class, vehicleId = vehicle:getId(), partId = part and part:getId() or nil })
+    end
+    send(spec.vehicleOf(action), spec.partOf and spec.partOf(action) or nil)
+    for _, extra in ipairs(spec.also or {}) do send(extra.vehicleOf(action), nil) end
 end
 
 local queueAdd = ISTimedActionQueue.add
@@ -77,6 +80,25 @@ guardValid(ISDetachTrailerFromVehicle, function(a)
     return allowed(a.character, v, "TOW") and allowed(a.character, v:getVehicleTowing(), "TOW")
         and allowed(a.character, v:getVehicleTowedBy(), "TOW")
 end)
+
+-- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW。它的 perform 只送 msw 命令
+-- （MSW_ISLoadVehicle.lua:27-33、MSW_ISLaunchVehicle.lua:39-45），沒有 complete 可在伺服器包：伺服器的載車檢查交給
+-- ClaimTags 寫的車身鍵由 MSW 自己擋；卸車 MSW 伺服器完全不檢查，這裡只擋得住一般客戶端。
+-- 類別定義在 MSW 自己的 client 檔，載入順序不保證：現在有就包，否則進遊戲時再包（每個類別只包一次）
+function MVM.guardMsw()
+    if MSW_ISLoadVehicle and not rawget(MSW_ISLoadVehicle, "_mvmGuarded") then
+        rawset(MSW_ISLoadVehicle, "_mvmGuarded", true)
+        guardValid(MSW_ISLoadVehicle, function(a)
+            return allowed(a.character, a.vehicle, "TOW") and allowed(a.character, a.trailer, "TOW")
+        end)
+    end
+    if MSW_ISLaunchVehicle and not rawget(MSW_ISLaunchVehicle, "_mvmGuarded") then
+        rawset(MSW_ISLaunchVehicle, "_mvmGuarded", true)
+        guardValid(MSW_ISLaunchVehicle, function(a) return allowed(a.character, a.trailer, "TOW") end)
+    end
+end
+MVM.guardMsw()
+Events.OnGameStart.Add(MVM.guardMsw)
 
 -- ------------------------------------------------------------ virtual key ---
 local function hasKey(player, vehicle)

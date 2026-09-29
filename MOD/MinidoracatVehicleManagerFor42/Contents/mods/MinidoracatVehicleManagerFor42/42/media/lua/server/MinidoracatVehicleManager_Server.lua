@@ -54,10 +54,11 @@ local function copyGrants(rec)
     return out
 end
 
--- 收件者可見的一列；不可見回 nil。非 owner 不給 epoch、grants、陣營設定；沒有 TRACK 不給位置
+-- 收件者可見的一列；不可見回 nil。非 owner 不給 epoch、grants、陣營設定；沒有 TRACK 不給位置。
+-- removedAtMs：車暫時不在世界上（拖車裝走或被移除，OwnershipSystem O.onPermanentlyRemove）
 function S.row(rec, who)
     local base = { oid = rec.oid, state = rec.recordState, name = rec.customName or "", script = rec.vehicleScript,
-        witnessPartId = rec.witnessPartId }
+        witnessPartId = rec.witnessPartId, removedAtMs = rec.removedAtMs }
     if who == rec.ownerUser then
         base.role = "OWNER"
         base.epoch = rec.epoch
@@ -123,11 +124,12 @@ end
 
 O.onRecordChanged = function(rec) S.push(S.audience(rec), rec, false) end
 
--- 改變收件者集合的突變：先記下舊集合
+-- 改變收件者集合的突變（分享、陣營）：先記下舊集合；第三方車身標記（可拖曳名單）跟著更新
 local function change(rec, fn)
     local before = S.audience(rec)
     fn()
     S.push(union(before, S.audience(rec)), rec, false)
+    if O.syncClaimTags then O.syncClaimTags(rec, nil) end
 end
 
 -- quota：used／base（基本）／permanent／rental／paid（Economy 已確認可用）／pending（付款未確認，不計入）／total，
@@ -221,7 +223,7 @@ function S.adminSnapshot(player)
     for _, rec in pairs(st.recordsByOid) do
         rows[#rows + 1] = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
             name = rec.customName or "", reason = rec.quarantineReason, lastKnownX = rec.lastKnownX, lastKnownY = rec.lastKnownY,
-            lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs }
+            lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs }
         local owner = rec.ownerUser
         if owner then used[owner] = (used[owner] or 0) + (O.countsForQuota(rec) and 1 or 0) end
     end
@@ -417,13 +419,29 @@ local function ownLiveRecord(player, who, a)
     return v, rec
 end
 
-local function findFactionOf(user)
+function S.findFactionOf(user)
     local list = Faction.getFactions()
     for i = 0, list:size() - 1 do
         local f = list:get(i)
         if f:getOwner() == user or f:isMember(user) then return f end
     end
     return nil
+end
+
+-- 開關陣營共享（f＝nil 表示關閉）；車主指令與 MVCK 匯入共用，稽核由呼叫端寫
+function S.applyFactionShare(rec, f, bits)
+    change(rec, function()
+        if f then
+            rec.factionShare, rec.factionName, rec.factionOwnerUser, rec.factionState, rec.factionActionBits =
+                true, f:getName(), f:getOwner(), "GRANTED", bits
+            O.R.factionRefs[rec.oid] = f
+        else
+            rec.factionShare, rec.factionName, rec.factionOwnerUser, rec.factionState, rec.factionActionBits =
+                false, nil, nil, "NONE", 0
+            O.R.factionRefs[rec.oid] = nil
+        end
+        O.bump(rec)
+    end)
 end
 
 -- 車名：去控制字元、頭尾空白，UTF-8 byte 上限
@@ -538,21 +556,10 @@ H.setFactionShare = function(player, who, a)
     if rec == nil then return fail(reason) end
     local f = nil
     if a.enabled then
-        f = findFactionOf(who)
+        f = S.findFactionOf(who)
         if f == nil then return fail("NO_FACTION") end
     end
-    change(rec, function()
-        if a.enabled then
-            rec.factionShare, rec.factionName, rec.factionOwnerUser, rec.factionState, rec.factionActionBits =
-                true, f:getName(), f:getOwner(), "GRANTED", a.actionBits
-            O.R.factionRefs[rec.oid] = f
-        else
-            rec.factionShare, rec.factionName, rec.factionOwnerUser, rec.factionState, rec.factionActionBits =
-                false, nil, nil, "NONE", 0
-            O.R.factionRefs[rec.oid] = nil
-        end
-        O.bump(rec)
-    end)
+    S.applyFactionShare(rec, f, a.actionBits)
     O.audit("INFO", "ACL_CHANGE", { actor = who, oid = rec.oid, owner = who,
         reason = a.enabled and ("FACTION " .. tostring(a.actionBits)) or "FACTION_OFF" })
     return { ok = true }
@@ -818,9 +825,25 @@ end
 
 Events.EveryOneMinute.Add(S.minute)
 
--- 新生與 DB 載入的車都觸發（Phase 0 gate 10）：即時 reconcile 身分、取消 PENDING_RELEASE
+-- 新生與 DB 載入的車都觸發（Phase 0 gate 10）：即時 reconcile 身分、取消 PENDING_RELEASE。
+-- 拖車 MOD 卸車用 addVehicleDebug，本事件在它呼叫 addToWorld 時就觸發（42.21 LuaManager.java:10821 → BaseVehicle.java:7964
+-- createPhysics → :904），零件 modData 是之後才還原（MSW_Common_Commands.lua:2289 生車、:2299-2301 還原；
+-- ATAISLaunchVehicle.lua:66 生車、:88-93 還原零件）：
+-- 有「已移出世界」的紀錄時，下一個 tick 再看一次，接回帶見證的車
+R.recheck = {}
 Events.OnSpawnVehicleEnd.Add(function(vehicle)
-    if O.state() ~= nil then O.observeVehicle(vehicle) end
+    if O.state() == nil then return end
+    O.observeVehicle(vehicle)
+    if O.hasOutOfWorld() then R.recheck[#R.recheck + 1] = vehicle end
+end)
+
+Events.OnTick.Add(function()
+    if #R.recheck == 0 then return end
+    local list = R.recheck
+    R.recheck = {}
+    for _, v in ipairs(list) do
+        if not v:isRemovedFromWorld() then O.observeVehicle(v) end
+    end
 end)
 
 if Events.OnServerStarted then

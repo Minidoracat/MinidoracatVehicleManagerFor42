@@ -38,6 +38,7 @@
     "IGUI_MVM_State_WITNESS_STALE": "Protected - identity needs re-issuing at the vehicle",
     "IGUI_MVM_State_PENDING_RELEASE": "Waiting to be unclaimed - %1 h left",
     "IGUI_MVM_State_QUARANTINED": "Quarantined - needs an admin",
+    "IGUI_MVM_State_OUT_OF_WORLD": "Protected - not in the world right now (maybe on a trailer, or removed)",
     "IGUI_MVM_State_ORPHANED": "Lost - the vehicle was replaced",
     "IGUI_MVM_State_DESTROYED": "Burnt and removed",
     "IGUI_MVM_State_RELEASED": "Unclaimed - no longer protected",
