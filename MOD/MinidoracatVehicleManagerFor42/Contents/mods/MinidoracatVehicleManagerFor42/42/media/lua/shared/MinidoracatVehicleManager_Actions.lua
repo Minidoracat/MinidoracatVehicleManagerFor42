@@ -66,6 +66,9 @@ local BUILTIN = {
           if w == nil or not instanceof(w, "VehicleWindow") then return nil end
           return w:getPart()
       end },
+    -- 另一個砸車窗類別：原版沒有呼叫點，但伺服器依客戶端送來的類別名稱與 new 參數建動作（NetTimedAction.parse：
+    -- LuaManager.get(type)＋type.new），改機客戶端可以直接排入；complete 會 window:hit（ISSmashVehicleWindow.lua:55-68）
+    { class = "ISSmashVehicleWindow", action = "SALVAGE", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },
 }
 
 local byClass = {}

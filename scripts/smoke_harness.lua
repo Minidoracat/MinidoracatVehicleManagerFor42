@@ -274,6 +274,7 @@ end
 for _, n in ipairs({ "ISAddGasolineToVehicle", "ISTakeGasolineFromVehicle" }) do vclass(n, { "serverStart", "update", "complete", "serverStop" }) end
 for _, n in ipairs({ "ISRefuelFromGasPump", "ISDeflateTire", "ISInflateTire" }) do vclass(n, { "update", "complete", "serverStop" }) end
 vclass("ISSmashWindow", { "serverStart", "update", "complete" })
+vclass("ISSmashVehicleWindow", { "complete" })
 vclass("ISStartVehicleEngine", { "update", "complete" }, { complete = function(a) a.character:getVehicle():tryStartEngine(false); return true end })
 vclass("ISUnlockVehicleDoor", { "update", "complete" })
 IsoObjectChange = { EXIT_VEHICLE = "EXIT_VEHICLE" }
@@ -1698,6 +1699,19 @@ a = A("ISSmashWindow", { character = ST, window = win, vehiclePart = other.parts
 check(stage(a, "complete") == false and calls("ISSmashWindow.complete") == 0, "砸窗以 window 所屬車判定，不信 vehiclePart")
 a = A("ISSmashWindow", { character = ST, window = { _cls = "IsoWindow" } })
 check(stage(a, "complete") == true, "建築窗戶不經本 MOD")
+a = A("ISSmashVehicleWindow", { character = ST, part = car.parts.DoorFrontLeft, vehicle = car })
+check(stage(a, "complete") == false and calls("ISSmashVehicleWindow.complete") == 0, "ISSmashVehicleWindow（原版無呼叫點、改機可排入）也要權限")
+intent(OW, "ISSmashVehicleWindow", car, "DoorFrontLeft")
+a = A("ISSmashVehicleWindow", { character = OW, part = car.parts.DoorFrontLeft, vehicle = car })
+check(stage(a, "complete") == true and calls("ISSmashVehicleWindow.complete") == 1, "車主有 intent 時照原版砸自己的車窗")
+do -- 分割畫面第 2～4 位玩家的名稱由客戶端自由填：與車主同名也不是車主
+    local coop = { num = 1 }
+    function coop:getUsername() return "owner" end
+    function coop:getPlayerNum() return self.num end
+    check(O.principal(coop) == nil and O.canUse(coop, car, "DRIVE") == false, "分割畫面玩家沒有身分：與車主同名也不能駕駛")
+    coop.num = 0
+    check(O.principal(coop) == "owner" and O.canUse(coop, car, "DRIVE") == true, "同名的主玩家（序號 0）才是車主")
+end
 
 out("情境 P2-6：虛擬鑰匙三個 adapter")
 car.seats[0] = OW; OW.vehicle = car

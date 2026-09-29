@@ -13,7 +13,7 @@ require "MinidoracatVehicleManager_Server"
 for _, path in ipairs({ "ISInstallVehiclePart", "ISUninstallVehiclePart", "ISRepairEngine", "ISRepairLightbar",
     "ISTakeEngineParts", "ISAddGasolineToVehicle", "ISTakeGasolineFromVehicle", "ISRefuelFromGasPump", "ISDeflateTire",
     "ISInflateTire", "ISHotwireVehicle", "ISRemoveBurntVehicle", "ISStartVehicleEngine", "ISShutOffVehicleEngine", "ISLockDoors",
-    "ISLockVehicleDoor", "ISUnlockVehicleDoor", "ISOpenVehicleDoor", "ISCloseVehicleDoor", "ISOpenCloseVehicleWindow" }) do
+    "ISLockVehicleDoor", "ISUnlockVehicleDoor", "ISOpenVehicleDoor", "ISCloseVehicleDoor", "ISOpenCloseVehicleWindow", "ISSmashVehicleWindow" }) do
     require("Vehicles/TimedActions/" .. path)
 end
 require "TimedActions/ISFixVehiclePartAction"

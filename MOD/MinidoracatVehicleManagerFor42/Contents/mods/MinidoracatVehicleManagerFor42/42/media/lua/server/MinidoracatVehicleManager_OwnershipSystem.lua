@@ -68,9 +68,12 @@ end
 
 -- ------------------------------------------------------------- identity ---
 -- MP：server username；SP：本機 slot（SP 的 username 是角色姓名，換角色即變，§4.4）
+-- MP 的分割畫面第 2～4 位玩家沒有身分：名稱由客戶端自由填，伺服器只擋空字串與在線重名（ConnectCoopPacket.parse），
+-- 就以它當 username（GameServer.receivePlayerConnect）。E2E identity-mp 實測可取用離線玩家的名稱
 function O.principal(player)
     if player == nil then return nil end
     if isServer() then
+        if player:getPlayerNum() ~= 0 then return nil end
         local name = player:getUsername()
         if type(name) ~= "string" or name == "" then return nil end
         return name
