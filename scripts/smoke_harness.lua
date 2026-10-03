@@ -2702,6 +2702,7 @@ local CASES = {
     { "W900", "setTrailerPhysicsDisabled", args1({ disabled = true }), { "TOW" } },
     { "W900", "toggleFreezer", args1({ part = "Engine", active = true }), { "CARGO" } },
     { "W900", "toggleFridge", args1({ part = "Engine", active = true }), { "CARGO" } },
+    { "W900", "moveVehicleImpulse", args1({}), { "DRIVE", "TOW" } },
     { "rLib", "SetVehicleBattery", function(V) return { vehicleId = V.id, battery = 0 } end, { "TOW" } },
     { "rLib", "SetVehicleHeadlights", function(V) return { vehicleId = V.id, set = true } end, { "TOW" } },
     { "that_damn_lib", "silentPartInstall", function(V) return { _vehicleId = V.id, part = "Engine", item = "Base.X" } end, { "REPAIR" } },
@@ -2742,6 +2743,10 @@ for _, k in ipairs(CASES) do
     check(okStranger and okOwner and okMember and okLoose, label .. " " .. table.concat(need, "/")
         .. "：陌生人被擋（處理器看不到車、不報錯、DENY）、車主與只有該權限的成員放行、缺該權限擋、不受保護照常")
 end
+grant(MVM.ACTIONS.TOW)
+local towImpulse = send(MB, "W900", "moveVehicleImpulse", { vehicle = pv.id }).hit ~= nil
+rp.grants = {}
+check(towImpulse, "W900.moveVehicleImpulse：只有 TOW 的成員也放行（DRIVE 或 TOW 任一）")
 
 out("情境 F2：距離、解析不到、壞 id、出錯、見證鍵、通知、未載入")
 for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end

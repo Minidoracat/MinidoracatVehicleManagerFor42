@@ -151,6 +151,10 @@ local RULES = {
         end,
         setTrailerPhysicsDisabled = one("TOW"), -- :185-207
         toggleFreezer = one("CARGO"), toggleFridge = one("CARGO"), -- :66-183
+        -- 卡住的車往上推並解開拖掛：正式服的 Workshop 版（3409472393，2026-10-03 更新）只有客戶端送
+        -- （client/VehicleEnterFix.lua:90），伺服器沒有處理器；09-24 舊版 W900Commands.lua:203 起有，只看 5 格與
+        -- canPlayerUseMoveUp。預防作者加回來：能開或能拖的人可用
+        moveVehicleImpulse = one({ "DRIVE", "TOW" }),
     },
     -- rSemiTruck server/rLib.Commands.lua:7-45（分派 Server_<cmd>，:61-88）；正常呼叫者是拖掛後同步拖車（rSemiTruck.lua:332-381）
     rLib = { SetVehicleBattery = on("vehicleId", "TOW"), SetVehicleHeadlights = on("vehicleId", "TOW") },
