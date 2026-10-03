@@ -45,6 +45,7 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 [list]
 [*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin
 [*] By default admins are blocked like any other player. To use someone else's car, turn on "Override: use any vehicle" in the Admin tab: every use is logged, the steering wheel button gets a red frame while it is on, and it turns off automatically when you log in again or the server restarts
+[*] In vanilla, split-screen players type their own name and the server does not verify it, while vanilla safehouses and factions trust names, so other players can be impersonated. If your server does not need split-screen, set AllowCoop to false in the server settings (this mod already gives split-screen players no vehicle access)
 [/list]
 
 [h2]⚠️ What is protected[/h2]
