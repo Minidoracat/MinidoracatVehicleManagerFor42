@@ -7,7 +7,7 @@
 --   就替該車開陣營共享（管理以外全部權限，同車主在車隊視窗手動開啟）。安全屋共享不帶入。
 -- 轉正（車身 SQLID 命中待轉項 E，且車型相同）：
 --   規則 1：SQLID 內嵌的綁定當時 sqlId 等於此車 server 端 sqlId。
---   規則 2（換號，稽核 REBOUND_MOVED）：內嵌 sqlId 不同。正式服的 rSemiTruck 多槽拖車（MSW）裝車時刪車、卸車時
+--   規則 2（換號，稽核 REBOUND_MOVED）：內嵌 sqlId 不同。rSemiTruck 多槽拖車（MSW）裝車時刪車、卸車時
 --     addVehicleDebug 生新車並還原整份 modData：車身 SQLID 與車型保留，sqlId 換新。必須同時：
 --     (a) 此車 sqlId 不是另一筆同車型待轉項的內嵌 sqlId（那筆的原車很可能就是這台，留給規則 1）；
 --     (b) 已載入的車裡沒有同車型、正好位在 E 內嵌 sqlId 的車（有的話那台才是原車，這台是偽造的）。

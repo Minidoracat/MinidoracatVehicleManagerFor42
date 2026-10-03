@@ -72,9 +72,9 @@ end
 
 -- ------------------------------------------------------------- identity ---
 -- 家族約定 pz-family-docs/conventions.md「玩家身分」。MP：登入名；SP：本機 slot（SP 的 username 是角色姓名，換角色即變，§4.4）。
--- 伺服器上的 getUsername() 是客戶端送的名字：重生與分割畫面加入只擋空字串與在線重名（ConnectCoopPacket.java:72-97），
--- 直接設成 username（GameServer.java:2848）；E2E identity-mp／respawn-name-mp 實測可冒用離線玩家。所以
--- 分割畫面第 2～4 位玩家一律沒有身分；Steam 模式下名字要對上綁定表的 SteamID（連線驗證過的 Steam 帳號，GameServer.java:2843-2844）。
+-- 伺服器上的 getUsername() 由客戶端決定（重生與分割畫面加入時設成 username，ConnectCoopPacket.java:72-97、
+-- GameServer.java:2848），不能單獨當身分。所以分割畫面第 2～4 位玩家一律沒有身分；Steam 模式下名字要對上綁定表的
+-- SteamID（連線驗證過的 Steam 帳號，GameServer.java:2843-2844）。
 -- 第一次管理員匯入前，沒有綁定的名字沿用名字判定（既有玩家不會在匯入前全部失去身分）；no-steam 沒有驗證因子。
 -- getSteamID 進 Lua 會捨入到 16 的倍數（Long→Double，KahluaNumberConverter.java:103-116）：只拿 number 比對，不轉字串
 O.steamMode = function() return getSteamModeActive() == true end -- E2E 在 no-steam 伺服器覆寫

@@ -1,12 +1,12 @@
 -- MSW（rSemiTruck 多槽拖車，Workshop 3409472393）相容：只在 MSW 啟用時，於伺服器車身 modData 寫它認得的綁定鍵，
 -- 讓它自己的載車檢查擋下沒有拖曳權限的人（MSW_Common_Commands.lua canPlayerLoadVehicleByClaims:1699-1728 →
 -- hasSDVCAccess:1611-1634、hasGenericOwnerKeyAccess:1678-1697；兩者都放行 access level admin／moderator）。
--- MSW 的卸車（launchVehicle:2243-2379）完全不檢查，這裡擋不到；玩家端另有 ClientGuards 擋一般客戶端。
+-- MSW 的裝卸另由指令防火牆（shared/…_CommandGate.lua）在伺服器判定；玩家端另有 ClientGuards 提早提示。
 --
 -- 注意：車身 modData 是玩家端可竄改的資料（ObjectModDataPacket 會覆寫 server 值，E2E trust-mp），這層防護與原版鎖車同級；
 -- 本 MOD 自己的授權仍只看帳本。寫入也會讓車主與可拖曳者的帳號出現在車身資料裡（所有玩家端都讀得到）。
 --
--- 鍵：SDVCOwner＋SDVCAllowedEnter（逗號分隔）。這是 SDVC 綁車 MOD 的鍵，正式服沒裝 SDVC；正式服已裝的 MOD 中只有 MSW
+-- 鍵：SDVCOwner＋SDVCAllowedEnter（逗號分隔）。這是 SDVC 綁車 MOD 的鍵；MSW
 -- 讀它們（伺服器載車檢查，以及玩家端拖掛檢查 rLib.Events/Vehicle.lua:99-146），並在裝卸時隨快照保存還原（:1504-1520）。
 -- MSW 的比對（:1534-1548,1611-1634）：owner 去頭尾空白後與玩家名相等才放行，空字串或 "false" 當成沒綁；名單以逗號切開、
 -- 每段去空白。車主名不一定是登入帳號（MVCK 匯入的 OwnerPlayerID、no-steam 伺服器重生後的名字都沒經過

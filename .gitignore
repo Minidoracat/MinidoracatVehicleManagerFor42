@@ -43,3 +43,10 @@ scripts/poster/posters/
 scripts/poster/candidates/
 scripts/poster/variant_*.png
 scripts/poster/*.bak
+
+.playwright-cli/
+.omc-workspace
+
+# 早期設計稿、原型與第三方 MOD 分析只留本機，不進公開原始碼（docs/screenshots/ 照常可入庫）
+/docs/*
+!/docs/screenshots/

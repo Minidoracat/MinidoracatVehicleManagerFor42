@@ -1,4 +1,4 @@
--- 伺服器端車輛指令防火牆：原版與第三方 MOD 有直接拿客戶端給的車輛 id 改車的 OnClientCommand 處理器，不看車主也不看距離
+-- 伺服器端車輛指令防火牆：原版與第三方 MOD 依客戶端指定的車輛 id 改車的 OnClientCommand 處理器，先在這裡檢查權限與距離
 -- （各規則旁註出處）。專用伺服器先對所有 MOD 跑完 shared 再跑 server（GameServer.java:1469-1471；每一輪內原版檔在前、
 -- 再依 MOD 順序，LuaManager.java:1151-1193），Event.trigger 依 Add 順序呼叫、所有回呼拿到同一個 args table
 -- （Event.java:52-63）：本檔在 shared 註冊的回呼一定排在那些 server 檔處理器前面，拒絕時把 args 消掉，後面的處理器
@@ -119,7 +119,7 @@ end
 local RULES = {
     -- 原版 server/Vehicles/VehicleCommands.lua。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用
     vehicle = {
-        fixPart = one("REPAIR"), -- :28-58 任意零件設任意耐久
+        fixPart = one("REPAIR"), -- :28-58 設定零件耐久
         setContainerContentAmount = amount("amount", false), -- :76-89（damnlib CTIS 也用它補胎壓，DAMN_Parts.lua:463-469）
         setTirePressure = amount("psi", true), -- :132-148
         setDoorOpen = function(_, a) -- :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
@@ -146,7 +146,7 @@ local RULES = {
     },
     -- tsarslib 42.17 server/Tuning2/ATATuning2Commands.lua:85-121（拆下的零件交給送指令的人）
     atatuning2 = { installTuning = one("REPAIR"), uninstallTuning = one("SALVAGE"), usePart = one("PASSENGER") },
-    -- rSemiTruck server/MSW_Common_Commands.lua（載車只看車身鍵、卸車不檢查）
+    -- rSemiTruck server/MSW_Common_Commands.lua
     msw = {
         loadVehicle = load("vehicle", true), -- :2257-2331
         loadContainer = load("container", false), -- :2224-2255（W900 貨櫃也是車；轉移不還原 keyId 與見證，貨櫃之後就不受保護）
@@ -155,7 +155,7 @@ local RULES = {
     },
     -- rSemiTruck server/W900Commands.lua
     W900 = {
-        applyArmorRepair = function(p, a) -- :209-229 任意零件設耐久；正常呼叫者是駕駛客戶端的裝甲補償（ArmorSync.dispatchRepair）
+        applyArmorRepair = function(p, a) -- :209-229 設定零件耐久；正常呼叫者是駕駛客戶端的裝甲補償（ArmorSync.dispatchRepair）
             -- 駕駛（seat 0）只要 DRIVE 的條件：零件有 rLib 裝甲表（logic 是 rLib／RotatorsLib）、送的耐久等於表上的 condition
             -- （rLib.Vehicles.Armor.lua:136-205 只送這個值）；其他情況（含 rSemiTruck.lua 防撞桿吸收傷害的其他值）要 REPAIR
             local v = veh(a.vehicle)
@@ -167,7 +167,7 @@ local RULES = {
         end,
         setTrailerPhysicsDisabled = one("TOW"), -- :185-207
         toggleFreezer = one("CARGO"), toggleFridge = one("CARGO"), -- :66-183
-        -- 卡住的車往上推並解開拖掛：正式服的 Workshop 版（3409472393，2026-10-03 更新）只有客戶端送
+        -- 卡住的車往上推並解開拖掛：目前的 Workshop 版（3409472393，2026-10-03 更新）只有客戶端送
         -- （client/VehicleEnterFix.lua:90），伺服器沒有處理器；09-24 舊版 W900Commands.lua:203 起有，只看 5 格與
         -- canPlayerUseMoveUp。預防作者加回來：能開或能拖的人可用
         moveVehicleImpulse = one({ "DRIVE", "TOW" }),
@@ -176,12 +176,12 @@ local RULES = {
     rLib = { SetVehicleBattery = on("vehicleId", "TOW"), SetVehicleHeadlights = on("vehicleId", "TOW") },
     -- damnlib 42.20 server/Commands
     that_damn_lib = {
-        -- DAMN_Data.lua:45-64：任意零件 modData（含本 MOD 見證、MSW 倉儲參照），沒有正常客戶端呼叫者 → 一律拒絕
+        -- DAMN_Data.lua:45-64：改零件 modData（含本 MOD 見證、MSW 倉儲參照），沒有正常客戶端呼叫者 → 一律拒絕
         setPartModData = function() return nil, nil, "REFUSED" end,
-        silentPartInstall = function(_, a) -- DAMN_Parts.lua:14-63：任意零件換成任意新物品（_vehicle 由 _vehicleId 解析，DAMN_Server.lua:24-34）
+        silentPartInstall = function(_, a) -- DAMN_Parts.lua:14-63：把零件換成指定的新物品（_vehicle 由 _vehicleId 解析，DAMN_Server.lua:24-34）
             return { { vehicle = veh(a._vehicleId), action = "REPAIR" } }
         end,
-        updatePartConditions = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：任意零件設任意耐久
+        updatePartConditions = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：設定零件耐久
         savePartsCondition = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
     },
 }

@@ -96,15 +96,8 @@ Steam 伺服器上，本 MOD 會確認「帳號名稱」和「登入的 Steam �
 ## 開發
 
 - `link_workshop.bat`：手動同步、狀態檢查與歸檔卸載（實體副本）
-- `PZ_Test.bat`：啟動前自動同步 MOD 與家族依賴；Steam／no-Steam／Debug／多開皆保留。資料邊界見 `../pz-family-docs/tools.md`
-
-## 版本
-
-版本號格式：`{PZ 版本}-{mod 版本}`（例 `42.20.4-0.1.0`），詳見 [CHANGELOG.md](CHANGELOG.md)。
-
-## 作者
-
-Minidoracat — [Discord](https://discord.gg/Gur2V67) | [Twitch](https://www.twitch.tv/minidoracat)
+- `PZ_Test.bat`：啟動前自動同步 MOD 與家族依賴；Steam／no-Steam／Debug／多開皆保留；遊戲路徑可用 `PZ_PATH` 環境變數覆寫
+- 驗證閘門：`uv run scripts/verify_mod.py`（靜態檢查）、`lua scripts/smoke_harness.lua`（行為測試）
 
 ### 發布到 Workshop
 
@@ -120,3 +113,22 @@ uv run --no-project python -B scripts/publish_workshop.py --mode all --dry-run  
 退出碼：`0` 成功／`2` 參數或取消／`3` 未登入、帳號不是擁有者／`4` 前置檢查失敗／`5` 提交失敗／`6` 已提交但回查不符。
 網頁動態封面放 `MOD/<資料夾>/workshop/preview.gif`（不在 `Contents/`，不會下載給玩家）；遊戲內上傳器仍用 `preview.png`，
 且每次會把網頁封面覆回靜態，需要動態封面時一律改用本工具發布。
+
+## 版本
+
+版本號格式：`{PZ 版本}-{mod 版本}`（例 `42.21.0-0.1.0`），詳見 [CHANGELOG.md](CHANGELOG.md)。
+
+## 授權
+
+本專案採 [MIT License](LICENSE)（Copyright (c) 2026 Minidoracat），涵蓋作者持有權利的內容：`MOD/**/media/lua/` 下的 Lua 與翻譯 JSON、`mod.info`／`workshop.txt`、`scripts/` 下的工具與測試，以及專案文件。
+
+下列內容含第三方權利，不在 MIT 授權範圍內：
+
+- 封面與海報（`MOD/MinidoracatVehicleManagerFor42/preview.png`、`MOD/MinidoracatVehicleManagerFor42/workshop/preview.gif`、`42/poster.png`）的痛車彩繪是同人創作：芙寧娜、胡桃出自 HoYoverse《原神》，今汐出自庫洛遊戲《鳴潮》，角色權利屬原作者。本 MOD 與兩家公司無關，權利方要求時會撤下。
+- Project Zomboid 引擎、API、遊戲素材與商標屬 The Indie Stone；Steamworks API 屬 Valve，兩者都不隨本專案散布。
+
+程式碼註解與文件中的 `*.java:行號` 是對 Project Zomboid 引擎行為的出處標註，本倉庫不含任何反編譯原始碼。
+
+## 作者
+
+Minidoracat — [Discord](https://discord.gg/Gur2V67) | [Twitch](https://www.twitch.tv/minidoracat)

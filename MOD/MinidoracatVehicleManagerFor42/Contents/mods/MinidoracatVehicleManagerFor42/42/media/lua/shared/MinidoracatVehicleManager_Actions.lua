@@ -52,7 +52,7 @@ local BUILTIN = {
     { class = "ISOpenVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
     { class = "ISCloseVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
     { class = "ISOpenCloseVehicleWindow", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },
-    -- 燒毀車拆解：原版不檢查目標是否真的燒毀（ISRemoveBurntVehicle.lua:11-16,60-143），會產物並永久刪車。
+    -- 燒毀車拆解會產出材料並永久刪車（ISRemoveBurntVehicle.lua:60-143）。
     -- 受保護的車只准車主／管理員拆（MANAGE）；燒毀車本身不可綁定，所以一般燒毀車照原版
     { class = "ISRemoveBurntVehicle", action = "MANAGE", vehicleOf = ownVehicle, stages = { "serverStart", "complete" } },
     -- 砸窗：以 VehicleWindow:getPart() 解析，不信 vehiclePart 欄位；建築窗戶不經本 MOD
@@ -68,8 +68,8 @@ local BUILTIN = {
           if w == nil or not instanceof(w, "VehicleWindow") then return nil end
           return w:getPart()
       end },
-    -- 另一個砸車窗類別：原版沒有呼叫點，但伺服器依客戶端送來的類別名稱與 new 參數建動作（NetTimedAction.parse：
-    -- LuaManager.get(type)＋type.new），改機客戶端可以直接排入；complete 會 window:hit（ISSmashVehicleWindow.lua:55-68）
+    -- 另一個砸車窗類別：原版沒有呼叫點，但伺服器依客戶端送來的類別名稱建動作（NetTimedAction.parse），一樣要列入；
+    -- complete 會 window:hit（ISSmashVehicleWindow.lua:55-68）
     { class = "ISSmashVehicleWindow", action = "SALVAGE", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },
     -- Autotsar 拖吊（tsarslib，Workshop 3402491515）：complete 在伺服器執行（MP 下只有伺服器跑），把車的零件換進拖車後
     -- permanentlyRemove（ATAISLoadVehicle.lua:35-58）；卸車以 addVehicleDebug 生新車還原（ATAISLaunchVehicle.lua:38-157）。

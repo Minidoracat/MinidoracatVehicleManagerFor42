@@ -1487,7 +1487,7 @@ local wrongModel = car(2, 800, "Base.CarNormal", L.mm) -- 車型不同
 local taken = car(3, 402, "Base.Truck", L.a1)          -- 換號後的 402 是 a2（同車型）內嵌的 sqlId
 local fake = car(4, 900, "Base.Pickup", L.b)           -- 偽造：同型、b 的原車在場
 local orig = car(5, 501, "Base.Pickup", L.b)
-local stepVan = car(6, 3379, "Base.85chevyStepVan", L.c1) -- 正式服撞號：2047 換到 3379，2047 回收給 F350
+local stepVan = car(6, 3379, "Base.85chevyStepVan", L.c1) -- 撞號：2047 換到 3379，2047 回收給 F350
 local f350 = car(7, 2047, "Base.93fordF350", L.c2)
 local pend = O.state().pendingRebindByLegacyKey
 local im = cmd(ADm, "adminMigration", { op = "IMPORT" })
@@ -1827,7 +1827,7 @@ check(stage(a, "complete") == false and calls("ISSmashWindow.complete") == 0, "�
 a = A("ISSmashWindow", { character = ST, window = { _cls = "IsoWindow" } })
 check(stage(a, "complete") == true, "建築窗戶不經本 MOD")
 a = A("ISSmashVehicleWindow", { character = ST, part = car.parts.DoorFrontLeft, vehicle = car })
-check(stage(a, "complete") == false and calls("ISSmashVehicleWindow.complete") == 0, "ISSmashVehicleWindow（原版無呼叫點、改機可排入）也要權限")
+check(stage(a, "complete") == false and calls("ISSmashVehicleWindow.complete") == 0, "ISSmashVehicleWindow（原版無呼叫點）也要權限")
 intent(OW, "ISSmashVehicleWindow", car, "DoorFrontLeft")
 a = A("ISSmashVehicleWindow", { character = OW, part = car.parts.DoorFrontLeft, vehicle = car })
 check(stage(a, "complete") == true and calls("ISSmashVehicleWindow.complete") == 1, "車主有 intent 時照原版砸自己的車窗")
@@ -2818,7 +2818,7 @@ check(e1.hit == nil and e2.hit == nil and denied("CMD:W900.toggleFreezer", "GATE
 local wk = send(OW, "that_damn_lib", "setPartModData", { _vehicleId = uv.id, part = "Engine", data = { x = 1 } })
 local wk2 = send(OW, "that_damn_lib", "setPartModData", { vehicle = pv.id, part = "Engine", data = { MinidoracatVehicleManager = { oid = rp.oid } } })
 check(wk.hit == nil and not wk.err and wk2.hit == nil and not wk2.err and denied("CMD:that_damn_lib.setPartModData", "REFUSED")
-    and witness(pv).oid == rp.oid, "damnlib setPartModData（任意零件 modData，沒有正常呼叫者）：不論車是否受保護、連車主都拒絕")
+    and witness(pv).oid == rp.oid, "damnlib setPartModData（改零件 modData，沒有正常呼叫者）：不論車是否受保護、連車主都拒絕")
 local nt = send(OW, "vehicle", "setTirePressure", { vehicle = uv.id, part = "Engine", psi = 0 })
 check(nt.hit == nil and denied("CMD:vehicle.setTirePressure", "NOT_TIRE"), "setTirePressure 指到非輪胎零件（油箱等）：一律拒絕")
 outbox[ST.name] = {}
@@ -2846,7 +2846,7 @@ local seatedArmor = send(MB, "that_damn_lib", "updatePartConditions", { _vehicle
 MB.vehicle = nil
 local outsideBulb = send(MB, "commonlib", "bulbSmash", { vehicle = pv.id }).hit
 check(seatedBulb and outsideBulb == nil and seatedArmor == nil,
-    "坐在車上的 PASSENGER 成員：車內燈放行、不在車上要 SALVAGE；任意零件耐久（KI5 裝甲同步）一律要 REPAIR")
+    "坐在車上的 PASSENGER 成員：車內燈放行、不在車上要 SALVAGE；零件耐久（KI5 裝甲同步）一律要 REPAIR")
 grant(MVM.ACTIONS.DRIVE)
 pv.seats[0] = MB
 local ctis = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 35 }).hit ~= nil
