@@ -112,7 +112,8 @@ end
 
 -- 每個突變 stage 都重新判定目前的目標與權限（中途撤權、轉讓、剛被綁定都要擋）；
 -- 只有 intent 的消費記在 action 實例上（一個動作只消費一次，雙層包裝也一樣）。一旦拒絕就整個動作都拒絕。
--- spec.also 的車（例：拖吊的拖車）在主目標通過後逐台判定，規則相同
+-- spec.also 的車（例：拖吊的拖車）在主目標通過後逐台判定，規則相同；spec.carrier 的車載著的受保護紀錄
+-- （拖車卸車時車不在世界上）各要 TOW，不要求 intent
 function G.decide(spec, a)
     if a._mvmAllow == false then return false end
     local allow, rec, reason, act = true, nil, nil, nil
@@ -131,6 +132,10 @@ function G.decide(spec, a)
                     local ok2, reason2, rec2 = judge(spec, a, other, nil, { extra.action }, "_mvmIntentAlso" .. i)
                     if not ok2 then allow, reason, rec = false, reason2, rec2 end
                 end
+            end
+            for _, r in ipairs(allow and spec.carrier and O.carriedBy(spec.carrier(a)) or {}) do
+                local ok3, reason3 = O.allowsRecord(a.character, r, "TOW", { op = spec.class })
+                if not ok3 then allow, reason, rec = false, reason3, r end
             end
         end
     end
@@ -181,6 +186,7 @@ local function makeWrapper(spec, stage, orig)
             if stage == "complete" then return false end
             return
         end
+        if spec.onAllow then spec.onAllow(a) end
         if special then return special(a, orig) end
         return orig(a, ...)
     end

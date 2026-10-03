@@ -1,0 +1,238 @@
+-- 伺服器端車輛指令防火牆：原版與第三方 MOD 有直接拿客戶端給的車輛 id 改車的 OnClientCommand 處理器，不看車主也不看距離
+-- （各規則旁註出處）。專用伺服器先對所有 MOD 跑完 shared 再跑 server（GameServer.java:1469-1471；每一輪內原版檔在前、
+-- 再依 MOD 順序，LuaManager.java:1151-1193），Event.trigger 依 Add 順序呼叫、所有回呼拿到同一個 args table
+-- （Event.java:52-63）：本檔在 shared 註冊的回呼一定排在那些 server 檔處理器前面，拒絕時把 args 消掉，後面的處理器
+-- 就安靜結束。伺服器上的 sendClientCommand 直接觸發本機 OnClientCommand（LuaManager.java:8936-8938）：TimedAction 的
+-- complete 回送（ATAISLoadVehicle.lua:45、ISOpenTent.lua:46）也經過這裡，判定與 adapter 相同（同一人、同一台車）。
+-- 沒有規則的指令立刻放行；目標都不受保護照原版；受保護的目標要有權限、送指令的人要在附近。
+require "MinidoracatVehicleManager_API"
+require "MinidoracatVehicleManager_Actions"
+
+local MVM = MinidoracatVehicleManager
+local CG = {}
+
+-- ponytail: 固定半徑、同一樓層，以車身中心算（半掛拖車約 14 格長，站車尾離中心約 7 格）；正常操作被判 TOO_FAR 時放寬或改看車身邊界
+CG.NEAR = 10
+CG.LAUNCH_NEAR = 15 -- Autotsar 卸車的生車座標由客戶端決定（CommonCommands.lua:1001），受保護時限制在拖車附近
+CG.NOTIFY_MS = 2000
+CG.WITNESS_KEY = "MinidoracatVehicleManager" -- 零件見證鍵（OwnershipSystem.lua WITNESS_KEY）
+
+local R = { notified = {}, logged = {} }
+CG.R = R
+
+-- id 不是整數：處理器的 getVehicleById 會把小數截斷成別台車（KahluaNumberConverter.java:28-31、LuaManager.java:10279-10281），一律拒絕
+local BAD = false
+local function veh(id)
+    if id == nil then return nil end
+    if not MVM.isInt(id) then return BAD end
+    return getVehicleById(id)
+end
+
+local function on(field, action)
+    return function(_, a) return { { vehicle = veh(a[field]), action = action } } end
+end
+local function one(action) return on("vehicle", action) end
+
+-- 送指令的人坐在這台車上：他的客戶端自動送的（KI5 裝甲耐久、Autotsar 車內燈）只要 PASSENGER（佔座由 watchdog 管），否則要 outside
+local function seated(field, outside)
+    return function(p, a)
+        local v = veh(a[field])
+        return { { vehicle = v, action = (v and p:getVehicle() == v) and "PASSENGER" or outside } }
+    end
+end
+
+local function tows(field)
+    return function(_, a)
+        local v = veh(a[field])
+        local out = { { vehicle = v, action = "TOW" } }
+        if v then
+            out[2] = { vehicle = v:getVehicleTowing(), action = "TOW" }
+            out[3] = { vehicle = v:getVehicleTowedBy(), action = "TOW" }
+        end
+        return out
+    end
+end
+
+-- 裝車：拖車與被裝的車各要 TOW；放行時記 keyId 延續與「在哪台拖車上」（O.noteLoad）
+local function load(field)
+    return function(_, a)
+        local tr, v = veh(a.trailer), veh(a[field])
+        return { { vehicle = tr, action = "TOW" }, { vehicle = v, action = "TOW" } }, function() MVM.Own.noteLoad(tr, v) end
+    end
+end
+
+-- 卸車：拖車與它載著的受保護紀錄各要 TOW
+local function unload(_, a)
+    local tr = veh(a.trailer)
+    local out = { { vehicle = tr, action = "TOW" } }
+    if tr then for _, rec in ipairs(MVM.Own.carriedBy(tr)) do out[#out + 1] = { rec = rec, action = "TOW" } end end
+    return out
+end
+
+-- damnlib：伺服器先以 _vehicleId 解析 _vehicle，setPartModData 另讀 vehicle（DAMN_Server.lua:24-34、DAMN_Data.lua:46）
+local function damn(action)
+    return function(_, a) return { { vehicle = veh(a._vehicleId), action = action }, { vehicle = veh(a.vehicle), action = action } } end
+end
+
+-- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因
+local RULES = {
+    -- 原版 server/Vehicles/VehicleCommands.lua。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用
+    vehicle = {
+        fixPart = one("REPAIR"), -- :28-58 任意零件設任意耐久
+        setContainerContentAmount = one("FUEL"), -- :76-89
+        setTirePressure = function(_, a) -- :132-148：放氣＝SALVAGE、打氣＝REPAIR
+            local v = veh(a.vehicle)
+            local part = v and v:getPartById(a.part) or nil
+            local up = part ~= nil and type(a.psi) == "number" and a.psi >= part:getContainerContentAmount()
+            return { { vehicle = v, action = up and "REPAIR" or "SALVAGE" } }
+        end,
+        setDoorOpen = function(_, a) -- :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
+            local v = veh(a.vehicle)
+            return { { vehicle = v, action = MVM.doorAction({ part = v and v:getPartById(a.part) or nil }) } }
+        end,
+        damageWindow = one("SALVAGE"), -- :169-185
+        putKeyOnDoor = one("PASSENGER"), removeKeyFromDoor = one("PASSENGER"), -- :264-280
+        attachTrailer = function(_, a) -- :399-411
+            return { { vehicle = veh(a.vehicleA), action = "TOW" }, { vehicle = veh(a.vehicleB), action = "TOW" } }
+        end,
+        detachTrailer = tows("vehicle"), detachTrailerSpontaneous = tows("vehicle"), -- :413-429
+        setHSV = one("REPAIR"), setSkinIndex = one("REPAIR"), setBloodIntensity = one("REPAIR"), -- :339-346,440-458
+        remove = one("MANAGE"), -- :372-379（Java 只在 debug、GeneralCheats 或拆解中放行，GameServer.java:2308-2313）
+    },
+    -- tsarslib common/media/lua/server/CommonTemplates/CommonCommands.lua
+    commonlib = {
+        loadVehicle = load("vehicle"), -- :955-978
+        launchVehicle = function(p, a) -- :980-1101
+            local out = unload(p, a)
+            out.spawn = { a.x, a.y }
+            return out
+        end,
+        installTuning = one("REPAIR"), uninstallTuning = one("SALVAGE"), -- :858-885
+        bulbSmash = seated("vehicle", "SALVAGE"), -- :832-841（正常呼叫者是車內開燈失敗，ISCommonMenu.lua:469-486）
+        cabinlightsOn = one("PASSENGER"), -- :887-903
+        usePortableMicrowave = one("CARGO"), -- :935-953
+    },
+    -- tsarslib 42.17 server/Tuning2/ATATuning2Commands.lua:85-121（拆下的零件交給送指令的人）
+    atatuning2 = { installTuning = one("REPAIR"), uninstallTuning = one("SALVAGE"), usePart = one("PASSENGER") },
+    -- rSemiTruck server/MSW_Common_Commands.lua（載車只看車身鍵、卸車不檢查）
+    msw = {
+        loadVehicle = load("vehicle"), -- :2257-2331
+        loadContainer = load("container"), -- :2224-2255（W900 貨櫃也是車）
+        launchVehicle = unload, -- :2333-2493
+        unloadContainer = unload, -- :2148-2222
+    },
+    -- rSemiTruck server/W900Commands.lua
+    W900 = {
+        applyArmorRepair = one("REPAIR"), -- :209-229 任意零件設耐久
+        setTrailerPhysicsDisabled = one("TOW"), -- :185-207
+        toggleFreezer = one("CARGO"), toggleFridge = one("CARGO"), -- :66-183
+    },
+    -- rSemiTruck server/rLib.Commands.lua:7-45（分派 Server_<cmd>，:61-88）
+    rLib = { SetVehicleBattery = on("vehicleId", "REPAIR"), SetVehicleHeadlights = on("vehicleId", "DRIVE") },
+    -- damnlib 42.20 server/Commands
+    that_damn_lib = {
+        setPartModData = function(p, a) -- DAMN_Data.lua:45-64：任意零件 modData；本 MOD 的見證放在零件 modData，帶見證鍵一律拒絕
+            if type(a.data) == "table" and rawget(a.data, CG.WITNESS_KEY) ~= nil then return nil, nil, "WITNESS_KEY" end
+            return damn("REPAIR")(p, a)
+        end,
+        silentPartInstall = damn("REPAIR"), -- DAMN_Parts.lua:14-63：任意零件換成任意新物品
+        updatePartConditions = seated("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：任意零件設耐久（車內客戶端定時送）
+        savePartsCondition = seated("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
+    },
+}
+CG.RULES = RULES
+
+local function once(key, msg)
+    if R.logged[key] then return end
+    R.logged[key] = true
+    MVM.log(msg)
+end
+
+local function near(p, v, d)
+    if math.floor(p:getZ()) ~= math.floor(v:getZ()) then return false end
+    local dx, dy = p:getX() - v:getX(), p:getY() - v:getY()
+    return dx * dx + dy * dy <= d * d
+end
+
+-- 回 allow, reason, oid
+function CG.decide(rule, module, command, player, args)
+    local O = MVM.Own
+    local targets, onAllow, refuse = rule(player, args)
+    if refuse then return false, refuse end
+    if targets == nil or O.state() == nil then return true end
+    local ctx = { op = "CMD:" .. module .. "." .. command }
+    local guarded = false
+    for _, t in ipairs(targets) do
+        if t.vehicle == BAD then return false, "BAD_ID" end
+        local acts = type(t.action) == "string" and { t.action } or t.action
+        local ok, reason, rec
+        for _, act in ipairs(acts) do
+            if t.rec then ok, reason, rec = O.allowsRecord(player, t.rec, act, ctx)
+            elseif t.vehicle then ok, reason, rec = O.canUse(player, t.vehicle, act, ctx) end
+            if ok then break end
+        end
+        if rec ~= nil then
+            guarded = true
+            if not ok then return false, reason, rec.oid end
+            if t.vehicle and not near(player, t.vehicle, CG.NEAR) then return false, "TOO_FAR", rec.oid end
+        end
+    end
+    local spawn, tr = targets.spawn, targets[1] and targets[1].vehicle
+    if guarded and spawn then
+        local x, y = spawn[1], spawn[2]
+        if type(x) ~= "number" or type(y) ~= "number" or not tr then return false, "BAD_POS" end
+        local dx, dy = x - tr:getX(), y - tr:getY()
+        if not (dx * dx + dy * dy <= CG.LAUNCH_NEAR * CG.LAUNCH_NEAR) then return false, "BAD_POS" end -- NaN 也擋
+    end
+    if onAllow then onAllow() end
+    return true
+end
+
+-- 消掉請求：先收集鍵再清（不邊 pairs 邊改）。原版、damnlib 不先檢查欄位就 getVehicleById，收到 nil 會在 Java 端報錯：
+-- id 欄位改成 -1（VehicleIDMap.get 對負數回 null，VehicleIDMap.java:65-67，處理器安靜結束）；rLib 先 assert 其他欄位型別，
+-- 只改 id 不清空
+local NEG_IDS = { vehicle = { "vehicle", "vehicleA", "vehicleB" }, that_damn_lib = { "_vehicleId", "vehicle" }, rLib = { "vehicleId" } }
+local KEEP = { rLib = true }
+function CG.neutralize(module, args)
+    if not KEEP[module] then
+        local keys = {}
+        for k in pairs(args) do keys[#keys + 1] = k end
+        for _, k in ipairs(keys) do args[k] = nil end
+    end
+    for _, k in ipairs(NEG_IDS[module] or {}) do args[k] = -1 end
+end
+
+local function notify(player, label, reason, oid)
+    local S = MVM.Srv
+    if S == nil or not instanceof(player, "IsoPlayer") then return end
+    local key, t = tostring(player:getUsername()), getTimestampMs()
+    if t - (R.notified[key] or 0) < CG.NOTIFY_MS then return end
+    R.notified[key] = t
+    S.send(player, "enforcement", { action = label, reason = reason, oid = oid })
+end
+
+function CG.onCommand(module, command, player, args)
+    local rules = RULES[module]
+    local rule = rules and rules[command]
+    if rule == nil or type(args) ~= "table" then return end
+    local O = MVM.Own
+    if O == nil then return once("NO_LEDGER", "command gate inactive: ownership system not loaded") end
+    local ok, allow, reason, oid = pcall(CG.decide, rule, module, command, player, args)
+    local label = "CMD:" .. module .. "." .. command
+    if not ok then
+        once("ERR " .. label, "command gate error (refused) " .. label .. ": " .. tostring(allow))
+        allow, reason, oid = false, "GATE_ERROR", nil
+    end
+    if allow then return end
+    CG.neutralize(module, args)
+    reason = reason or "NOT_AUTHORIZED"
+    O.deny(O.principal(player) or ("?" .. tostring(player and player:getUsername())), label, oid, reason)
+    notify(player, label, reason, oid)
+end
+
+-- 只在伺服器註冊一次：Lua 重載時換掉 MVM.CommandGate，已註冊的轉接呼叫新版
+local first = MVM.CommandGate == nil
+MVM.CommandGate = CG
+if first and isServer() then
+    Events.OnClientCommand.Add(function(module, command, player, args) MVM.CommandGate.onCommand(module, command, player, args) end)
+end

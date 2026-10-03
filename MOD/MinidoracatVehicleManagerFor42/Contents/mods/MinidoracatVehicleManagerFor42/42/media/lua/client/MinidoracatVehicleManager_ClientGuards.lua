@@ -82,8 +82,8 @@ guardValid(ISDetachTrailerFromVehicle, function(a)
 end)
 
 -- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW。它的 perform 只送 msw 命令
--- （MSW_ISLoadVehicle.lua:27-33、MSW_ISLaunchVehicle.lua:39-45），沒有 complete 可在伺服器包：伺服器的載車檢查交給
--- ClaimTags 寫的車身鍵由 MSW 自己擋；卸車 MSW 伺服器完全不檢查，這裡只擋得住一般客戶端。
+-- （MSW_ISLoadVehicle.lua:27-33、MSW_ISLaunchVehicle.lua:39-45），伺服器端由指令防火牆（shared/…_CommandGate.lua）判定；
+-- 這裡只是讓一般玩家在排入動作時就看到提示，不必等伺服器拒絕。
 -- 類別定義在 MSW 自己的 client 檔，載入順序不保證：現在有就包，否則進遊戲時再包（每個類別只包一次）
 function MVM.guardMsw()
     if MSW_ISLoadVehicle and not rawget(MSW_ISLoadVehicle, "_mvmGuarded") then

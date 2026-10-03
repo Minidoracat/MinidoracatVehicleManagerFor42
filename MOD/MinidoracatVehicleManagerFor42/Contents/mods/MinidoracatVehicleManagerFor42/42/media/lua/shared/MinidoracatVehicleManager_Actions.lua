@@ -23,8 +23,10 @@ local function doorAction(a)
     if id:find("Trunk", 1, true) or id == "DoorRear" then return { "CARGO" } end
     return { "PASSENGER" }
 end
+MVM.doorAction = doorAction -- 指令防火牆的 vehicle.setDoorOpen 共用
 
 local ITEM_PUSH = { "item", "condition" }
+local TUNING_PUSH = { "item", "condition", "moddata" }
 
 -- push：拒絕後要推回的權威狀態（server 端解讀）
 local BUILTIN = {
@@ -72,10 +74,25 @@ local BUILTIN = {
     -- Autotsar 拖吊（tsarslib，Workshop 3402491515）：complete 在伺服器執行（MP 下只有伺服器跑），把車的零件換進拖車後
     -- permanentlyRemove（ATAISLoadVehicle.lua:35-58）；卸車以 addVehicleDebug 生新車還原（ATAISLaunchVehicle.lua:38-157）。
     -- also＝同一個動作還要檢查的其他車（各自要 TOW、受保護時各自要 intent）。裝車的主目標是 a.vehicle（被裝的車），
-    -- 這樣 G.decide 的「a.vehicle 與目標不同」檢查不會誤擋
+    -- 這樣 G.decide 的「a.vehicle 與目標不同」檢查不會誤擋。onAllow＝放行時記下拖車 keyId 延續與被裝車在哪台拖車上；
+    -- carrier＝這台拖車載著的受保護紀錄（O.carriedBy）也各要 TOW
     { class = "ATAISLoadVehicle", action = "TOW", vehicleOf = ownVehicle, stages = { "complete" },
-      also = { { vehicleOf = function(a) return a.trailer end, action = "TOW" } } },
-    { class = "ATAISLaunchVehicle", action = "TOW", vehicleOf = function(a) return a.trailer end, stages = { "complete" } },
+      also = { { vehicleOf = function(a) return a.trailer end, action = "TOW" } },
+      onAllow = function(a) MVM.Own.noteLoad(a.trailer, a.vehicle) end },
+    { class = "ATAISLaunchVehicle", action = "TOW", vehicleOf = function(a) return a.trailer end, stages = { "complete" },
+      carrier = function(a) return a.trailer end },
+    -- Autotsar 調校零件（tsarslib 42.17 shared，SVU3 與 ATA 車都用）：complete 在伺服器換零件物品、耐久與 modData，
+    -- 拆下的零件交給執行者（ATATuning2Commands.lua:7-81；ISInstallTuningVehiclePart.lua:72-79、ISUninstallTuningVehiclePart.lua:56-62）
+    { class = "ISInstallTuningVehiclePart", action = "REPAIR", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = TUNING_PUSH },
+    { class = "ISUninstallTuningVehiclePart", action = "SALVAGE", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = TUNING_PUSH },
+    -- 動畫門（ATAISAnimatedPartOpen／Close.lua:37-46）：門 setOpen 後 transmitPartDoor
+    { class = "ATAISAnimatedPartOpen", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
+    { class = "ATAISAnimatedPartClose", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
+    -- 換塗裝（ISPaintBus.lua:31-35）
+    { class = "ISPaintBus", action = "REPAIR", vehicleOf = ownVehicle, stages = { "complete" } },
+    -- 油罐車與車之間抽油（TsarLiqudTanker_ISRefuelFromFuelTruck.lua:56-81）：兩台車的油量都改，油罐車放 also
+    { class = "ISRefuelFromLiqudTanker", action = "FUEL", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete", "serverStop" },
+      push = { "moddata" }, also = { { vehicleOf = function(a) return a.tank and a.tank:getVehicle() or nil end, action = "FUEL" } } },
 }
 
 local byClass = {}

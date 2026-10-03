@@ -26,14 +26,17 @@ O.SHARDED_MAPS = { "recordsByOid", "ownerActivity", "knownUsers", "quotaOverride
     "identityBindings" }
 O.SHARD_LIMITS = { records = 2000, entries = 20000, shards = 60, systemBudget = 100 }
 local DAY_MS, HOUR_MS = 86400000, 3600000
+-- 授權裝車後拖車改 keyId 的認領期限（裝車命令與 keyId 改變在同一次處理，下一個 tick 就觀測；給重啟以外的延遲留餘裕）
+O.KEYID_TOW_MS = 60000
 
 O.AUTHORIZABLE = { ACTIVE = true, WITNESS_STALE = true, PENDING_RELEASE = true, QUARANTINED = true }
 O.TOMBSTONE = { ORPHANED = true, DESTROYED = true, RELEASED = true }
 
--- RAM derived state（§4.1）：開機由 recordsByOid 重建，不存檔。outOfWorld＝已移出世界（removedAtMs）的可授權紀錄
+-- RAM derived state（§4.1）：開機由 recordsByOid 重建，不存檔。outOfWorld＝已移出世界（removedAtMs）的可授權紀錄；
+-- keyIdPending＝授權裝車後拖車紀錄 oid → { keyId＝被裝車的 keyId, atMs }（O.noteLoad）
 local R = { bySqlId = {}, byKeyId = {}, byOwner = {}, status = "INIT", loaded = "none",
     denyAgg = {}, factionRefs = {}, suspectKeys = {}, lastMaintMs = 0, lastScanMs = 0,
-    shards = {}, where = {}, st = nil, overrides = {}, outOfWorld = {} }
+    shards = {}, where = {}, st = nil, overrides = {}, outOfWorld = {}, keyIdPending = {} }
 O.R = R
 
 local function now() return getTimestampMs() end
@@ -519,6 +522,7 @@ function O.setState(rec, newState, reason, fields)
         rec.endedAtMs = now()
         unindex(rec)
         R.outOfWorld[rec.oid] = nil
+        rec.carrierSqlId = nil
     end
     if newState ~= "PENDING_RELEASE" then rec.pendingReleaseAtMs, rec.releaseDueAtMs, rec.releaseReason = 0, 0, nil end
     O.bump(rec)
@@ -575,7 +579,7 @@ local function adopt(vehicle, host, w, sqlId, keyId, script)
     if rec.vehicleScript ~= script then return nil, "SCRIPT_MISMATCH" end
     if rec.keyIdHint ~= keyId then return nil, "KEYID_MISMATCH" end
     local from = rec.removedSqlId
-    rec.removedAtMs, rec.removedSqlId = nil, nil
+    rec.removedAtMs, rec.removedSqlId, rec.carrierSqlId = nil, nil, nil
     R.outOfWorld[rec.oid] = nil
     rec.sqlIdHint, rec.witnessPartId = sqlId, host:getId()
     R.bySqlId[sqlId] = { rec }
@@ -644,6 +648,23 @@ function O.lookup(vehicle)
             end
         end
         return "AUTHORIZED", rec
+    end
+    -- 授權裝車後 Autotsar 把被裝車的 keyId 寫到拖車上（CommonCommands.lua:511,634；ATAISLoadVehicle.lua:381,504）：
+    -- O.noteLoad 記下的 keyId、期限內、同車型才認，紀錄改用新 keyId 並重寫見證
+    local kp = R.keyIdPending[rec.oid]
+    if kp ~= nil and kp.keyId == keyId and rec.vehicleScript == script and now() - kp.atMs <= O.KEYID_TOW_MS then
+        R.keyIdPending[rec.oid] = nil
+        local from = rec.keyIdHint
+        if R.byKeyId[from] == sqlId then R.byKeyId[from] = nil end
+        rec.keyIdHint = keyId
+        R.byKeyId[keyId] = sqlId
+        if host ~= nil then writeWitness(vehicle, host, rec) end
+        markObserved(rec, vehicle)
+        O.bump(rec)
+        O.audit("INFO", "KEYID_TOW", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = sqlId,
+            reason = "keyId " .. s(from) .. "->" .. s(keyId) })
+        if O.onRecordChanged then O.onRecordChanged(rec, nil) end
+        return verdictOf(rec), rec
     end
     -- 同 sqlId、keyId 或 script 不同：VehiclesDB2 回收了 sqlId
     O.setState(rec, "ORPHANED", "SQLID_RECYCLED", { vehicle = sqlId })
@@ -809,6 +830,12 @@ function O.canUse(actor, vehicle, action, context)
     if O.state() == nil then return false, "NOT_READY" end
     local verdict, rec = O.lookup(vehicle)
     if rec == nil then return true, "UNCLAIMED" end
+    return O.allowsRecord(actor, rec, action, context)
+end
+
+-- 已找到紀錄後的判定（canUse 與指令防火牆共用；不在世界上的紀錄，例如拖車載著的車，也用這個）
+function O.allowsRecord(actor, rec, action, context)
+    if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION", rec end
     local who = O.principal(actor)
     local quarantined = rec.recordState == "QUARANTINED"
     if not quarantined then
@@ -830,6 +857,33 @@ function O.canUse(actor, vehicle, action, context)
     local reason = quarantined and "QUARANTINED" or "NOT_AUTHORIZED"
     O.deny(who, action, rec.oid, reason)
     return false, reason, rec
+end
+
+-- 授權的拖車裝車（指令防火牆或 adapter 放行時，裝車之前）：受保護的拖車記下即將被寫上的 keyId（lookup 認 KEYID_TOW，
+-- 下一個 tick 就觀測），受保護的被裝車記下在哪台拖車上（卸車時那台拖車載著的紀錄也要 TOW，O.carriedBy）
+function O.noteLoad(trailer, vehicle)
+    if trailer == nil or vehicle == nil or trailer == vehicle or not O.ready() then return end
+    local _, tr = O.lookup(trailer)
+    if tr ~= nil then
+        R.keyIdPending[tr.oid] = { keyId = vehicle:getKeyId(), atMs = now() }
+        if O.observeSoon then O.observeSoon(trailer) end
+    end
+    local _, vr = O.lookup(vehicle)
+    if vr ~= nil and vr.carrierSqlId ~= trailer:getSqlId() then
+        vr.carrierSqlId = trailer:getSqlId()
+        O.bump(vr)
+    end
+end
+
+-- 這台拖車載著（已移出世界、carrierSqlId 相同）的可授權紀錄
+function O.carriedBy(trailer)
+    local out = {}
+    if trailer == nil then return out end
+    local sqlId = trailer:getSqlId()
+    for _, rec in pairs(R.outOfWorld) do
+        if rec.carrierSqlId == sqlId then out[#out + 1] = rec end
+    end
+    return out
 end
 
 -- server 端公開 API 換成權威實作（§8.1.1）

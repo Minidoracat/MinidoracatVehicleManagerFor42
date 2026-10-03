@@ -318,6 +318,7 @@ require("MinidoracatVehicleManager_Migration")
 require("MinidoracatVehicleManager_Export")
 require("MinidoracatVehicleManager_Economy")
 require("MinidoracatVehicleManager_ClaimTags")
+require("MinidoracatVehicleManager_CommandGate") -- shared：真遊戲排在所有 server 檔之前；本 harness 的第三方假處理器在情境內才註冊
 BaseVehicle, __classmetatables = nil, nil
 local MVM = MinidoracatVehicleManager
 local O, S = MVM.Own, MVM.Srv
@@ -2595,6 +2596,390 @@ check(#clientSent == 1 and clientSent[1].args.vehicleId == 62, "未綁定的車�
 isClient = savedIsClient
 ISTimedActionQueue, MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil, nil
 for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
+end)();
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 F1：車輛指令防火牆（每條規則：陌生人擋、車主與有權成員放行、不受保護照常）")
+boot()
+local CG = MVM.CommandGate
+for k in pairs(CG.R.notified) do CG.R.notified[k] = nil end
+for k in pairs(O.R.keyIdPending) do O.R.keyIdPending[k] = nil end
+local function logged(text, from)
+    for i = from or 1, #logLines do if logLines[i]:find(text, 1, true) then return true end end
+    return false
+end
+local function denied(label, reason)
+    for key in pairs(O.R.denyAgg) do
+        if key:find(label, 1, true) and (reason == nil or key:find(reason, 1, true)) then return true end
+    end
+    return false
+end
+-- 第三方處理器的替身（在防火牆之後註冊，同一個 args）：回報它會不會動到車，以及它會不會因欄位被清空而報錯
+-- （原版、damnlib、rLib 不檢查欄位就 getVehicleById／assert，Java 收到 nil 會拋錯）
+local ID_FIELDS = { "vehicle", "vehicleA", "vehicleB", "trailer", "container", "vehicleId", "_vehicleId" }
+local function strictFields(m, c)
+    if m == "vehicle" then return c == "attachTrailer" and { vehicleA = "number", vehicleB = "number" } or { vehicle = "number" } end
+    if m == "rLib" then return c == "SetVehicleBattery" and { vehicleId = "number", battery = "number" } or { vehicleId = "number", set = "boolean" } end
+    if m == "that_damn_lib" and c == "setPartModData" then return { vehicle = "number" } end
+    return {}
+end
+local last = nil
+local MODS = { vehicle = true, commonlib = true, atatuning2 = true, msw = true, W900 = true, rLib = true, that_damn_lib = true }
+local function third(m, c, _, args)
+    if not MODS[m] then return end -- 不看 CG.RULES：拿掉規則的突變也要測得出來
+    last = { hit = nil, err = false }
+    for f, ty in pairs(strictFields(m, c)) do if type(args[f]) ~= ty then last.err = true end end
+    for _, f in ipairs(ID_FIELDS) do
+        local id = args[f] -- Java 的 getVehicleById(int) 把小數截斷（KahluaNumberConverter.java:28-31）
+        local n = type(id) == "number" and id == id and (id >= 0 and math.floor(id) or math.ceil(id)) or nil
+        if n ~= nil and world[n] ~= nil then last.hit = world[n] end
+    end
+end
+Events.OnClientCommand.Add(third)
+local function send(p, m, c, args)
+    nowMs = nowMs + 300
+    last = nil
+    fire("OnClientCommand", m, c, p, args)
+    return last or { hit = nil, err = false }
+end
+
+local OW, ST, MB = player("fow", 1, 1), player("fstr", 1, 1), player("fmem", 1, 1)
+local PARTS = { "Engine", "Battery", "DoorFrontLeft", "EngineDoor", "TrunkDoor", "TireFrontLeft" }
+local function tvehicle(id, sqlId)
+    local v = vehicle(id, sqlId, 7000 + id, "Base.CarNormal", 1, 1, PARTS)
+    function v.parts.TireFrontLeft:getContainerContentAmount() return 30 end
+    return v
+end
+local pv, uv, ut = tvehicle(21, 201), tvehicle(31, 301), tvehicle(32, 302)
+local dv, ud = tvehicle(41, 401), tvehicle(42, 402)
+pv.towing, dv.towedBy, uv.towing, ud.towedBy = dv, pv, ud, uv -- detach 以被拖的車送：拖著它的受保護車也要 TOW
+local rp = rec(claim(OW, pv).oid)
+local function args1(extra) return function(V) local t = { vehicle = V.id }; for k, x in pairs(extra) do t[k] = x end; return t end end
+local CASES = {
+    { "vehicle", "fixPart", args1({ part = "Engine", condition = 100 }), { "REPAIR" } },
+    { "vehicle", "setContainerContentAmount", args1({ part = "Engine", amount = 0 }), { "FUEL" } },
+    { "vehicle", "setTirePressure", args1({ part = "TireFrontLeft", psi = 0 }), { "SALVAGE" } },
+    { "vehicle", "setTirePressure", args1({ part = "TireFrontLeft", psi = 99 }), { "REPAIR" } },
+    { "vehicle", "setDoorOpen", args1({ part = "DoorFrontLeft", open = true }), { "PASSENGER" } },
+    { "vehicle", "setDoorOpen", args1({ part = "EngineDoor", open = true }), { "REPAIR", "SALVAGE" } },
+    { "vehicle", "setDoorOpen", args1({ part = "TrunkDoor", open = true }), { "CARGO" } },
+    { "vehicle", "damageWindow", args1({ part = "DoorFrontLeft", amount = 100 }), { "SALVAGE" } },
+    { "vehicle", "putKeyOnDoor", args1({}), { "PASSENGER" } },
+    { "vehicle", "removeKeyFromDoor", args1({}), { "PASSENGER" } },
+    { "vehicle", "attachTrailer", function(V, O2) return { vehicleA = O2.id, vehicleB = V.id } end, { "TOW" } },
+    { "vehicle", "detachTrailer", function(V) return { vehicle = V.towing.id } end, { "TOW" } },
+    { "vehicle", "detachTrailerSpontaneous", function(V) return { vehicle = V.towing.id } end, { "TOW" } },
+    { "vehicle", "setHSV", args1({ h = 0, s = 0, v = 0 }), { "REPAIR" } },
+    { "vehicle", "setSkinIndex", args1({ index = 2 }), { "REPAIR" } },
+    { "vehicle", "setBloodIntensity", args1({ id = 0, intensity = 1 }), { "REPAIR" } },
+    { "vehicle", "remove", args1({}), { "MANAGE" } },
+    { "commonlib", "loadVehicle", function(V, O2) return { trailer = O2.id, vehicle = V.id } end, { "TOW" } },
+    { "commonlib", "launchVehicle", function(V) return { trailer = V.id, x = V.x + 3, y = V.y } end, { "TOW" } },
+    { "commonlib", "installTuning", args1({ part = "Engine", model = "m" }), { "REPAIR" } },
+    { "commonlib", "uninstallTuning", args1({ part = "Engine" }), { "SALVAGE" } },
+    { "commonlib", "bulbSmash", args1({}), { "SALVAGE" } },
+    { "commonlib", "cabinlightsOn", args1({}), { "PASSENGER" } },
+    { "commonlib", "usePortableMicrowave", args1({ oven = "Engine", on = true, timer = 5 }), { "CARGO" } },
+    { "atatuning2", "installTuning", args1({ partName = "Engine", modelName = "m" }), { "REPAIR" } },
+    { "atatuning2", "uninstallTuning", args1({ partName = "Engine" }), { "SALVAGE" } },
+    { "atatuning2", "usePart", args1({ partName = "Engine" }), { "PASSENGER" } },
+    { "msw", "loadVehicle", function(V, O2) return { trailer = O2.id, vehicle = V.id, slot = 1 } end, { "TOW" } },
+    { "msw", "loadContainer", function(V, O2) return { trailer = O2.id, container = V.id } end, { "TOW" } },
+    { "msw", "launchVehicle", function(V) return { trailer = V.id, slot = 1 } end, { "TOW" } },
+    { "msw", "unloadContainer", function(V) return { trailer = V.id, x = V.x, y = V.y } end, { "TOW" } },
+    { "W900", "applyArmorRepair", args1({ part = "Engine", condition = 100 }), { "REPAIR" } },
+    { "W900", "setTrailerPhysicsDisabled", args1({ disabled = true }), { "TOW" } },
+    { "W900", "toggleFreezer", args1({ part = "Engine", active = true }), { "CARGO" } },
+    { "W900", "toggleFridge", args1({ part = "Engine", active = true }), { "CARGO" } },
+    { "rLib", "SetVehicleBattery", function(V) return { vehicleId = V.id, battery = 0 } end, { "REPAIR" } },
+    { "rLib", "SetVehicleHeadlights", function(V) return { vehicleId = V.id, set = true } end, { "DRIVE" } },
+    { "that_damn_lib", "setPartModData", function(V) return { _vehicleId = V.id, part = "Engine", data = { x = 1 } } end, { "REPAIR" } },
+    { "that_damn_lib", "setPartModData", function(V) return { vehicle = V.id, part = "Engine", data = { x = 1 } } end, { "REPAIR" } },
+    { "that_damn_lib", "silentPartInstall", function(V) return { _vehicleId = V.id, part = "Engine", item = "Base.X" } end, { "REPAIR" } },
+    { "that_damn_lib", "updatePartConditions", function(V) return { _vehicleId = V.id, conditions = { Engine = 100 } } end, { "REPAIR" } },
+    { "that_damn_lib", "savePartsCondition", function(V) return { _vehicleId = V.id } end, { "REPAIR" } },
+}
+local covered = {}
+for _, k in ipairs(CASES) do covered[k[1] .. "." .. k[2]] = true end
+local missing = {}
+for m, cmds in pairs(CG.RULES) do for c in pairs(cmds) do if not covered[m .. "." .. c] then missing[#missing + 1] = m .. "." .. c end end end
+check(#missing == 0, "規則表每一條都有情境（缺：" .. table.concat(missing, ",") .. "）")
+local function grant(bits) rp.grants = { { user = "fmem", bits = bits } } end
+local function bitsOf(names)
+    local n = 0
+    for _, a in ipairs(names) do n = n + MVM.ACTIONS[a] end
+    return n
+end
+for _, k in ipairs(CASES) do
+    local m, c, mk, need = k[1], k[2], k[3], k[4]
+    local label = "CMD:" .. m .. "." .. c
+    for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+    rp.grants = {}
+    local s = send(ST, m, c, mk(pv, ut))
+    local okStranger = s.hit == nil and not s.err and denied(label, "NOT_AUTHORIZED")
+    local okOwner = send(OW, m, c, mk(pv, ut)).hit ~= nil
+    local okMember = true
+    if need[1] ~= "MANAGE" then
+        grant(bitsOf({ need[1] }))
+        okMember = send(MB, m, c, mk(pv, ut)).hit ~= nil
+        local others = MVM.SHAREABLE_MASK - bitsOf(need)
+        for _, a in ipairs(need) do if a == "PASSENGER" then others = others - MVM.ACTIONS.DRIVE end end -- DRIVE 含 PASSENGER
+        grant(others)
+        local mn = send(MB, m, c, mk(pv, ut))
+        okMember = okMember and mn.hit == nil and not mn.err
+    end
+    rp.grants = {}
+    local okLoose = send(ST, m, c, mk(uv, ut)).hit ~= nil
+    check(okStranger and okOwner and okMember and okLoose, label .. " " .. table.concat(need, "/")
+        .. "：陌生人被擋（處理器看不到車、不報錯、DENY）、車主與只有該權限的成員放行、缺該權限擋、不受保護照常")
+end
+
+out("情境 F2：距離、解析不到、壞 id、出錯、見證鍵、通知、未載入")
+for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+OW.x = 40
+local far = send(OW, "vehicle", "fixPart", { vehicle = pv.id, part = "Engine", condition = 100 })
+check(far.hit == nil and not far.err and denied("CMD:vehicle.fixPart", "TOO_FAR"), "車主在 10 格外：受保護的車拒絕（TOO_FAR）")
+check(send(OW, "vehicle", "fixPart", { vehicle = uv.id, part = "Engine" }).hit == uv, "10 格外對不受保護的車：照常")
+OW.x, OW.z = 1, 1
+check(send(OW, "W900", "toggleFreezer", { vehicle = pv.id, part = "Engine", active = true }).hit == nil, "車主在不同樓層：拒絕")
+OW.z = 0
+for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+local okNone = pcall(function()
+    send(ST, "vehicle", "fixPart", { vehicle = 999, part = "Engine" })
+    send(ST, "commonlib", "loadVehicle", {})
+    send(ST, "msw", "launchVehicle", { trailer = 999 })
+    send(ST, "vehicle", "attachTrailer", { vehicleA = 999 })
+end)
+check(okNone and not denied("CMD:"), "解析不到的車與缺欄位：不出錯、不拒絕（處理器自己會略過）")
+world[1] = uv
+local frac = send(OW, "vehicle", "fixPart", { vehicle = 21.5, part = "Engine" })
+local str = send(OW, "W900", "applyArmorRepair", { vehicle = "21", part = "Engine", condition = 100 })
+check(frac.hit == nil and not frac.err and str.hit == nil and denied("CMD:vehicle.fixPart", "BAD_ID") and denied("CMD:W900.applyArmorRepair", "BAD_ID"),
+    "id 不是整數（Java 會截斷成別台車）：連車主也拒絕（BAD_ID）")
+world[1] = nil
+local saved, prints, rp0 = CG.RULES.W900.toggleFreezer, 0, print
+CG.RULES.W900.toggleFreezer = function() error("boom") end
+print = function() prints = prints + 1 end
+local e1 = send(OW, "W900", "toggleFreezer", { vehicle = uv.id, part = "Engine", active = true })
+local e2 = send(OW, "W900", "toggleFreezer", { vehicle = uv.id, part = "Engine", active = true })
+print, CG.RULES.W900.toggleFreezer = rp0, saved
+check(e1.hit == nil and e2.hit == nil and denied("CMD:W900.toggleFreezer", "GATE_ERROR") and prints == 1,
+    "規則出錯：視同拒絕（連不受保護的車也擋），同一種錯誤只記一次 log")
+local wk = send(OW, "that_damn_lib", "setPartModData", { _vehicleId = uv.id, part = "Engine", data = { MinidoracatVehicleManager = { oid = "x" } } })
+local wk2 = send(OW, "that_damn_lib", "setPartModData", { _vehicleId = pv.id, part = "Engine", data = { MinidoracatVehicleManager = { oid = rp.oid } } })
+check(wk.hit == nil and not wk.err and wk2.hit == nil and denied("CMD:that_damn_lib.setPartModData", "WITNESS_KEY"),
+    "damnlib setPartModData 帶見證鍵：不論車是否受保護、連車主都拒絕")
+check(witness(uv) == nil and witness(pv).oid == rp.oid, "見證沒有被寫入或覆蓋")
+outbox[ST.name] = {}
+for k in pairs(CG.R.notified) do CG.R.notified[k] = nil end
+send(ST, "vehicle", "fixPart", { vehicle = pv.id, part = "Engine" })
+send(ST, "vehicle", "damageWindow", { vehicle = pv.id, part = "DoorFrontLeft" })
+local n1 = 0
+for _, msg in ipairs(outbox[ST.name]) do if msg.command == "enforcement" then n1 = n1 + 1 end end
+nowMs = nowMs + 2100
+send(ST, "vehicle", "fixPart", { vehicle = pv.id, part = "Engine" })
+local n2 = 0
+for _, msg in ipairs(outbox[ST.name]) do if msg.command == "enforcement" then n2 = n2 + 1 end end
+check(n1 == 1 and n2 == 2 and lastOf(ST, "enforcement").action == "CMD:vehicle.fixPart" and lastOf(ST, "enforcement").reason == "NOT_AUTHORIZED",
+    "拒絕時通知送指令的人（同一人 2 秒內最多一次）")
+local launchFar = send(OW, "commonlib", "launchVehicle", { trailer = pv.id, x = pv.x + 40, y = pv.y })
+local launchBad = send(OW, "commonlib", "launchVehicle", { trailer = pv.id, x = 0 / 0, y = pv.y })
+local launchStr = send(OW, "commonlib", "launchVehicle", { trailer = pv.id, x = "1", y = pv.y })
+check(launchFar.hit == nil and launchBad.hit == nil and launchStr.hit == nil and denied("CMD:commonlib.launchVehicle", "BAD_POS")
+    and send(ST, "commonlib", "launchVehicle", { trailer = uv.id, x = uv.x + 40, y = uv.y }).hit == uv,
+    "Autotsar 卸車座標：受保護時要在拖車 15 格內（NaN、字串也擋）；不受保護照常")
+MB.vehicle = pv
+grant(MVM.ACTIONS.PASSENGER)
+local seatedOk = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id, conditions = { Engine = 1 } }).hit ~= nil
+    and send(MB, "commonlib", "bulbSmash", { vehicle = pv.id }).hit ~= nil
+MB.vehicle = nil
+local outside = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id, conditions = { Engine = 1 } }).hit
+rp.grants = {}
+check(seatedOk and outside == nil, "坐在車上的 PASSENGER 成員：客戶端自動送的裝甲耐久、車內燈放行；不在車上要 REPAIR／SALVAGE")
+local savedOwn = MVM.Own
+MVM.Own = nil
+prints = 0
+print = function() prints = prints + 1 end
+local noLedger = send(ST, "vehicle", "fixPart", { vehicle = pv.id, part = "Engine" })
+send(ST, "vehicle", "fixPart", { vehicle = pv.id, part = "Engine" })
+print, MVM.Own = rp0, savedOwn
+check(noLedger.hit == pv and prints == 1, "所有權系統沒載入：不擋全服，只記一次 log")
+
+out("情境 F3：canUse 與 allowsRecord 一致")
+local AD = player("fadm", 1, 1, { admin = true })
+local FM = player("ffac", 1, 1)
+newFaction("FWolves", "fow", { "ffac" })
+cmd(OW, "setFactionShare", { expectedOid = rp.oid, expectedEpoch = rp.epoch, enabled = true, actionBits = MVM.ACTIONS.DRIVE })
+grant(MVM.ACTIONS.CARGO + MVM.ACTIONS.TOW)
+local qv = tvehicle(25, 205)
+local rq = rec(claim(OW, qv).oid)
+O.setState(rq, "QUARANTINED", "TEST")
+local same, total = true, 0
+for round = 1, 2 do
+    if round == 2 then O.setOverride(AD, true) end
+    for _, actor in ipairs({ OW, ST, MB, FM, AD }) do
+        for _, act in ipairs(MVM.ACTION_ORDER) do
+            for _, pair in ipairs({ { pv, rp }, { qv, rq } }) do
+                total = total + 1
+                local a1, r1 = O.canUse(actor, pair[1], act)
+                local a2, r2 = O.allowsRecord(actor, pair[2], act)
+                if a1 ~= a2 or r1 ~= r2 then same = false end
+            end
+        end
+    end
+end
+O.setOverride(AD, false)
+check(same and total == 180, "車主／陌生人／成員／陣營／管理員（越權開關）× 每種動作 × 一般與隔離紀錄：兩者結果與原因相同")
+check(not O.allowsRecord(OW, rp, "NOPE") and select(2, O.allowsRecord(OW, rp, "NOPE")) == "UNKNOWN_ACTION", "未知動作碼：拒絕")
+Events.OnClientCommand.Remove(third)
+end)();
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 F4：拖車裝卸（keyId 延續、在哪台車上、卸車要載著的車的權限、TimedAction 回送）")
+boot()
+local quota0 = SB.ClaimsPerPlayer
+SB.ClaimsPerPlayer = 20
+for k in pairs(O.R.keyIdPending) do O.R.keyIdPending[k] = nil end
+local function logged(text, from)
+    for i = from or 1, #logLines do if logLines[i]:find(text, 1, true) then return true end end
+    return false
+end
+local seen = nil
+-- tsarslib／MSW 處理器替身：裝車把被裝車的 keyId 寫到拖車（CommonCommands.lua:511,634）並移除，卸車只回報看到的拖車
+local function fakeTow(m, c, _, args)
+    if m ~= "commonlib" and m ~= "msw" then return end
+    if c == "loadVehicle" and args.trailer and args.vehicle then
+        local tr, v = world[args.trailer], world[args.vehicle]
+        seen = { c = c, tr = tr }
+        if tr and v and not v.removed then
+            if m == "commonlib" then tr.keyId = v.keyId end
+            v:permanentlyRemove()
+        end
+    elseif c == "launchVehicle" and args.trailer then
+        seen = { c = c, tr = world[args.trailer] }
+    end
+end
+Events.OnClientCommand.Add(fakeTow)
+local function send(p, m, c, args)
+    nowMs = nowMs + 300
+    seen = nil
+    fire("OnClientCommand", m, c, p, args)
+    return seen
+end
+local OW, ST, MB = player("tow", 1, 1), player("tstr", 1, 1), player("tmem", 1, 1)
+local tr = vehicle(51, 501, 7501, "Base.TestWrecker", 1, 1)
+local car = vehicle(52, 502, 7502, "Base.CarNormal", 1, 1)
+local rTr, rCar = rec(claim(OW, tr).oid), rec(claim(OW, car).oid)
+local s1 = send(ST, "commonlib", "loadVehicle", { trailer = tr.id, vehicle = car.id })
+check(s1 == nil and not car.removed and O.R.keyIdPending[rTr.oid] == nil and rCar.carrierSqlId == nil,
+    "陌生人裝車被擋：不記 keyId 延續、不記在哪台車上")
+local l0 = #logLines + 1
+send(OW, "commonlib", "loadVehicle", { trailer = tr.id, vehicle = car.id })
+check(car.removed and tr.keyId == 7502 and rCar.removedAtMs ~= nil and rCar.carrierSqlId == 501 and O.R.keyIdPending[rTr.oid] ~= nil,
+    "車主裝車：被裝的車移出世界並記下拖車 sqlId，拖車記 keyId 延續")
+fire("OnTick")
+check(rTr.recordState == "ACTIVE" and rTr.keyIdHint == 7502 and logged("KEYID_TOW", l0) and O.R.keyIdPending[rTr.oid] == nil
+    and witness(tr).oid == rTr.oid and O.canUse(OW, tr, "DRIVE") and not O.canUse(ST, tr, "DRIVE"),
+    "下一個 tick 觀測拖車：keyId 改成被裝車的（KEYID_TOW），仍受保護，不判 SQLID_RECYCLED")
+check(send(ST, "commonlib", "launchVehicle", { trailer = tr.id, x = 2, y = 1 }) == nil, "陌生人從受保護的拖車卸車：擋")
+rTr.grants = { { user = "tmem", bits = MVM.ACTIONS.TOW } }
+check(send(MB, "commonlib", "launchVehicle", { trailer = tr.id, x = 2, y = 1 }) == nil, "成員只有拖車的 TOW、沒有載著的車的 TOW：擋")
+rCar.grants = { { user = "tmem", bits = MVM.ACTIONS.TOW } }
+check(send(MB, "commonlib", "launchVehicle", { trailer = tr.id, x = 2, y = 1 }) ~= nil, "兩者都有 TOW：放行")
+local back = vehicle(53, 503, 7502, "Base.CarNormal", 2, 1)
+rawset(back.parts.Engine.md, "MinidoracatVehicleManager", { oid = rCar.oid, epoch = rCar.epoch })
+fire("OnSpawnVehicleEnd", back)
+fire("OnTick")
+check(rCar.removedAtMs == nil and rCar.sqlIdHint == 503 and rCar.carrierSqlId == nil and #O.carriedBy(tr) == 0,
+    "卸下的車依見證接回，清掉在哪台車上")
+local car2 = vehicle(54, 504, 7504, "Base.CarNormal", 1, 1)
+claim(OW, car2)
+send(OW, "commonlib", "loadVehicle", { trailer = tr.id, vehicle = car2.id })
+nowMs = nowMs + O.KEYID_TOW_MS + 1
+fire("OnTick")
+check(rTr.recordState == "ORPHANED", "keyId 延續過期才觀測到：照舊判 SQLID_RECYCLED")
+local tr3 = vehicle(55, 505, 7505, "Base.TestWrecker", 1, 1)
+local car3 = vehicle(56, 506, 7506, "Base.CarNormal", 1, 1)
+local rTr3 = rec(claim(OW, tr3).oid)
+send(OW, "commonlib", "loadVehicle", { trailer = tr3.id, vehicle = car3.id })
+tr3.keyId = 9999
+fire("OnTick")
+check(rTr3.recordState == "ORPHANED", "拖車 keyId 變成記下以外的值：不認")
+
+out("情境 F5：MSW 公用拖車載著受保護的車")
+local mt = vehicle(61, 601, 7601, "Base.SemiTrailerCartrailer", 1, 1)
+local car4 = vehicle(62, 602, 7602, "Base.CarNormal", 1, 1)
+local rCar4 = rec(claim(OW, car4).oid)
+send(OW, "msw", "loadVehicle", { trailer = mt.id, vehicle = car4.id, slot = 1 })
+check(car4.removed and rCar4.carrierSqlId == 601 and mt.keyId == 7601, "車主用公用拖車裝車：記下在哪台車上（MSW 不改拖車 keyId）")
+check(send(ST, "msw", "launchVehicle", { trailer = mt.id, slot = 1 }) == nil, "陌生人從公用拖車卸下別人的車：擋")
+local mt2 = vehicle(63, 603, 7603, "Base.SemiTrailerCartrailer", 1, 1)
+check(send(ST, "msw", "launchVehicle", { trailer = mt2.id, slot = 1 }) ~= nil, "另一台空的公用拖車：照常（只看這台拖車載著的）")
+vclass("ATAISLaunchVehicle", { "complete" })
+G.install("F5")
+local la = A("ATAISLaunchVehicle", { character = ST, trailer = mt })
+check(stage(la, "complete") == false and calls("ATAISLaunchVehicle.complete") == 0 and la._mvmReason == "NOT_AUTHORIZED",
+    "Autotsar 卸車 adapter：拖車不受保護但載著別人的車 → 擋")
+check(stage(A("ATAISLaunchVehicle", { character = OW, trailer = mt }), "complete") == true
+    and send(OW, "msw", "launchVehicle", { trailer = mt.id, slot = 1 }) ~= nil, "車主卸自己的車：adapter 與指令都放行")
+
+out("情境 F6：TimedAction 回送與 tsarslib 新 adapter")
+local savedSend = sendClientCommand
+sendClientCommand = function(p, m, c, args) fire("OnClientCommand", m, c, p, args) end -- 伺服器上直接觸發 OnClientCommand
+vclass("ATAISLoadVehicle", { "complete" }, { complete = function(a)
+    sendClientCommand(a.character, "commonlib", "loadVehicle", { trailer = a.trailer:getId(), vehicle = a.vehicle:getId() })
+    return true
+end })
+for _, n in ipairs({ "ISInstallTuningVehiclePart", "ISUninstallTuningVehiclePart", "ATAISAnimatedPartOpen", "ATAISAnimatedPartClose", "ISPaintBus" }) do
+    vclass(n, { "complete" })
+end
+vclass("ISRefuelFromLiqudTanker", { "update", "complete", "serverStop" })
+G.install("F6")
+local tr5 = vehicle(71, 701, 7701, "Base.TestWrecker", 1, 1)
+local car5 = vehicle(72, 702, 7702, "Base.CarNormal", 1, 1)
+local rTr5, rCar5 = rec(claim(OW, tr5).oid), rec(claim(OW, car5).oid)
+seen = nil
+check(stage(A("ATAISLoadVehicle", { character = ST, trailer = tr5, vehicle = car5 }), "complete") == false and seen == nil and not car5.removed,
+    "陌生人：adapter 擋下，不會回送")
+intent(OW, "ATAISLoadVehicle", car5); intent(OW, "ATAISLoadVehicle", tr5)
+seen = nil
+check(stage(A("ATAISLoadVehicle", { character = OW, trailer = tr5, vehicle = car5 }), "complete") == true and seen ~= nil and car5.removed
+    and rCar5.carrierSqlId == 701, "車主：adapter 放行後 complete 回送的 commonlib 指令也放行（同一人、同一台車）")
+fire("OnTick")
+check(rTr5.recordState == "ACTIVE" and rTr5.keyIdHint == 7702, "回送路徑的 keyId 延續也成立")
+sendClientCommand = savedSend
+local tr6 = vehicle(73, 703, 7703, "Base.TestWrecker", 1, 1)
+local car6 = vehicle(74, 704, 7704, "Base.CarNormal", 1, 1)
+local rTr6, rCar6 = rec(claim(OW, tr6).oid), rec(claim(OW, car6).oid)
+intent(OW, "ATAISLoadVehicle", car6); intent(OW, "ATAISLoadVehicle", tr6)
+check(stage(A("ATAISLoadVehicle", { character = OW, trailer = tr6, vehicle = car6 }), "complete") == true
+    and O.R.keyIdPending[rTr6.oid] ~= nil and O.R.keyIdPending[rTr6.oid].keyId == 7704 and rCar6.carrierSqlId == 703,
+    "adapter 放行時自己也記 keyId 延續與在哪台車上（不靠回送）")
+local sv = vehicle(81, 801, 7801, "Base.SVU3Car", 1, 1, { "Engine", "Battery", "DoorFrontLeft", "TrunkDoor" })
+local lv = vehicle(82, 802, 7802, "Base.CarNormal", 1, 1)
+claim(OW, sv)
+local function tun(cls, p) return A(cls, { character = p, vehicle = sv, part = sv.parts.Battery }) end
+check(stage(tun("ISUninstallTuningVehiclePart", ST), "complete") == false and stage(tun("ISInstallTuningVehiclePart", ST), "complete") == false
+    and calls("ISUninstallTuningVehiclePart.complete") == 0 and calls("ISInstallTuningVehiclePart.complete") == 0,
+    "陌生人拆／裝受保護車的調校零件：擋（拿不到零件）")
+intent(OW, "ISUninstallTuningVehiclePart", sv, "Battery")
+check(stage(tun("ISUninstallTuningVehiclePart", OW), "complete") == true and calls("ISUninstallTuningVehiclePart.complete") == 1, "車主拆調校零件：放行")
+local function door(cls, p, v, pt) return A(cls, { character = p, vehicle = v, part = pt }) end
+check(stage(door("ATAISAnimatedPartOpen", ST, sv, sv.parts.DoorFrontLeft), "complete") == false
+    and stage(door("ATAISAnimatedPartClose", ST, sv, sv.parts.TrunkDoor), "complete") == false
+    and stage(door("ATAISAnimatedPartOpen", OW, lv, sv.parts.DoorFrontLeft), "complete") == false
+    and calls("ATAISAnimatedPartOpen.complete") == 0 and calls("ATAISAnimatedPartClose.complete") == 0,
+    "Autotsar 動畫門：陌生人開關受保護車的門擋、a.vehicle 與門所屬車不同擋")
+check(stage(A("ISPaintBus", { character = ST, vehicle = sv, skinIndex = 2 }), "complete") == false and calls("ISPaintBus.complete") == 0,
+    "陌生人替受保護的車換塗裝：擋")
+local tank = A("ISRefuelFromLiqudTanker", { character = ST, vehicle = lv, part = lv.parts.Engine, tank = sv.parts.Battery })
+check(stage(tank, "complete") == false and stage(tank, "serverStop") == nil and calls("ISRefuelFromLiqudTanker.complete") == 0
+    and calls("ISRefuelFromLiqudTanker.serverStop") == 0, "陌生人從受保護的油罐車抽油：擋（also）")
+intent(OW, "ISRefuelFromLiqudTanker", sv)
+check(stage(A("ISRefuelFromLiqudTanker", { character = OW, vehicle = lv, part = lv.parts.Engine, tank = sv.parts.Battery }), "complete") == true,
+    "車主從自己的油罐車加油給沒綁定的車：放行")
+Events.OnClientCommand.Remove(fakeTow)
+SB.ClaimsPerPlayer = quota0
 end)()
 
 out("")

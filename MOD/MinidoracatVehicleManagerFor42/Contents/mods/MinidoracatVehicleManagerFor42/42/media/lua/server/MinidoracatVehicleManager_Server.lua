@@ -837,6 +837,9 @@ Events.OnSpawnVehicleEnd.Add(function(vehicle)
     if O.hasOutOfWorld() then R.recheck[#R.recheck + 1] = vehicle end
 end)
 
+-- 授權裝車後的拖車（O.noteLoad）：下一個 tick 觀測，趁 keyId 認領期限內接受 Autotsar 改寫的 keyId
+function O.observeSoon(vehicle) R.recheck[#R.recheck + 1] = vehicle end
+
 Events.OnTick.Add(function()
     if #R.recheck == 0 then return end
     local list = R.recheck
