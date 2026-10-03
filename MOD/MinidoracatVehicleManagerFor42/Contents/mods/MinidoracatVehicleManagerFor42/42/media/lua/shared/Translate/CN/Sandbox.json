@@ -37,7 +37,7 @@
     "Sandbox_MinidoracatVehicleManagerPaidSlotLimit": "付费名额：每位玩家永久名额上限",
     "Sandbox_MinidoracatVehicleManagerPaidSlotLimit_tooltip": "每位玩家总共可以购买的永久名额数。0＝停止新的购买；已购买的名额照常计入。",
     "Sandbox_MinidoracatVehicleManagerPaidSlotPlanRevision": "名额方案：同步版本（系统管理）",
-    "Sandbox_MinidoracatVehicleManagerPaidSlotPlanRevision_tooltip": "由 Economy 自动维护，用来避免旧的沙盒设置覆盖较新的名额方案。请勿手动修改；价格及租期可在此处或 Economy 的“整合方案”管理页调整。",
+    "Sandbox_MinidoracatVehicleManagerPaidSlotPlanRevision_tooltip": "由 Economy 自动维护，用来避免旧的沙盒设置覆盖较新的名额方案。请勿手动修改；价格及租期可在此处或 Economy 的「整合方案」管理页调整。",
     "Sandbox_MinidoracatVehicleManagerLeaseSlotEnabled": "租用名额：开放租用",
     "Sandbox_MinidoracatVehicleManagerLeaseSlotEnabled_tooltip": "需要专用服务器并安装 Minidoracat Economy。\n玩家可以租用额外绑定名额若干天。关闭＝停止新的租用与续费；进行中的租约保留已付费的时间。",
     "Sandbox_MinidoracatVehicleManagerLeaseSlotCurrency": "租用名额：币种",
