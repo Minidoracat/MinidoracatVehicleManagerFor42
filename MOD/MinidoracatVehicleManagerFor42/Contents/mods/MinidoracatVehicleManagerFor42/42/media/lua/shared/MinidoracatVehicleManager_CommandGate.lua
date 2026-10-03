@@ -140,9 +140,14 @@ local RULES = {
     -- rSemiTruck server/W900Commands.lua
     W900 = {
         applyArmorRepair = function(p, a) -- :209-229 任意零件設耐久；正常呼叫者是駕駛客戶端的裝甲補償（ArmorSync.dispatchRepair）
-            -- ponytail: 駕駛只要 DRIVE、不限裝甲零件清單；要收緊就比對 rLib.Vehicles.Armor 的實際零件
+            -- 駕駛（seat 0）只要 DRIVE 的條件：零件有 rLib 裝甲表（logic 是 rLib／RotatorsLib）、送的耐久等於表上的 condition
+            -- （rLib.Vehicles.Armor.lua:136-205 只送這個值）；其他情況（含 rSemiTruck.lua 防撞桿吸收傷害的其他值）要 REPAIR
             local v = veh(a.vehicle)
-            return { { vehicle = v, action = isDriver(p, v) and "DRIVE" or "REPAIR" } }
+            local part = v and v:getPartById(a.part) or nil
+            local armor = part and part:getTable("armor") or nil
+            local want = type(armor) == "table" and (armor.logic == "rLib" or armor.logic == "RotatorsLib") and tonumber(armor.condition) or nil
+            local auto = want ~= nil and a.condition == want and isDriver(p, v)
+            return { { vehicle = v, action = auto and "DRIVE" or "REPAIR" } }
         end,
         setTrailerPhysicsDisabled = one("TOW"), -- :185-207
         toggleFreezer = one("CARGO"), toggleFridge = one("CARGO"), -- :66-183

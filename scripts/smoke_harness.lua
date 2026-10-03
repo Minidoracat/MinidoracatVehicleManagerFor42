@@ -2647,9 +2647,13 @@ end
 
 local OW, ST, MB = player("fow", 1, 1), player("fstr", 1, 1), player("fmem", 1, 1)
 local PARTS = { "Engine", "Battery", "DoorFrontLeft", "EngineDoor", "TrunkDoor", "TireFrontLeft" }
+local ARMOR = { Engine = { logic = "rLib", condition = "80" }, Battery = { logic = "custom", condition = "80" } } -- part:getTable("armor")
 local function tvehicle(id, sqlId)
     local v = vehicle(id, sqlId, 7000 + id, "Base.CarNormal", 1, 1, PARTS)
-    for _, pt in pairs(v.parts) do function pt:getWheelIndex() return self.id == "TireFrontLeft" and 0 or -1 end end
+    for _, pt in pairs(v.parts) do
+        function pt:getWheelIndex() return self.id == "TireFrontLeft" and 0 or -1 end
+        function pt:getTable(k) return k == "armor" and ARMOR[self.id] or nil end
+    end
     function v.parts.TireFrontLeft:getContainerContentAmount() return 30 end
     function v.parts.TireFrontLeft:getContainerCapacity() return 40 end
     return v
@@ -2807,13 +2811,20 @@ pv.seats[0] = MB
 local ctis = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 35 }).hit ~= nil
 local ctisOver = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 99 }).hit
 local ctisFuel = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "Engine", amount = 0 }).hit
-local armor = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Engine", condition = 100 }).hit ~= nil
-pv.seats[0] = nil
-local armorOut = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Engine", condition = 100 }).hit
+local armor = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Engine", condition = 80 }).hit ~= nil
+local armorAny = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Engine", condition = 100 }).hit
+local armorLogic = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Battery", condition = 80 }).hit
+local armorNone = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "DoorFrontLeft", condition = 80 }).hit
+pv.seats[0], pv.seats[1] = nil, MB
+local armorSeat1 = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Engine", condition = 80 }).hit
+pv.seats[1] = nil
+local armorOut = send(MB, "W900", "applyArmorRepair", { vehicle = pv.id, part = "Engine", condition = 80 }).hit
 local ctisOut = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 35 }).hit
 rp.grants = {}
-check(ctis and ctisOver == nil and ctisFuel == nil and armor and armorOut == nil and ctisOut == nil,
-    "只有 DRIVE 的駕駛：容量內補胎壓（KI5 CTIS）與 W900 裝甲補償放行；超過容量、油箱、不在駕駛座都擋")
+check(ctis and ctisOver == nil and ctisFuel == nil and ctisOut == nil,
+    "只有 DRIVE 的駕駛：容量內補胎壓（KI5 CTIS）放行；超過容量、油箱、不在駕駛座都擋")
+check(armor and armorAny == nil and armorLogic == nil and armorNone == nil and armorSeat1 == nil and armorOut == nil,
+    "只有 DRIVE 的駕駛：W900 裝甲補償只放行 rLib 裝甲零件、耐久等於裝甲表 condition；其他值、其他 logic、沒有裝甲表、非駕駛座、不在車上都要 REPAIR")
 local savedOwn = MVM.Own
 MVM.Own = nil
 prints = 0
