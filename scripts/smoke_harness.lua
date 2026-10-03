@@ -2485,8 +2485,9 @@ intent(AO, "ATAISLoadVehicle", atr)
 check(stage(loadA(AO, atr, loose), "complete") == true, "車主把未綁定的車裝上自己的拖車：只要拖車的 intent")
 cmd(AO, "addMember", { expectedOid = rc.oid, username = "amem", actionBits = MVM.ACTIONS.TOW })
 cmd(AO, "addMember", { expectedOid = rt.oid, username = "amem", actionBits = MVM.ACTIONS.DRIVE })
-intent(AM, "ATAISLoadVehicle", acar)
-check(stage(loadA(AM, stTr, acar), "complete") == true, "有 TOW 的成員：可把車裝上未綁定的拖車")
+claim(AM, stTr) -- 綁定的車只能裝上已綁定的拖車（CARRIER_UNBOUND）：成員先綁定自己的拖車
+intent(AM, "ATAISLoadVehicle", acar); intent(AM, "ATAISLoadVehicle", stTr)
+check(stage(loadA(AM, stTr, acar), "complete") == true, "有 TOW 的成員：可把車裝上自己已綁定的拖車")
 intent(AM, "ATAISLaunchVehicle", atr)
 check(stage(launchA(AM, atr), "complete") == false, "拖車成員沒有 TOW：不能卸車")
 intent(AO, "ATAISLaunchVehicle", atr)
@@ -2586,6 +2587,37 @@ check(mswLoad(myTr, myCar) and mswLoad(myTr, looseC) and mswLaunch(myTr), "MSW�
 check(not mswLoad(myTr, theirCar), "MSW：別人受保護的車不能裝上拖車")
 check(not mswLoad(theirTr, myCar) and not mswLoad(theirTr, looseC), "MSW：別人受保護的拖車不能拿來裝車（進遊戲時補包的類別）")
 check(not mswLaunch(theirTr), "MSW：不能從別人受保護的拖車卸車")
+local told, realNotify = nil, MVM.notify
+MVM.notify = function(_, text) told = text end
+local looseTr = vehicle(66, 906, 9906, "Base.SemiTrailerCartrailer", 1, 1)
+check(not mswLoad(looseTr, myCar) and told == "IGUI_MVM_Reason_CARRIER_UNBOUND",
+    "MSW：自己綁定的車不能裝上沒綁定的拖車，提示「已綁定的車只能裝上已綁定的拖車」")
+told = nil
+check(mswLoad(looseTr, looseC) and told == nil, "MSW：沒綁定的車裝上沒綁定的拖車照常")
+check(not mswLoad(looseTr, theirCar) and told == "IGUI_MVM_Protected", "MSW：別人的車裝上沒綁定的拖車：仍是「受保護」提示")
+MVM.clientHandlers.enforcement({ to = "kow", action = "CMD:msw.loadVehicle", reason = "CARRIER_UNBOUND" })
+local unboundText = told
+MVM.clientHandlers.enforcement({ to = "kow", action = "CMD:msw.loadVehicle", reason = "TOO_FAR" })
+check(unboundText == "IGUI_MVM_Reason_CARRIER_UNBOUND" and told == "IGUI_MVM_Refused",
+    "伺服器拒絕 CARRIER_UNBOUND：顯示請先綁定拖車；其他原因照舊")
+MVM.notify = realNotify
+local function withParts(id, parts) return vehicle(id, 900 + id, 9900 + id, "Base.X", 1, 1, parts) end
+check(MVM.isCarrier(withParts(67, { "Engine", "ATAMultiSlotWrecker" })) and MVM.isCarrier(withParts(68, { "ATAVehicleWrecker" }))
+    and MVM.isCarrier(withParts(69, { "ATA2VehicleWrecker" })) and not MVM.isCarrier(looseC) and not MVM.isCarrier(nil),
+    "MVM.isCarrier：MSW 多槽拖車、兩種 Autotsar 拖吊零件為真；一般車、nil 為假")
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure", "綁定確認視窗：還沒收到名額就不加名額行；一般車不加載具行")
+MVM.clientReceive("fleetSnapshot", { to = "kow", streamId = "kt2", seq = 0, quotaUsed = 2, quotaLimit = 3, rows = {
+    { oid = "kMyCar", role = "OWNER", state = "ACTIVE" }, { oid = "kMyTr", role = "OWNER", state = "ACTIVE" } } })
+check(MVM.claimText(0, withParts(70, { "ATAMultiSlotWrecker" }))
+    == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(2,3)\nIGUI_MVM_ClaimCarrierNote", "綁定確認視窗：名額行（已用／上限）＋能裝車的載具多一行")
+MVM.clientReceive("fleetDelta", { to = "kow", streamId = "kt2", seq = 1, upserts = {}, removes = {}, quotaUsed = 3 })
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(3,3)", "增量帶目前已用名額：綁定後名額行立即更新，不等下一次快照")
+MVM.clientReceive("fleetSnapshot", { to = "kow", streamId = "kt3", seq = 0, quotaUsed = 2, quotaLimit = 3,
+    quota = { used = 4, total = 5, base = 3, paid = 2 }, rows = {
+    { oid = "kMyCar", role = "OWNER", state = "ACTIVE" }, { oid = "kMyTr", role = "OWNER", state = "ACTIVE" } } })
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(4,5)", "有付費名額時用 Economy 的已用／總計")
+MVM.clientReceive("fleetDelta", { to = "kow", streamId = "kt3", seq = 1, upserts = {}, removes = {}, quotaUsed = 5 })
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(5,5)", "增量的已用名額也更新付費名額分項的已用")
 clientSent = {}
 ISTimedActionQueue.add(A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = theirCar }))
 local sentFor = {}
@@ -2662,6 +2694,10 @@ local pv, uv, ut = tvehicle(21, 201), tvehicle(31, 301), tvehicle(32, 302)
 local dv, ud = tvehicle(41, 401), tvehicle(42, 402)
 pv.towing, dv.towedBy, uv.towing, ud.towedBy = dv, pv, ud, uv -- detach 以被拖的車送：拖著它的受保護車也要 TOW
 local rp = rec(claim(OW, pv).oid)
+-- 受保護的車只能裝上已綁定的拖車（CARRIER_UNBOUND，F7 另測）：整車裝車情境的拖車用車主綁定、成員有 TOW 的 bt
+local bt = tvehicle(33, 303)
+rec(claim(OW, bt).oid).grants = { { user = "fmem", bits = MVM.ACTIONS.TOW } }
+local function carrierFor(V, O2) return V == pv and bt or O2 end
 local function args1(extra) return function(V) local t = { vehicle = V.id }; for k, x in pairs(extra) do t[k] = x end; return t end end
 local CASES = {
     { "vehicle", "fixPart", args1({ part = "Engine", condition = 100 }), { "REPAIR" } },
@@ -2684,7 +2720,7 @@ local CASES = {
     { "vehicle", "setSkinIndex", args1({ index = 2 }), { "REPAIR" } },
     { "vehicle", "setBloodIntensity", args1({ id = 0, intensity = 1 }), { "REPAIR" } },
     { "vehicle", "remove", args1({}), { "MANAGE" } },
-    { "commonlib", "loadVehicle", function(V, O2) return { trailer = O2.id, vehicle = V.id } end, { "TOW" } },
+    { "commonlib", "loadVehicle", function(V, O2) return { trailer = carrierFor(V, O2).id, vehicle = V.id } end, { "TOW" } },
     { "commonlib", "launchVehicle", function(V) return { trailer = V.id, x = V.x + 3, y = V.y } end, { "TOW" } },
     { "commonlib", "installTuning", args1({ part = "Engine", model = "m" }), { "REPAIR" } },
     { "commonlib", "uninstallTuning", args1({ part = "Engine" }), { "SALVAGE" } },
@@ -2694,7 +2730,7 @@ local CASES = {
     { "atatuning2", "installTuning", args1({ partName = "Engine", modelName = "m" }), { "REPAIR" } },
     { "atatuning2", "uninstallTuning", args1({ partName = "Engine" }), { "SALVAGE" } },
     { "atatuning2", "usePart", args1({ partName = "Engine" }), { "PASSENGER" } },
-    { "msw", "loadVehicle", function(V, O2) return { trailer = O2.id, vehicle = V.id, slot = 1 } end, { "TOW" } },
+    { "msw", "loadVehicle", function(V, O2) return { trailer = carrierFor(V, O2).id, vehicle = V.id, slot = 1 } end, { "TOW" } },
     { "msw", "loadContainer", function(V, O2) return { trailer = O2.id, container = V.id } end, { "TOW" } },
     { "msw", "launchVehicle", function(V) return { trailer = V.id, slot = 1, x = V.x + 3, y = V.y } end, { "TOW" } },
     { "msw", "unloadContainer", function(V) return { trailer = V.id, x = V.x, y = V.y } end, { "TOW" } },
@@ -2943,9 +2979,12 @@ check(rTr3.recordState == "ORPHANED", "拖車 keyId 變成記下以外的值：�
 out("情境 F5：MSW 公用拖車載著受保護的車")
 local mt = vehicle(61, 601, 7601, "Base.SemiTrailerCartrailer", 1, 1)
 local car4 = vehicle(62, 602, 7602, "Base.CarNormal", 1, 1)
-local rCar4 = rec(claim(OW, car4).oid)
+local rCar4, rMt = rec(claim(OW, car4).oid), rec(claim(OW, mt).oid)
 send(OW, "msw", "loadVehicle", { trailer = mt.id, vehicle = car4.id, slot = 1 })
-check(car4.removed and rCar4.carrierSqlId == 601 and mt.keyId == 7601, "車主用公用拖車裝車：記下在哪台車上（MSW 不改拖車 keyId）")
+check(car4.removed and rCar4.carrierSqlId == 601 and mt.keyId == 7601, "車主用自己綁定的拖車裝車：記下在哪台車上（MSW 不改拖車 keyId）")
+-- 拖車紀錄被擋不了的流程結束（open-issues：sqlId 回收、拖車 keyId 延續逾時等）→ 沒綁定的公用拖車載著受保護的車
+O.setState(rMt, "RELEASED", "TEST")
+check(O.lookup(mt) ~= "AUTHORIZED" and #O.carriedBy(mt) == 1, "拖車紀錄結束後：拖車沒綁定、仍載著車主的車")
 check(send(ST, "msw", "launchVehicle", { trailer = mt.id, slot = 1 }) == nil, "陌生人從公用拖車卸下別人的車：擋")
 local mt2 = vehicle(63, 603, 7603, "Base.SemiTrailerCartrailer", 1, 1)
 check(send(ST, "msw", "launchVehicle", { trailer = mt2.id, slot = 1 }) ~= nil, "另一台空的公用拖車：照常（只看這台拖車載著的）")
@@ -2958,7 +2997,7 @@ check(stage(A("ATAISLaunchVehicle", { character = OW, trailer = mt, square = GOS
     and send(OW, "msw", "launchVehicle", { trailer = mt.id, slot = 1, x = 2, y = 1 }) ~= nil, "車主卸自己的車：adapter 與指令都放行")
 local mt3 = vehicle(64, 604, 7604, "Base.SemiTrailerCartrailer", 1, 1)
 local car5b = vehicle(65, 605, 7605, "Base.CarNormal", 1, 1)
-claim(OW, car5b)
+claim(OW, car5b); claim(OW, mt3)
 send(OW, "msw", "loadVehicle", { trailer = mt3.id, vehicle = car5b.id, slot = 1 })
 local outerTr = vehicle(66, 606, 7606, "Base.TestWrecker", 1, 1)
 check(#O.carriedBy(mt3) == 1 and send(OW, "commonlib", "loadVehicle", { trailer = outerTr.id, vehicle = mt3.id }) == nil
@@ -2989,7 +3028,8 @@ OW.x = 9.5 -- 人離拖車與車都在 10 格內，但車離拖車 17 格
 send(OW, "commonlib", "loadVehicle", { trailer = trG.id, vehicle = carG.id })
 OW.x = 1
 check(#O.carriedBy(mt) >= 1 and anchorFar, "公用拖車載著受保護的車：卸車的人不在拖車附近 → TOO_FAR")
-check(carG.removed == false and cmdDenied("tow|CMD:commonlib.loadVehicle||TOO_FAR"), "被裝的車離拖車太遠 → TOO_FAR")
+check(carG.removed == false and cmdDenied("tow|CMD:commonlib.loadVehicle||TOO_FAR") and not cmdDenied("CARRIER_UNBOUND"),
+    "被裝的車離拖車太遠 → TOO_FAR（拖車沒綁定也先回距離）")
 
 out("情境 F6：TimedAction 回送與 tsarslib 新 adapter")
 local savedSend = sendClientCommand
@@ -3068,6 +3108,114 @@ intent(OW, "ISRefuelFromLiqudTanker", sv)
 check(stage(A("ISRefuelFromLiqudTanker", { character = OW, vehicle = lv, part = lv.parts.Engine, tank = sv.parts.Battery }), "complete") == true,
     "車主從自己的油罐車加油給沒綁定的車：放行")
 Events.OnClientCommand.Remove(fakeTow)
+SB.ClaimsPerPlayer = quota0
+end)();
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 F7：綁定的車只能裝上已綁定的載具（CARRIER_UNBOUND）、載著受保護紀錄不能結束拖車紀錄（CARRIER_HAS_CARGO）")
+boot()
+local quota0 = SB.ClaimsPerPlayer
+SB.ClaimsPerPlayer = 20
+for k in pairs(MVM.CommandGate.R.notified) do MVM.CommandGate.R.notified[k] = nil end
+-- 處理器替身：裝車（整車或貨櫃）就移除被裝的車
+local function stand(m, c, _, args)
+    if (m ~= "commonlib" and m ~= "msw") or (c ~= "loadVehicle" and c ~= "loadContainer") then return end
+    local v = world[args.vehicle or args.container]
+    if v and world[args.trailer] and not v.removed then v:permanentlyRemove() end
+end
+Events.OnClientCommand.Add(stand)
+local function send(p, m, c, args) nowMs = nowMs + 2100; fire("OnClientCommand", m, c, p, args) end -- 跨過通知節流
+local function denied(text) for key in pairs(O.R.denyAgg) do if key:find(text, 1, true) then return true end end return false end
+local function clear() for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end end
+local function back(v, r) -- 拖車 MOD 卸車：新 sqlId、零件見證還原 → 接回
+    local nv = vehicle(v.id + 50, v.sqlId + 50, v.keyId, v.script, 1, 1)
+    rawset(nv.parts.Engine.md, "MinidoracatVehicleManager", { oid = r.oid, epoch = r.epoch })
+    O.lookup(nv)
+    return nv
+end
+local OW, ST, AD = player("uow", 1, 1), player("ustr", 1, 1), player("uadm", 1, 1, { admin = true })
+cmd(OW, "fleetSubscribe", {}, false)
+local function veh(id, script) return vehicle(id, 800 + id, 8800 + id, script, 1, 1) end
+local loaded = {}
+for i, m in ipairs({ "commonlib", "msw" }) do
+    local b = 100 + i * 10
+    local c, ut, bt, lc = veh(b + 1, "Base.CarNormal"), veh(b + 2, "Base.TestWrecker"), veh(b + 3, "Base.TestWrecker"), veh(b + 4, "Base.CarNormal")
+    local rc, rbt = rec(claim(OW, c).oid), rec(claim(OW, bt).oid)
+    local label = "CMD:" .. m .. ".loadVehicle"
+    clear()
+    send(ST, m, "loadVehicle", { trailer = ut.id, vehicle = c.id, slot = 1 })
+    check(not c.removed and denied(label .. "|" .. rc.oid .. "|NOT_AUTHORIZED") and not denied("CARRIER_UNBOUND")
+        and lastOf(ST, "enforcement").reason == "NOT_AUTHORIZED",
+        label .. "：沒有被裝車 TOW 的陌生人 → 沒綁定的拖車：NOT_AUTHORIZED（不提示綁定拖車）")
+    send(OW, m, "loadVehicle", { trailer = ut.id, vehicle = c.id, slot = 1 })
+    check(not c.removed and rc.carrierSqlId == nil and denied(label .. "||CARRIER_UNBOUND")
+        and lastOf(OW, "enforcement").reason == "CARRIER_UNBOUND", label .. "：車主把綁定的車裝上沒綁定的拖車 → CARRIER_UNBOUND，車沒被移除")
+    O.setOverride(AD, true)
+    send(AD, m, "loadVehicle", { trailer = ut.id, vehicle = c.id, slot = 1 })
+    O.setOverride(AD, false)
+    check(not c.removed and lastOf(AD, "enforcement").reason == "CARRIER_UNBOUND", label .. "：管理員開越權也一樣 CARRIER_UNBOUND")
+    send(ST, m, "loadVehicle", { trailer = ut.id, vehicle = lc.id, slot = 1 })
+    check(lc.removed, label .. "：沒綁定的車裝上沒綁定的拖車照常")
+    send(OW, m, "loadVehicle", { trailer = bt.id, vehicle = c.id, slot = 1 })
+    check(c.removed and rc.carrierSqlId == bt.sqlId, label .. "：車主裝上已綁定、有 TOW 的拖車 → 放行")
+    loaded[m] = { c = c, rc = rc, bt = bt, rbt = rbt }
+end
+local qd = lastOf(OW, "fleetDelta")
+check(qd ~= nil and qd.quotaUsed == O.quotaUsed("uow") and qd.quotaUsed == 4, "車主收到的增量帶目前已用名額（車移出世界仍計入）")
+local cont, ctr = veh(131, "Base.W900Container"), veh(132, "Base.SemiTrailerVan")
+claim(OW, cont)
+send(ST, "msw", "loadContainer", { trailer = ctr.id, container = cont.id })
+local contStranger = not cont.removed
+send(OW, "msw", "loadContainer", { trailer = ctr.id, container = cont.id })
+check(contStranger and cont.removed and not denied("CMD:msw.loadContainer||CARRIER_UNBOUND"),
+    "msw.loadContainer 不變：陌生人擋、車主把綁定的貨櫃裝上沒綁定的貨櫃拖車照常")
+
+vclass("ATAISLoadVehicle", { "complete" })
+local n0 = calls("ATAISLoadVehicle.complete")
+G.install("F7")
+local ac, aut, abt, alc = veh(141, "Base.CarNormal"), veh(142, "Base.TestWrecker"), veh(143, "Base.TestWrecker"), veh(144, "Base.CarNormal")
+local rac = rec(claim(OW, ac).oid)
+claim(OW, abt)
+local function loadA(p, tr, v) return A("ATAISLoadVehicle", { character = p, trailer = tr, vehicle = v }) end
+local la = loadA(ST, aut, ac)
+check(stage(la, "complete") == false and la._mvmReason == "NOT_AUTHORIZED" and calls("ATAISLoadVehicle.complete") == n0,
+    "Autotsar adapter：陌生人 → 沒綁定的拖吊車：NOT_AUTHORIZED")
+intent(OW, "ATAISLoadVehicle", ac)
+la = loadA(OW, aut, ac)
+check(stage(la, "complete") == false and la._mvmReason == "CARRIER_UNBOUND" and lastEnforcement(OW).reason == "CARRIER_UNBOUND"
+    and calls("ATAISLoadVehicle.complete") == n0 and rac.carrierSqlId == nil, "Autotsar adapter：車主 → 沒綁定的拖吊車：CARRIER_UNBOUND，原 complete 沒跑")
+O.setOverride(AD, true)
+intent(AD, "ATAISLoadVehicle", ac)
+la = loadA(AD, aut, ac)
+local adminWhy = stage(la, "complete") == false and la._mvmReason
+O.setOverride(AD, false)
+check(adminWhy == "CARRIER_UNBOUND", "Autotsar adapter：管理員開越權也 CARRIER_UNBOUND")
+check(stage(loadA(ST, aut, alc), "complete") == true, "Autotsar adapter：沒綁定的車 → 沒綁定的拖吊車照常")
+intent(OW, "ATAISLoadVehicle", ac); intent(OW, "ATAISLoadVehicle", abt)
+check(stage(loadA(OW, abt, ac), "complete") == true and rac.carrierSqlId == abt.sqlId, "Autotsar adapter：車主 → 已綁定的拖吊車放行")
+
+local L = loaded.commonlib
+local function unclaimBt(r) return cmd(OW, "unclaim", { vehicleId = L.bt.id, expectedOid = r.oid, expectedEpoch = r.epoch }) end
+check(unclaimBt(L.rbt).reason == "CARRIER_HAS_CARGO" and L.rbt.recordState == "ACTIVE" and witness(L.bt) ~= nil,
+    "解除綁定：拖車載著受保護紀錄 → CARRIER_HAS_CARGO，紀錄與見證不動")
+check(cmd(OW, "reportLost", { expectedOid = L.rbt.oid }).reason == "CARRIER_HAS_CARGO" and L.rbt.recordState == "ACTIVE",
+    "回報遺失：載著受保護紀錄 → CARRIER_HAS_CARGO")
+check(cmd(AD, "adminRecover", { expectedOid = L.rbt.oid, op = "RELEASE" }).reason == "CARRIER_HAS_CARGO" and L.rbt.recordState == "ACTIVE",
+    "管理員釋出：載著受保護紀錄 → CARRIER_HAS_CARGO（開越權卸下再釋出）")
+O.beginRelease(L.rbt, "INACTIVITY")
+nowMs = nowMs + 25 * 3600000
+O.maintain(true)
+check(L.rbt.recordState == "PENDING_RELEASE", "待釋放（閒置）到期但仍載著受保護紀錄：先不結束")
+back(L.c, L.rc)
+O.maintain(true)
+check(L.rc.removedAtMs == nil and L.rbt.recordState == "RELEASED", "卸下（接回）之後：待釋放到期照常結束")
+local M = loaded.msw
+check(cmd(OW, "unclaim", { vehicleId = M.bt.id, expectedOid = M.rbt.oid, expectedEpoch = M.rbt.epoch }).reason == "CARRIER_HAS_CARGO",
+    "MSW 拖車載著受保護紀錄：解除綁定被拒")
+back(M.c, M.rc)
+check(cmd(OW, "unclaim", { vehicleId = M.bt.id, expectedOid = M.rbt.oid, expectedEpoch = M.rbt.epoch }).ok and M.rbt.recordState == "RELEASED",
+    "卸下之後：解除綁定成功")
+Events.OnClientCommand.Remove(stand)
 SB.ClaimsPerPlayer = quota0
 end)()
 

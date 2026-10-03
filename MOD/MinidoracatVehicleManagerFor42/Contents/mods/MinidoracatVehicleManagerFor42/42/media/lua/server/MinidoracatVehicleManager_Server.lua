@@ -103,11 +103,13 @@ local function union(a, b)
     return out
 end
 
+-- quotaUsed：收件者目前已用名額（綁定、解除、轉讓、拖車移出都會變；不帶的話名額顯示要等下一次快照）
 local function deliver(who, player, upserts, removes)
     local st = R.streams[who]
     if st == nil then return end
     st.seq = st.seq + 1
-    S.send(player, "fleetDelta", { streamId = st.streamId, seq = st.seq, upserts = upserts, removes = removes })
+    S.send(player, "fleetDelta", { streamId = st.streamId, seq = st.seq, upserts = upserts, removes = removes,
+        quotaUsed = O.quotaUsed(who) })
 end
 
 -- 對 before∪after 收件者推送：撤權者收 removes，新授權者收 upserts（§6.2）
@@ -499,6 +501,7 @@ H.unclaim = function(player, who, a)
     local v, rec, reason = ownLiveRecord(player, who, a)
     if rec == nil then return fail(reason) end
     if rec.epoch ~= a.expectedEpoch then return fail("STALE_TARGET") end
+    if O.hasCargo(rec) then return fail("CARRIER_HAS_CARGO") end -- 載著受保護的車：先卸下（方案 A）
     O.stripWitness(v, O.hostPart(v, rec.witnessPartId))
     O.setState(rec, "RELEASED", "UNCLAIM", { actor = who })
     O.audit("INFO", "UNCLAIM", { actor = who, oid = rec.oid, owner = who, vehicle = rec.sqlIdHint })
@@ -509,6 +512,7 @@ H.reportLost = function(player, who, a)
     local rec, reason = ownRecord(who, a.expectedOid)
     if rec == nil then return fail(reason) end
     if rec.recordState ~= "ACTIVE" and rec.recordState ~= "WITNESS_STALE" then return fail("INVALID_STATE") end
+    if O.hasCargo(rec) then return fail("CARRIER_HAS_CARGO") end
     O.beginRelease(rec, "REPORT_LOST")
     return { ok = true, releaseDueAtMs = rec.releaseDueAtMs }
 end
@@ -681,6 +685,8 @@ H.adminRecover = function(player, who, a)
     if rec == nil then return fail("NO_SUCH_RECORD") end
     if O.TOMBSTONE[rec.recordState] then return fail("INVALID_STATE") end
     if a.op == "RELEASE" then
+        -- 載著受保護的車：管理員開越權卸下後再釋出（不留下沒綁定、載著受保護車的拖車）
+        if O.hasCargo(rec) then return fail("CARRIER_HAS_CARGO") end
         O.setState(rec, "RELEASED", "ADMIN_RELEASE", { actor = who, role = "ADMIN" })
     else
         if rec.recordState ~= "QUARANTINED" or rec.ownerUser == nil then return fail("INVALID_STATE") end

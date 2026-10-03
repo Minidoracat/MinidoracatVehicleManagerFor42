@@ -51,10 +51,11 @@ local function allowed(chr, vehicle, act)
     return (MVM.clientCanUse(chr, vehicle, act))
 end
 
+-- 預設提示「受保護」；check 可在 action._mvmText 放別的文字（例：MSW 拖車沒綁定）
 local function refuse(action)
     if not action._mvmTold then
         action._mvmTold = true
-        MVM.notify(action.character, MVM.protectedText(action.character), true)
+        MVM.notify(action.character, action._mvmText or MVM.protectedText(action.character), true)
     end
     return false
 end
@@ -81,7 +82,8 @@ guardValid(ISDetachTrailerFromVehicle, function(a)
         and allowed(a.character, v:getVehicleTowedBy(), "TOW")
 end)
 
--- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW。它的 perform 只送 msw 命令
+-- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW；綁定的車只能裝上已綁定的拖車
+-- （伺服器 CARRIER_UNBOUND，這裡依本機投影提早提示）。它的 perform 只送 msw 命令
 -- （MSW_ISLoadVehicle.lua:27-33、MSW_ISLaunchVehicle.lua:39-45），伺服器端由指令防火牆（shared/…_CommandGate.lua）判定；
 -- 這裡只是讓一般玩家在排入動作時就看到提示，不必等伺服器拒絕。
 -- 類別定義在 MSW 自己的 client 檔，載入順序不保證：現在有就包，否則進遊戲時再包（每個類別只包一次）
@@ -89,7 +91,13 @@ function MVM.guardMsw()
     if MSW_ISLoadVehicle and not rawget(MSW_ISLoadVehicle, "_mvmGuarded") then
         rawset(MSW_ISLoadVehicle, "_mvmGuarded", true)
         guardValid(MSW_ISLoadVehicle, function(a)
-            return allowed(a.character, a.vehicle, "TOW") and allowed(a.character, a.trailer, "TOW")
+            if not (allowed(a.character, a.vehicle, "TOW") and allowed(a.character, a.trailer, "TOW")) then return false end
+            local n = a.character:getPlayerNum()
+            if MVM.clientProjection(n, a.vehicle) ~= nil and MVM.clientProjection(n, a.trailer) == nil then
+                a._mvmText = getText("IGUI_MVM_Reason_CARRIER_UNBOUND")
+                return false
+            end
+            return true
         end)
     end
     if MSW_ISLaunchVehicle and not rawget(MSW_ISLaunchVehicle, "_mvmGuarded") then
@@ -151,7 +159,9 @@ MVM.clientHandlers = MVM.clientHandlers or {}
 MVM.clientHandlers.enforcement = function(payload)
     local p = getSpecificPlayer(0)
     if p == nil or payload.to ~= (isClient() and p:getUsername() or "local:0") then return end
-    local text = payload.reason == "NOT_AUTHORIZED" and MVM.protectedText(p) or getText("IGUI_MVM_Refused")
+    local text = getText("IGUI_MVM_Refused")
+    if payload.reason == "NOT_AUTHORIZED" then text = MVM.protectedText(p)
+    elseif payload.reason == "CARRIER_UNBOUND" then text = getText("IGUI_MVM_Reason_CARRIER_UNBOUND") end
     MVM.notify(p, text, true)
     MVM.log("enforcement " .. tostring(payload.action) .. " " .. tostring(payload.reason))
 end

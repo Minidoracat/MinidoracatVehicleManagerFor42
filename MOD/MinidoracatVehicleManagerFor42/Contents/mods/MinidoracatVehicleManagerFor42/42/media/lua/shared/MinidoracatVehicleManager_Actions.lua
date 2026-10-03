@@ -79,15 +79,18 @@ local BUILTIN = {
     { class = "ATAISLoadVehicle", action = "TOW", vehicleOf = ownVehicle, stages = { "complete" },
       also = { { vehicleOf = function(a) return a.trailer end, action = "TOW" } },
       onAllow = function(a) MVM.Own.noteLoad(a.trailer, a.vehicle) end,
-      -- 被裝的車還載著受保護紀錄一律拒絕；受保護時人要在拖車與被裝車附近、被裝車要在拖車附近（同指令防火牆的 load）
+      -- 被裝的車還載著受保護紀錄一律拒絕；受保護時人要在拖車與被裝車附近、被裝車要在拖車附近（同指令防火牆的 load）；
+      -- 最後才看拖車有沒有綁定（CARRIER_UNBOUND，check 只在權限通過後呼叫；不靠 guarded 早退）
       check = function(a, guarded)
           if a.vehicle and #MVM.Own.carriedBy(a.vehicle) > 0 then return "CARRIER_LOADED" end
-          if not guarded then return nil end
           local CG, p, tr, v = MVM.CommandGate, a.character, a.trailer, a.vehicle
-          if not (CG.within(tr, p:getX(), p:getY(), p:getZ(), CG.NEAR) and CG.within(v, p:getX(), p:getY(), p:getZ(), CG.NEAR)) then
-              return "TOO_FAR"
+          if guarded then
+              if not (CG.within(tr, p:getX(), p:getY(), p:getZ(), CG.NEAR) and CG.within(v, p:getX(), p:getY(), p:getZ(), CG.NEAR)) then
+                  return "TOO_FAR"
+              end
+              if not CG.within(tr, v:getX(), v:getY(), v:getZ(), CG.LAUNCH_NEAR) then return "TOO_FAR" end
           end
-          if not CG.within(tr, v:getX(), v:getY(), v:getZ(), CG.LAUNCH_NEAR) then return "TOO_FAR" end
+          return CG.carrierUnbound(tr, v)
       end },
     { class = "ATAISLaunchVehicle", action = "TOW", vehicleOf = function(a) return a.trailer end, stages = { "complete" },
       carrier = function(a) return a.trailer end,

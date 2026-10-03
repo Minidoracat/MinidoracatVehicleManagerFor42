@@ -886,6 +886,16 @@ function O.carriedBy(trailer)
     return out
 end
 
+-- 這筆紀錄的車（仍在世界上）載著受保護紀錄：結束它會留下沒綁定、卻載著受保護車的拖車（整台能被掛走），
+-- 解除綁定、回報遺失、管理員釋出都拒絕（CARRIER_HAS_CARGO），待釋放到期也先不結束
+function O.hasCargo(rec)
+    if rec.removedAtMs then return false end
+    for _, r in pairs(R.outOfWorld) do
+        if r.carrierSqlId == rec.sqlIdHint then return true end
+    end
+    return false
+end
+
 -- server 端公開 API 換成權威實作（§8.1.1）
 MinidoracatVehicleManagerAPI.canUse = function(actor, vehicle, actionCode, context)
     local ok, reason = O.canUse(actor, vehicle, actionCode, context)
@@ -922,7 +932,7 @@ function O.maintain(force)
     for _, rec in pairs(st.recordsByOid) do
         local state = rec.recordState
         if state == "PENDING_RELEASE" and t >= (rec.releaseDueAtMs or 0) then
-            O.setState(rec, "RELEASED", "RELEASE_FINALIZED")
+            if not O.hasCargo(rec) then O.setState(rec, "RELEASED", "RELEASE_FINALIZED") end
         elseif (state == "ACTIVE" or state == "WITNESS_STALE") and expiredOwners[rec.ownerUser] then
             O.beginRelease(rec, "INACTIVITY")
         elseif O.TOMBSTONE[state] and t - (rec.endedAtMs or t) > retention then

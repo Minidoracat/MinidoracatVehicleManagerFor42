@@ -789,17 +789,17 @@ function FleetWindow:draw(el)
     local bc = COL.border
     el:drawRect(PAD, fy, el.width - PAD * 2, 1, bc.a, bc.r, bc.g, bc.b)
     local q = b and b.quota
+    local used, total = MVM.quotaNumbers(b)
     local quota
     if self.tab == "ADMIN" then -- 管理頁顯示全服總數，不顯示管理員自己的名額
         quota = self.totals and getText("IGUI_MVM_Admin_Totals", self.totals.players, self.totals.bound)
-    elseif q and ((q.paid or 0) > 0 or (q.pending or 0) > 0) then
-        quota = getText("IGUI_MVM_QuotaPaid", q.used or 0, q.total or 0, q.base or 0, q.paid or 0)
-        -- 大字級左欄放不下分項就只顯示已用／上限（分項在名額視窗），不壓到右側說明
-        if getTextManager():MeasureStringX(FS, quota) > self.detailX - PAD * 2 then
-            quota = getText("IGUI_MVM_Quota", q.used or 0, q.total or 0)
+    elseif used ~= nil then
+        quota = getText("IGUI_MVM_Quota", used, total)
+        if q and ((q.paid or 0) > 0 or (q.pending or 0) > 0) then
+            -- 大字級左欄放不下分項就只顯示已用／上限（分項在名額視窗），不壓到右側說明
+            local paid = getText("IGUI_MVM_QuotaPaid", used, total, q.base or 0, q.paid or 0)
+            if getTextManager():MeasureStringX(FS, paid) <= self.detailX - PAD * 2 then quota = paid end
         end
-    elseif b and b.quotaLimit then
-        quota = getText("IGUI_MVM_Quota", b.quotaUsed or 0, b.quotaLimit)
     end
     if quota then text(el, quota, PAD, fy + 6, "text") end
     text(el, getText("IGUI_MVM_Disclosure"), self.detailX, fy + 6, "textFaint")

@@ -55,15 +55,30 @@ local function tows(field)
     end
 end
 
+-- 綁定的車只能裝上已綁定的載具（使用者裁定 2026-10-03）：被裝的車有紀錄、拖車沒有 → CARRIER_UNBOUND。否則別人卸不下車，
+-- 但 attachTrailer 只看兩台活車、拖行巡檢只看被拖的車，整台拖車連車能被掛走。「有紀錄」＝O.lookup 第二回傳（同 O.canUse）。
+-- 指令防火牆的 load 與 Autotsar 裝車 adapter 共用
+function CG.carrierUnbound(tr, v)
+    local O = MVM.Own
+    if tr == nil or v == nil then return nil end
+    local _, rv = O.lookup(v)
+    if rv == nil then return nil end
+    local _, rt = O.lookup(tr)
+    if rt == nil then return "CARRIER_UNBOUND" end
+    return nil
+end
+
 -- 裝車：拖車與被裝的車各要 TOW；受保護時以拖車為錨點量距離、被裝的車也要在拖車附近。被裝的車自己還載著受保護的紀錄
--- （拖車再被裝上另一台拖車）一律拒絕：卸下時那些紀錄找不到原拖車。mark＝放行時記 keyId 延續與「在哪台拖車上」
--- （W900 貨櫃轉移不還原 keyId 與見證、不會接回，不記，見 O.noteLoad）
+-- （拖車再被裝上另一台拖車）一律拒絕：卸下時那些紀錄找不到原拖車。mark＝放行時記 keyId 延續與「在哪台拖車上」，
+-- 也只有這種（整台車裝上去、之後接回）要求拖車已綁定（check，權限與距離都通過後才判，沒權限的人只看到 NOT_AUTHORIZED）
+-- （W900 貨櫃轉移不還原 keyId 與見證、不會接回，不記也不要求，見 O.noteLoad）
 local function load(field, mark)
     return function(_, a)
         local tr, v = veh(a.trailer), veh(a[field])
         if v and #MVM.Own.carriedBy(v) > 0 then return nil, nil, "CARRIER_LOADED" end
         local out = { { vehicle = tr, action = "TOW" }, { vehicle = v, action = "TOW" } }
         out.anchor, out.loaded = tr, v
+        if mark then out.check = function() return CG.carrierUnbound(tr, v) end end
         return out, mark and function() MVM.Own.noteLoad(tr, v) end or nil
     end
 end
@@ -99,7 +114,8 @@ local function amount(field, tireOnly)
     end
 end
 
--- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因
+-- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因。
+-- 目標清單可帶 anchor／loaded／spawn（距離錨點）與 check（權限、距離都通過後的額外條件，回拒絕原因或 nil）
 local RULES = {
     -- 原版 server/Vehicles/VehicleCommands.lua。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用
     vehicle = {
@@ -218,6 +234,8 @@ function CG.decide(rule, module, command, player, args)
         end
         if spawn and not CG.within(anchor, spawn[1], spawn[2], spawn[3], CG.LAUNCH_NEAR) then return false, "BAD_POS" end
     end
+    local why = targets.check and targets.check() or nil
+    if why then return false, why end
     if onAllow then onAllow() end
     return true
 end

@@ -123,6 +123,10 @@ function MVM.clientReceive(command, payload)
         b.seq = payload.seq
         for _, oid in ipairs(payload.removes or {}) do b.rows[oid] = nil end
         for _, row in ipairs(payload.upserts or {}) do b.rows[row.oid] = row end
+        if MVM.isInt(payload.quotaUsed) then
+            b.quotaUsed = payload.quotaUsed
+            if b.quota then b.quota.used = payload.quotaUsed end
+        end
     elseif command == "mutationAck" then
         if payload.reason == "PROTOCOL_MISMATCH" then C.protocolMismatch = true end
         local cb = C.pending[payload.requestId]
@@ -283,14 +287,32 @@ function C.claim(player, vehicle)
     end)
 end
 
--- 綁定前先揭露保護邊界（武器、殭屍、碰撞傷害無法完全阻止），確認後才送 prepareClaim（框架 Dialog）
+-- 目前已用／上限（車隊視窗頁尾與綁定確認視窗共用）：有付費或待確認名額時用 Economy 的 quota，否則快照的 quotaUsed／quotaLimit；
+-- 還沒收到快照回 nil
+function MVM.quotaNumbers(b)
+    local q = b and b.quota
+    if q and ((q.paid or 0) > 0 or (q.pending or 0) > 0) then return q.used or 0, q.total or 0 end
+    if b and b.quotaLimit then return b.quotaUsed or 0, b.quotaLimit end
+    return nil
+end
+
+-- 綁定確認視窗內文：保護邊界＋名額（讀得到才加）＋能裝車的載具多一句「綁定的車只能裝上已綁定的拖車」
+function MVM.claimText(playerNum, vehicle)
+    local text = getText("IGUI_MVM_ClaimDisclosure")
+    local used, total = MVM.quotaNumbers(C.buckets[principal(playerNum) or ""])
+    if used ~= nil then text = text .. "\n" .. getText("IGUI_MVM_ClaimQuotaNote", used, total) end
+    if MVM.isCarrier(vehicle) then text = text .. "\n" .. getText("IGUI_MVM_ClaimCarrierNote") end
+    return text
+end
+
+-- 綁定前先揭露保護邊界（武器、殭屍、碰撞傷害無法完全阻止）與名額，確認後才送 prepareClaim（框架 Dialog）
 local function startClaim(player, vehicle)
     local UI = ui()
     if not (UI and UI.API_REVISION >= 7 and UI.CAPABILITIES.dialog) then
         MVM.notify(player, getText("IGUI_MVM_NeedFramework"), true)
         return
     end
-    UI.Dialog.show({ title = getText("ContextMenu_MVM_Menu"), text = getText("IGUI_MVM_ClaimDisclosure"), width = 480,
+    UI.Dialog.show({ title = getText("ContextMenu_MVM_Menu"), text = MVM.claimText(player:getPlayerNum(), vehicle), width = 480,
         confirmText = getText("ContextMenu_MVM_Claim"), cancelText = getText("UI_Cancel"),
         onResult = function(ok) if ok then C.claim(player, vehicle) end end })
 end

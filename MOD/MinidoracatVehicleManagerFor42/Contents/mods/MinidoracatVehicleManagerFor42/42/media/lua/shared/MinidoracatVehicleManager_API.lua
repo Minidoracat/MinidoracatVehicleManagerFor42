@@ -32,6 +32,17 @@ function MVM.validShareBits(bits)
     return MVM.isInt(bits) and bits >= 0 and bits <= MVM.SHAREABLE_MASK
 end
 
+-- 能裝載其他車的載具：MSW 多槽拖車（零件 ATAMultiSlotWrecker，MSW_ISVehicleMenu.lua:43-46）或 Autotsar 拖吊車／拖車
+-- （ATAVehicleWrecker／ATA2VehicleWrecker，ATA_ISVehicleMenu.lua:25-26）。綁定確認視窗用來提示「載綁定車的拖車也要綁定」
+local CARRIER_PARTS = { "ATAMultiSlotWrecker", "ATAVehicleWrecker", "ATA2VehicleWrecker" }
+function MVM.isCarrier(vehicle)
+    if vehicle == nil then return false end
+    for _, id in ipairs(CARRIER_PARTS) do
+        if vehicle:getPartById(id) ~= nil then return true end
+    end
+    return false
+end
+
 -- 穩定合併排序（家族禁用 table.sort）：依 keys[item]（字串或數字）由小到大；車隊清單與伺服器匯出共用
 function MVM.sortByKey(items, keys)
     local n = #items
