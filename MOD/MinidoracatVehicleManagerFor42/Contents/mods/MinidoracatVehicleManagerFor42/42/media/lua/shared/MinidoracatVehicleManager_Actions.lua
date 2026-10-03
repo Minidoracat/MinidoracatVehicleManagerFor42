@@ -78,9 +78,25 @@ local BUILTIN = {
     -- carrier＝這台拖車載著的受保護紀錄（O.carriedBy）也各要 TOW
     { class = "ATAISLoadVehicle", action = "TOW", vehicleOf = ownVehicle, stages = { "complete" },
       also = { { vehicleOf = function(a) return a.trailer end, action = "TOW" } },
-      onAllow = function(a) MVM.Own.noteLoad(a.trailer, a.vehicle) end },
+      onAllow = function(a) MVM.Own.noteLoad(a.trailer, a.vehicle) end,
+      -- 被裝的車還載著受保護紀錄一律拒絕；受保護時人要在拖車與被裝車附近、被裝車要在拖車附近（同指令防火牆的 load）
+      check = function(a, guarded)
+          if a.vehicle and #MVM.Own.carriedBy(a.vehicle) > 0 then return "CARRIER_LOADED" end
+          if not guarded then return nil end
+          local CG, p, tr, v = MVM.CommandGate, a.character, a.trailer, a.vehicle
+          if not (CG.within(tr, p:getX(), p:getY(), p:getZ(), CG.NEAR) and CG.within(v, p:getX(), p:getY(), p:getZ(), CG.NEAR)) then
+              return "TOO_FAR"
+          end
+          if not CG.within(tr, v:getX(), v:getY(), v:getZ(), CG.LAUNCH_NEAR) then return "TOO_FAR" end
+      end },
     { class = "ATAISLaunchVehicle", action = "TOW", vehicleOf = function(a) return a.trailer end, stages = { "complete" },
-      carrier = function(a) return a.trailer end },
+      carrier = function(a) return a.trailer end,
+      check = function(a, guarded) -- 受保護時人要在拖車附近、生車格（a.square，客戶端決定）要在拖車附近
+          if not guarded then return nil end
+          local CG, p, tr, sq = MVM.CommandGate, a.character, a.trailer, a.square
+          if not CG.within(tr, p:getX(), p:getY(), p:getZ(), CG.NEAR) then return "TOO_FAR" end
+          if sq == nil or not CG.within(tr, sq:getX(), sq:getY(), sq:getZ(), CG.LAUNCH_NEAR) then return "BAD_POS" end
+      end },
     -- Autotsar 調校零件（tsarslib 42.17 shared，SVU3 與 ATA 車都用）：complete 在伺服器換零件物品、耐久與 modData，
     -- 拆下的零件交給執行者（ATATuning2Commands.lua:7-81；ISInstallTuningVehiclePart.lua:72-79、ISUninstallTuningVehiclePart.lua:56-62）
     { class = "ISInstallTuningVehiclePart", action = "REPAIR", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = TUNING_PUSH },

@@ -126,17 +126,23 @@ function G.decide(spec, a)
             allow, reason = false, "TARGET_MISMATCH" -- action 自帶的 vehicle 與實際目標不一致
         else
             allow, reason, rec, act = judge(spec, a, vehicle, part, MVM.requiredActions(spec, a), "_mvmIntent")
+            local guarded = rec ~= nil
             for i, extra in ipairs(spec.also or {}) do
                 local other = allow and extra.vehicleOf(a) or nil
                 if other ~= nil and other ~= vehicle then
                     local ok2, reason2, rec2 = judge(spec, a, other, nil, { extra.action }, "_mvmIntentAlso" .. i)
+                    guarded = guarded or rec2 ~= nil
                     if not ok2 then allow, reason, rec = false, reason2, rec2 end
                 end
             end
             for _, r in ipairs(allow and spec.carrier and O.carriedBy(spec.carrier(a)) or {}) do
+                guarded = true
                 local ok3, reason3 = O.allowsRecord(a.character, r, "TOW", { op = spec.class })
                 if not ok3 then allow, reason, rec = false, reason3, r end
             end
+            -- spec.check(a, guarded)：額外條件（距離、位置要在原 complete 之前擋：complete 回送被防火牆拒絕後仍會直接改車）
+            local why = allow and spec.check and spec.check(a, guarded) or nil
+            if why then allow, reason = false, why end
         end
     end
     a._mvmRec, a._mvmReason, a._mvmAct = rec, reason, act

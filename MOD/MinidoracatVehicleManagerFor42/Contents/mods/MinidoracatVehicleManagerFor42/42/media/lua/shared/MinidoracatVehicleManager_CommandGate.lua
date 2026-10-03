@@ -15,7 +15,6 @@ local CG = {}
 CG.NEAR = 10
 CG.LAUNCH_NEAR = 15 -- Autotsar 卸車的生車座標由客戶端決定（CommonCommands.lua:1001），受保護時限制在拖車附近
 CG.NOTIFY_MS = 2000
-CG.WITNESS_KEY = "MinidoracatVehicleManager" -- 零件見證鍵（OwnershipSystem.lua WITNESS_KEY）
 
 local R = { notified = {}, logged = {} }
 CG.R = R
@@ -33,13 +32,16 @@ local function on(field, action)
 end
 local function one(action) return on("vehicle", action) end
 
--- 送指令的人坐在這台車上：他的客戶端自動送的（KI5 裝甲耐久、Autotsar 車內燈）只要 PASSENGER（佔座由 watchdog 管），否則要 outside
+-- 送指令的人坐在這台車上：他的客戶端自動送的（Autotsar 車內燈開燈失敗）只要 PASSENGER（佔座由 watchdog 管），否則要 outside
 local function seated(field, outside)
     return function(p, a)
         local v = veh(a[field])
         return { { vehicle = v, action = (v and p:getVehicle() == v) and "PASSENGER" or outside } }
     end
 end
+
+-- 駕駛自己的客戶端自動送的（W900 裝甲補償 ArmorSync.dispatchRepair、KI5 CTIS 胎壓）：駕駛只要 DRIVE，否則要 outside
+local function isDriver(p, v) return v and v.isDriver and v:isDriver(p) end
 
 local function tows(field)
     return function(_, a)
@@ -53,25 +55,48 @@ local function tows(field)
     end
 end
 
--- 裝車：拖車與被裝的車各要 TOW；放行時記 keyId 延續與「在哪台拖車上」（O.noteLoad）
-local function load(field)
+-- 裝車：拖車與被裝的車各要 TOW；受保護時以拖車為錨點量距離、被裝的車也要在拖車附近。被裝的車自己還載著受保護的紀錄
+-- （拖車再被裝上另一台拖車）一律拒絕：卸下時那些紀錄找不到原拖車。mark＝放行時記 keyId 延續與「在哪台拖車上」
+-- （W900 貨櫃轉移不還原 keyId 與見證、不會接回，不記，見 O.noteLoad）
+local function load(field, mark)
     return function(_, a)
         local tr, v = veh(a.trailer), veh(a[field])
-        return { { vehicle = tr, action = "TOW" }, { vehicle = v, action = "TOW" } }, function() MVM.Own.noteLoad(tr, v) end
+        if v and #MVM.Own.carriedBy(v) > 0 then return nil, nil, "CARRIER_LOADED" end
+        local out = { { vehicle = tr, action = "TOW" }, { vehicle = v, action = "TOW" } }
+        out.anchor, out.loaded = tr, v
+        return out, mark and function() MVM.Own.noteLoad(tr, v) end or nil
     end
 end
 
--- 卸車：拖車與它載著的受保護紀錄各要 TOW
-local function unload(_, a)
-    local tr = veh(a.trailer)
-    local out = { { vehicle = tr, action = "TOW" } }
-    if tr then for _, rec in ipairs(MVM.Own.carriedBy(tr)) do out[#out + 1] = { rec = rec, action = "TOW" } end end
-    return out
+-- 卸車：拖車與它載著的受保護紀錄各要 TOW；受保護時以拖車為錨點量距離，生車座標（spawn＝欄位名）也要在拖車附近
+local function unload(carried, x, y, z)
+    return function(_, a)
+        local tr = veh(a.trailer)
+        local out = { { vehicle = tr, action = "TOW" } }
+        if tr and carried then for _, rec in ipairs(MVM.Own.carriedBy(tr)) do out[#out + 1] = { rec = rec, action = "TOW" } end end
+        out.anchor = tr
+        if x then out.spawn = { a[x], a[y], z and a[z] } end
+        return out
+    end
 end
 
--- damnlib：伺服器先以 _vehicleId 解析 _vehicle，setPartModData 另讀 vehicle（DAMN_Server.lua:24-34、DAMN_Data.lua:46）
-local function damn(action)
-    return function(_, a) return { { vehicle = veh(a._vehicleId), action = action }, { vehicle = veh(a.vehicle), action = action } } end
+-- 容量類零件（setContainerContentAmount／setTirePressure）依真實零件分類：輪胎加壓 REPAIR、減壓 SALVAGE，
+-- 駕駛自己的客戶端（KI5 CTIS 自動補胎壓，DAMN_Armor_Client.lua:30-48）在容量內只要 DRIVE；其他零件（油箱等）FUEL，
+-- setTirePressure 對非輪胎零件一律拒絕（原版只有輪胎會送）
+local function amount(field, tireOnly)
+    return function(p, a)
+        local v = veh(a.vehicle)
+        local part = v and v:getPartById(a.part) or nil
+        local n = a[field]
+        if part ~= nil and part:getWheelIndex() < 0 then
+            if tireOnly then return nil, nil, "NOT_TIRE" end
+            return { { vehicle = v, action = "FUEL" } }
+        end
+        if part == nil then return { { vehicle = v, action = tireOnly and "REPAIR" or "FUEL" } } end
+        local ok = type(n) == "number" and n >= 0 and n <= part:getContainerCapacity()
+        if ok and isDriver(p, v) then return { { vehicle = v, action = "DRIVE" } } end
+        return { { vehicle = v, action = (ok and n >= part:getContainerContentAmount()) and "REPAIR" or "SALVAGE" } }
+    end
 end
 
 -- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因
@@ -79,13 +104,8 @@ local RULES = {
     -- 原版 server/Vehicles/VehicleCommands.lua。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用
     vehicle = {
         fixPart = one("REPAIR"), -- :28-58 任意零件設任意耐久
-        setContainerContentAmount = one("FUEL"), -- :76-89
-        setTirePressure = function(_, a) -- :132-148：放氣＝SALVAGE、打氣＝REPAIR
-            local v = veh(a.vehicle)
-            local part = v and v:getPartById(a.part) or nil
-            local up = part ~= nil and type(a.psi) == "number" and a.psi >= part:getContainerContentAmount()
-            return { { vehicle = v, action = up and "REPAIR" or "SALVAGE" } }
-        end,
+        setContainerContentAmount = amount("amount", false), -- :76-89（damnlib CTIS 也用它補胎壓，DAMN_Parts.lua:463-469）
+        setTirePressure = amount("psi", true), -- :132-148
         setDoorOpen = function(_, a) -- :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
             local v = veh(a.vehicle)
             return { { vehicle = v, action = MVM.doorAction({ part = v and v:getPartById(a.part) or nil }) } }
@@ -101,12 +121,8 @@ local RULES = {
     },
     -- tsarslib common/media/lua/server/CommonTemplates/CommonCommands.lua
     commonlib = {
-        loadVehicle = load("vehicle"), -- :955-978
-        launchVehicle = function(p, a) -- :980-1101
-            local out = unload(p, a)
-            out.spawn = { a.x, a.y }
-            return out
-        end,
+        loadVehicle = load("vehicle", true), -- :955-978
+        launchVehicle = unload(true, "x", "y"), -- :980-1101（生車座標 x, y 由客戶端決定）
         installTuning = one("REPAIR"), uninstallTuning = one("SALVAGE"), -- :858-885
         bulbSmash = seated("vehicle", "SALVAGE"), -- :832-841（正常呼叫者是車內開燈失敗，ISCommonMenu.lua:469-486）
         cabinlightsOn = one("PASSENGER"), -- :887-903
@@ -116,28 +132,32 @@ local RULES = {
     atatuning2 = { installTuning = one("REPAIR"), uninstallTuning = one("SALVAGE"), usePart = one("PASSENGER") },
     -- rSemiTruck server/MSW_Common_Commands.lua（載車只看車身鍵、卸車不檢查）
     msw = {
-        loadVehicle = load("vehicle"), -- :2257-2331
-        loadContainer = load("container"), -- :2224-2255（W900 貨櫃也是車）
-        launchVehicle = unload, -- :2333-2493
-        unloadContainer = unload, -- :2148-2222
+        loadVehicle = load("vehicle", true), -- :2257-2331
+        loadContainer = load("container", false), -- :2224-2255（W900 貨櫃也是車；轉移不還原 keyId 與見證，貨櫃之後就不受保護）
+        launchVehicle = unload(true, "x", "y"), -- :2333-2493（:2384 以 args.x, args.y 生車）
+        unloadContainer = unload(false, "x", "y", "z"), -- :2148-2222（:2159 以 args.x, args.y, args.z 生貨櫃）
     },
     -- rSemiTruck server/W900Commands.lua
     W900 = {
-        applyArmorRepair = one("REPAIR"), -- :209-229 任意零件設耐久
+        applyArmorRepair = function(p, a) -- :209-229 任意零件設耐久；正常呼叫者是駕駛客戶端的裝甲補償（ArmorSync.dispatchRepair）
+            -- ponytail: 駕駛只要 DRIVE、不限裝甲零件清單；要收緊就比對 rLib.Vehicles.Armor 的實際零件
+            local v = veh(a.vehicle)
+            return { { vehicle = v, action = isDriver(p, v) and "DRIVE" or "REPAIR" } }
+        end,
         setTrailerPhysicsDisabled = one("TOW"), -- :185-207
         toggleFreezer = one("CARGO"), toggleFridge = one("CARGO"), -- :66-183
     },
-    -- rSemiTruck server/rLib.Commands.lua:7-45（分派 Server_<cmd>，:61-88）
-    rLib = { SetVehicleBattery = on("vehicleId", "REPAIR"), SetVehicleHeadlights = on("vehicleId", "DRIVE") },
+    -- rSemiTruck server/rLib.Commands.lua:7-45（分派 Server_<cmd>，:61-88）；正常呼叫者是拖掛後同步拖車（rSemiTruck.lua:332-381）
+    rLib = { SetVehicleBattery = on("vehicleId", "TOW"), SetVehicleHeadlights = on("vehicleId", "TOW") },
     -- damnlib 42.20 server/Commands
     that_damn_lib = {
-        setPartModData = function(p, a) -- DAMN_Data.lua:45-64：任意零件 modData；本 MOD 的見證放在零件 modData，帶見證鍵一律拒絕
-            if type(a.data) == "table" and rawget(a.data, CG.WITNESS_KEY) ~= nil then return nil, nil, "WITNESS_KEY" end
-            return damn("REPAIR")(p, a)
+        -- DAMN_Data.lua:45-64：任意零件 modData（含本 MOD 見證、MSW 倉儲參照），沒有正常客戶端呼叫者 → 一律拒絕
+        setPartModData = function() return nil, nil, "REFUSED" end,
+        silentPartInstall = function(_, a) -- DAMN_Parts.lua:14-63：任意零件換成任意新物品（_vehicle 由 _vehicleId 解析，DAMN_Server.lua:24-34）
+            return { { vehicle = veh(a._vehicleId), action = "REPAIR" } }
         end,
-        silentPartInstall = damn("REPAIR"), -- DAMN_Parts.lua:14-63：任意零件換成任意新物品
-        updatePartConditions = seated("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：任意零件設耐久（車內客戶端定時送）
-        savePartsCondition = seated("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
+        updatePartConditions = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：任意零件設任意耐久
+        savePartsCondition = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
     },
 }
 CG.RULES = RULES
@@ -148,11 +168,14 @@ local function once(key, msg)
     MVM.log(msg)
 end
 
-local function near(p, v, d)
-    if math.floor(p:getZ()) ~= math.floor(v:getZ()) then return false end
-    local dx, dy = p:getX() - v:getX(), p:getY() - v:getY()
+-- (x, y, z) 在物件 o 的 d 格內、同一樓層（z＝nil 不比樓層）；NaN 一律不算近。指令防火牆與 Autotsar adapter 共用
+function CG.within(o, x, y, z, d)
+    if type(x) ~= "number" or type(y) ~= "number" or o == nil then return false end
+    if z ~= nil and (type(z) ~= "number" or math.floor(z) ~= math.floor(o:getZ())) then return false end
+    local dx, dy = x - o:getX(), y - o:getY()
     return dx * dx + dy * dy <= d * d
 end
+local function near(p, o, d) return CG.within(o, p:getX(), p:getY(), p:getZ(), d) end
 
 -- 回 allow, reason, oid
 function CG.decide(rule, module, command, player, args)
@@ -177,12 +200,14 @@ function CG.decide(rule, module, command, player, args)
             if t.vehicle and not near(player, t.vehicle, CG.NEAR) then return false, "TOO_FAR", rec.oid end
         end
     end
-    local spawn, tr = targets.spawn, targets[1] and targets[1].vehicle
-    if guarded and spawn then
-        local x, y = spawn[1], spawn[2]
-        if type(x) ~= "number" or type(y) ~= "number" or not tr then return false, "BAD_POS" end
-        local dx, dy = x - tr:getX(), y - tr:getY()
-        if not (dx * dx + dy * dy <= CG.LAUNCH_NEAR * CG.LAUNCH_NEAR) then return false, "BAD_POS" end -- NaN 也擋
+    -- 有受保護目標時以載具（拖車）為錨點：人要在拖車附近（拖車沒綁定也一樣）、被裝的車與生車座標要在拖車附近
+    local anchor, spawn = targets.anchor, targets.spawn
+    if guarded and anchor then
+        if not near(player, anchor, CG.NEAR) then return false, "TOO_FAR" end
+        if targets.loaded and not CG.within(anchor, targets.loaded:getX(), targets.loaded:getY(), targets.loaded:getZ(), CG.LAUNCH_NEAR) then
+            return false, "TOO_FAR"
+        end
+        if spawn and not CG.within(anchor, spawn[1], spawn[2], spawn[3], CG.LAUNCH_NEAR) then return false, "BAD_POS" end
     end
     if onAllow then onAllow() end
     return true
