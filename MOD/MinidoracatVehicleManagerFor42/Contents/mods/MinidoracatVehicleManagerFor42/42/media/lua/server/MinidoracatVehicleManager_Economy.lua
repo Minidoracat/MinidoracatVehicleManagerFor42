@@ -1,5 +1,5 @@
--- Economy 選用整合：付費綁定名額（Economy API rev 2 通用權益，產品 vehicle_slot）。
--- 只在 dedicated server、Economy 在場且宣告 entitlements 能力時啟用；不 require Economy（它不在 mod.info require=）。
+-- Economy 選用整合：付費綁定名額（Economy API rev 2 通用權益＋rentals 能力（每張租約獨立），產品 vehicle_slot）。
+-- 只在 dedicated server、Economy 在場且宣告 entitlements 與 rentals 能力時啟用；不 require Economy（它不在 mod.info require=）。
 -- VM 不存價格、不代收款：方案條款與沙盒雙向同步由 Economy 管，玩家付款由 client 直接走 Economy 的 quote／purchase。
 -- 本檔只做三件事：註冊來源與產品、把 Economy 的已確認可用名額（entitlement.usable）加到綁定上限、
 -- 權益變更時重送該玩家的車隊快照。不可用（未安裝／舊版／註冊失敗／查詢失敗／欄位不合）＝付費名額 0：
@@ -21,23 +21,24 @@ E.SANDBOX = {
     permanentEnabled = PAGE .. "PaidSlotEnabled", permanentCurrency = PAGE .. "PaidSlotCurrency",
     permanentPrice = PAGE .. "PaidSlotPrice", permanentLimit = PAGE .. "PaidSlotLimit",
     rentalEnabled = PAGE .. "LeaseSlotEnabled", rentalCurrency = PAGE .. "LeaseSlotCurrency",
-    rentalPrice = PAGE .. "LeaseSlotPrice", rentalQuantity = PAGE .. "LeaseSlotQuantity", rentalDays = PAGE .. "LeaseSlotDays",
+    rentalPrice = PAGE .. "LeaseSlotPrice", rentalLimit = PAGE .. "LeaseSlotLimit", rentalDays = PAGE .. "LeaseSlotDays",
     graceHours = PAGE .. "LeaseGraceHours", reminderHours = PAGE .. "LeaseReminderHours",
     autoRenewAllowed = PAGE .. "LeaseAutoRenewAllowed",
 }
 -- 與 sandbox-options.txt 的 default 相同：兩種販售預設關閉，由服主自行開啟
 E.DEFAULTS = {
     permanentEnabled = false, permanentCurrency = "survivor", permanentPrice = 1000, permanentLimit = 10,
-    rentalEnabled = false, rentalCurrency = "survivor", rentalPrice = 250, rentalQuantity = 1, rentalDays = 7,
+    rentalEnabled = false, rentalCurrency = "survivor", rentalPrice = 250, rentalLimit = 5, rentalDays = 7,
     graceHours = 24, reminderHours = 24, autoRenewAllowed = true,
 }
 E.REASON_CODES = { "entitlement_purchase", "entitlement_renewal", "entitlement_refund" }
 
--- Economy server facade；舊版（rev 1）或缺能力回 nil
+-- Economy server facade；舊版（rev 1）、缺權益能力或還是單一租約（沒有 rentals 能力）回 nil
 function E.api()
     local api = MinidoracatEconomy and MinidoracatEconomy.v1
-    if api and api.API_MAJOR == 1 and (api.API_REVISION or 0) >= 2 and type(api.CAPABILITIES) == "table"
-        and api.CAPABILITIES.entitlements == true and type(api.registerSource) == "function" then
+    local caps = api and api.CAPABILITIES
+    if api and api.API_MAJOR == 1 and (api.API_REVISION or 0) >= 2 and type(caps) == "table"
+        and caps.entitlements == true and caps.rentals == true and type(api.registerSource) == "function" then
         return api
     end
     return nil
@@ -72,7 +73,7 @@ function E.init()
     local api = E.api()
     if api == nil then
         E.status = "UNSUPPORTED"
-        MVM.log("Economy found without entitlement API rev 2: paid slots disabled.")
+        MVM.log("Economy found without entitlement API rev 2 with rentals: paid slots disabled.")
         return
     end
     local currencies = {}

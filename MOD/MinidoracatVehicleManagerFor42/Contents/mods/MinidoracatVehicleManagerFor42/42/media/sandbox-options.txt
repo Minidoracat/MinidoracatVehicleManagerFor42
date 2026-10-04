@@ -63,8 +63,8 @@ option MinidoracatVehicleManager.LeaseSlotCurrency
 option MinidoracatVehicleManager.LeaseSlotPrice
 {type = integer, min = 1, max = 1000000000, default = 250, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotPrice,}
 
-option MinidoracatVehicleManager.LeaseSlotQuantity
-{type = integer, min = 1, max = 1000, default = 1, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotQuantity,}
+option MinidoracatVehicleManager.LeaseSlotLimit
+{type = integer, min = 1, max = 1000, default = 5, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotLimit,}
 
 option MinidoracatVehicleManager.LeaseSlotDays
 {type = integer, min = 1, max = 365, default = 7, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerLeaseSlotDays,}
