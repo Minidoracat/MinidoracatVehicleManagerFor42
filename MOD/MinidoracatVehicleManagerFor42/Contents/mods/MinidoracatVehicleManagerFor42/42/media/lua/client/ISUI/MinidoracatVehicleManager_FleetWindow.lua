@@ -306,6 +306,14 @@ function Body:prerender()
     theme:fill(self, PAD, f.listTop, f.listW, f.listH, "well")
 end
 function Body:render() self.fleet:draw(self) end
+-- 管理頁詳情放不下時（layoutDetail 算出的 adminScrollMax）：滑鼠在詳情區上滾輪捲動
+function Body:onMouseWheel(del)
+    local f = self.fleet
+    if f.tab ~= "ADMIN" or (f.adminScrollMax or 0) <= 0 or self:getMouseX() < f.detailX then return false end
+    f.adminScroll = (f.adminScroll or 0) + del * (f.fh + 2) * 3
+    f:layoutDetail()
+    return true
+end
 
 local FleetWindow = {}
 FleetWindow.__index = FleetWindow
@@ -435,6 +443,9 @@ function FleetWindow:build()
     self.detailTop = self.listTop
     self.detailW = W - self.detailX - PAD
     self.infoH = fontH(FM) + (fh + 2) * 5 + 20
+    -- 頁尾右側兩行：英文在 1280×720 會超出視窗，建立時依寬度截一次
+    self.disclosure = fit(getText("IGUI_MVM_Disclosure"), self.detailW)
+    self.overrideActive = fit(getText("IGUI_MVM_Override_Active"), self.detailW)
 
     self.nameEntry = self:field(math.min(260, self.detailW - 120))
     self.btnRename = self:button(getText("IGUI_MVM_Btn_Rename"), FleetWindow.onRename, "primary")
@@ -586,9 +597,136 @@ end
 
 local function place(ctrl, x, y) ctrl:setX(x); ctrl:setY(y); ctrl:setVisible(true); return x + ctrl.width + GAP end
 
-function FleetWindow:heading(key, y, arg)
-    self.headings[#self.headings + 1] = { text = arg ~= nil and getText(key, arg) or getText(key), y = y }
+function FleetWindow:headingText(text, y)
+    self.headings[#self.headings + 1] = { text = text, y = y }
     return y + self.fh + 4
+end
+
+function FleetWindow:heading(key, y, arg) return self:headingText(arg ~= nil and getText(key, arg) or getText(key), y) end
+
+-- 管理頁的伺服器工具：每列「標題＋按鈕」，按鈕對齊同一欄（這一組最寬的標題之後），放不下的列改成標題在上、
+-- 按鈕在下（左緣）。r.next＝同一工具的第二列控制項。回傳下一段的 y
+function FleetWindow:toolRows(rows, y)
+    local x0, step, tm = self.detailX, self.ch + GAP, getTextManager()
+    local right = x0 + self.detailW - 8 -- 右緣留給放不下時的捲軸
+    local col = 0
+    for _, r in ipairs(rows) do col = math.max(col, tm:MeasureStringX(FS, r.title)) end
+    col = x0 + col + GAP * 2
+    local function width(list)
+        local w = 0
+        for i, c in ipairs(list) do w = w + c.width + (i > 1 and GAP or 0) end
+        return w
+    end
+    for _, r in ipairs(rows) do
+        local inline = col + width(r.buttons) <= right
+        local x = inline and col or x0
+        if inline then
+            self.headings[#self.headings + 1] = { text = r.title, y = y + math.floor((self.ch - self.fh) / 2) }
+        else
+            y = self:headingText(r.title, y)
+        end
+        for _, c in ipairs(r.buttons) do x = place(c, x, y) end
+        y = y + step
+        if r.next then
+            x = (inline and col + width(r.next) <= right) and col or x0
+            for _, c in ipairs(r.next) do x = place(c, x, y) end
+            y = y + step
+        end
+    end
+    return y + PAD
+end
+
+-- 管理頁詳情（資訊框以下）。flow＝false：預設名額與越權固定在詳情區底部（選哪一列都在同一個位置），上面放不下時
+-- （Steam 伺服器＋MVCK 舊資料＋批次選取、矮視窗或大字級）依序省掉預設名額的說明（改成套用鈕的提示）、越權的說明；
+-- 還是放不下就回傳 flow＝true，改接在上面之後（說明全顯示、由 layoutDetail 捲動）。回傳內容底端 y 與 flow
+function FleetWindow:layoutAdmin(row, b, y, flow)
+    local x0, step = self.detailX, self.ch + GAP
+    if row ~= nil and row.kind == "PLAYER" then
+        local info = row.info
+        if info then
+            y = self:heading("IGUI_MVM_Section_Quota", y)
+            -- 預填目前基本名額；伺服器值變了（設定／恢復預設後的新快照）才重填，不蓋掉正在輸入的值
+            local fill = row.user .. ":" .. info.base
+            if self.quotaEntry.forKey ~= fill then self.quotaEntry.forKey = fill; self.quotaEntry:setText(tostring(info.base)) end
+            local x = place(self.btnQuota, place(self.quotaEntry, x0, y), y)
+            if info.custom then x = place(self.btnQuotaDefault, x, y) end
+            if F.pickable(row) then
+                self.btnPick:setTitle(getText(self.picked[row.user] and "IGUI_MVM_Btn_PickRemove" or "IGUI_MVM_Btn_PickAdd"))
+                place(self.btnPick, x, y)
+            end
+            y = y + step + PAD
+        end
+    elseif row ~= nil then
+        local release = not F.isHistory(row) and row.state ~= "PENDING_REBIND"
+        if release or row.lastKnownX then
+            y = self:heading("IGUI_MVM_Section_Vehicle", y)
+            local x = x0
+            if release then x = place(self.btnAdminRelease, x, y) end
+            if row.lastKnownX then place(self.btnMap, x, y) end
+            y = y + step + PAD
+        end
+    end
+    -- 伺服器工具：批次設定名額（全選目前清單常駐；有選取才多一列名額欄與送出按鈕）、身分驗證（只有 Steam
+    -- 伺服器；匯入前沿用帳號名判定，所以標題顯示是否已匯入）、MVCK 匯入、付費名額設定（方案在伺服器的
+    -- paid-slots.json；視窗內說明 Economy 不在場、框架太舊時按下說明要更新）
+    local n = #F.pickedList(self.picked)
+    local tools = { { title = getText("IGUI_MVM_Section_Batch", n), buttons = { self.btnPickShown } } }
+    if n > 0 then
+        tools[1].buttons[2] = self.btnPickClear
+        tools[1].next = { self.batchEntry, self.btnBatch, self.btnBatchDefault }
+    end
+    if b ~= nil and b.identitySteam then
+        local r = { title = getText(b.identityImported and "IGUI_MVM_Section_IdentityOn" or "IGUI_MVM_Section_IdentityPending"),
+            buttons = { self.btnIdentity } }
+        local c = b.identityConflicts and #b.identityConflicts or 0
+        if c > 0 then
+            self.btnRebind:setTitle(getText("IGUI_MVM_Btn_RebindIdentity", c))
+            r.buttons[2] = self.btnRebind
+        end
+        tools[#tools + 1] = r
+    end
+    if b ~= nil and b.migrationAvailable then
+        tools[#tools + 1] = { title = getText("IGUI_MVM_Section_MVCK"), buttons = { self.btnMigrate } }
+    end
+    tools[#tools + 1] = { title = getText("IGUI_MVM_Section_PaidSlots"), buttons = { self.btnPaidSlots } }
+    y = self:toolRows(tools, y)
+    local box = self.overrideBox
+    local bottom = self.listTop + self.listH
+    local function anchors(dl, ol)
+        local oy = bottom - (self.fh + 4) - box.height - GAP - (self.fh + 2) * ol
+        return oy - PAD - (self.fh + 4) - step - (self.fh + 2) * dl, oy
+    end
+    local dl, ol, dy, oy = 2, 2, nil, nil
+    if not flow then
+        dy, oy = anchors(dl, ol)
+        if dy < y then dl = 0; dy, oy = anchors(dl, ol) end
+        if dy < y then ol = 0; dy, oy = anchors(dl, ol) end
+        flow = dy < y
+    end
+    if flow then
+        dl, ol, dy = 2, 2, y
+        oy = dy + (self.fh + 4) + step + (self.fh + 2) * dl + PAD
+    end
+    dy = self:heading("IGUI_MVM_Section_DefaultQuota", dy)
+    local def = b and b.adminDefaultQuota
+    if def ~= nil and self.defaultEntry.forValue ~= def then self.defaultEntry.forValue = def; self.defaultEntry:setText(tostring(def)) end
+    place(self.btnDefaultQuota, place(self.defaultEntry, x0, dy), dy)
+    local desc1, desc2 = getText("IGUI_MVM_DefaultQuota_Desc1"), getText("IGUI_MVM_DefaultQuota_Desc2")
+    self.btnDefaultQuota:setTooltip(dl == 0 and (desc1 .. " " .. desc2) or nil)
+    dy = dy + step
+    if dl > 0 then
+        self.headings[#self.headings + 1] = { text = desc1, y = dy }
+        self.headings[#self.headings + 1] = { text = desc2, y = dy + self.fh + 2 }
+    end
+    oy = self:heading("IGUI_MVM_Section_Override", oy)
+    box:setChecked(b ~= nil and b.adminOverride == true, true)
+    place(box, x0, oy)
+    oy = oy + box.height + GAP
+    if ol > 0 then
+        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc1"), y = oy }
+        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc2"), y = oy + self.fh + 2 }
+    end
+    return oy + (self.fh + 2) * ol, flow
 end
 
 -- 依選取列與角色擺放可用的控制項（選取變更、資料變更與每 2 秒走近／離開車輛時重排）
@@ -601,77 +739,25 @@ function FleetWindow:layoutDetail()
     local x0, step = self.detailX, self.ch + GAP
     local y = self.detailTop + self.infoH + PAD
     if self.tab == "ADMIN" then
-        if row ~= nil and row.kind == "PLAYER" then
-            local info = row.info
-            if info then
-                y = self:heading("IGUI_MVM_Section_Quota", y)
-                -- 預填目前基本名額；伺服器值變了（設定／恢復預設後的新快照）才重填，不蓋掉正在輸入的值
-                local fill = row.user .. ":" .. info.base
-                if self.quotaEntry.forKey ~= fill then self.quotaEntry.forKey = fill; self.quotaEntry:setText(tostring(info.base)) end
-                local x = place(self.btnQuota, place(self.quotaEntry, x0, y), y)
-                if info.custom then x = place(self.btnQuotaDefault, x, y) end
-                if F.pickable(row) then
-                    self.btnPick:setTitle(getText(self.picked[row.user] and "IGUI_MVM_Btn_PickRemove" or "IGUI_MVM_Btn_PickAdd"))
-                    place(self.btnPick, x, y)
-                end
-                y = y + step + PAD
+        local bottom = self.listTop + self.listH
+        local endY, flow = self:layoutAdmin(row, b, y, false)
+        self.adminScrollMax = 0
+        if flow and endY > bottom then
+            -- 接在上面之後仍超出詳情區：整段可用滑鼠滾輪捲動（draw 畫捲軸），捲出可視範圍的控制項隱藏、標題不畫
+            self.adminScrollMax = endY - bottom
+            self.adminScroll = math.max(0, math.min(self.adminScroll or 0, self.adminScrollMax))
+            for _, c in ipairs(self.detailControls) do c:setVisible(false) end
+            self.headings = {}
+            self:layoutAdmin(row, b, y - self.adminScroll, true)
+            for _, c in ipairs(self.detailControls) do
+                if c:getIsVisible() and (c:getY() < y or c:getY() + c.height > bottom) then c:setVisible(false) end
             end
-        elseif row ~= nil then
-            local release = not F.isHistory(row) and row.state ~= "PENDING_REBIND"
-            if release or row.lastKnownX then
-                y = self:heading("IGUI_MVM_Section_Vehicle", y)
-                local x = x0
-                if release then x = place(self.btnAdminRelease, x, y) end
-                if row.lastKnownX then place(self.btnMap, x, y) end
-                y = y + step + PAD
-            end
+            local kept = {}
+            for _, h in ipairs(self.headings) do if h.y >= y and h.y + self.fh <= bottom then kept[#kept + 1] = h end end
+            self.headings = kept
+        else
+            self.adminScroll = 0
         end
-        -- 批次設定名額：全選目前清單常駐；有選取才出現名額欄與送出按鈕
-        local n = #F.pickedList(self.picked)
-        y = self:heading("IGUI_MVM_Section_Batch", y, n)
-        local x = place(self.btnPickShown, x0, y)
-        if n > 0 then
-            place(self.btnPickClear, x, y)
-            y = y + step
-            place(self.btnBatchDefault, place(self.btnBatch, place(self.batchEntry, x0, y), y), y)
-        end
-        y = y + step + PAD
-        -- 身分驗證（SteamID）：只有 Steam 伺服器才有；匯入前沿用帳號名判定，所以標題顯示是否已匯入
-        if b ~= nil and b.identitySteam then
-            y = self:heading(b.identityImported and "IGUI_MVM_Section_IdentityOn" or "IGUI_MVM_Section_IdentityPending", y)
-            local x = place(self.btnIdentity, x0, y)
-            local n = b.identityConflicts and #b.identityConflicts or 0
-            if n > 0 then
-                self.btnRebind:setTitle(getText("IGUI_MVM_Btn_RebindIdentity", n))
-                place(self.btnRebind, x, y)
-            end
-            y = y + step + PAD
-        end
-        if b ~= nil and b.migrationAvailable then
-            y = self:heading("IGUI_MVM_Section_MVCK", y)
-            place(self.btnMigrate, x0, y)
-            y = y + step + PAD
-        end
-        -- 付費名額設定（方案存在伺服器的 paid-slots.json；視窗內說明 Economy 不在場、框架太舊時按下說明要更新）
-        y = self:heading("IGUI_MVM_Section_PaidSlots", y)
-        place(self.btnPaidSlots, x0, y)
-        -- 全服預設名額與越權開關固定在詳情區底部：選哪一列都在同一個位置
-        local box = self.overrideBox
-        local oy = self.listTop + self.listH - (self.fh + 4) - box.height - GAP - (self.fh + 2) * 2
-        local dy = oy - PAD - (self.fh + 4) - step - (self.fh + 2) * 2
-        dy = self:heading("IGUI_MVM_Section_DefaultQuota", dy)
-        local def = b and b.adminDefaultQuota
-        if def ~= nil and self.defaultEntry.forValue ~= def then self.defaultEntry.forValue = def; self.defaultEntry:setText(tostring(def)) end
-        place(self.btnDefaultQuota, place(self.defaultEntry, x0, dy), dy)
-        dy = dy + step
-        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_DefaultQuota_Desc1"), y = dy }
-        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_DefaultQuota_Desc2"), y = dy + self.fh + 2 }
-        oy = self:heading("IGUI_MVM_Section_Override", oy)
-        box:setChecked(b ~= nil and b.adminOverride == true, true)
-        place(box, x0, oy)
-        oy = oy + box.height + GAP
-        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc1"), y = oy }
-        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc2"), y = oy + self.fh + 2 }
         self:updateEnabled(recovery)
         return
     end
@@ -790,6 +876,15 @@ function FleetWindow:draw(el)
         end
     end
     for _, h in ipairs(self.headings) do text(el, h.text, self.detailX, h.y, "textMuted") end
+    if self.tab == "ADMIN" and (self.adminScrollMax or 0) > 0 then -- 捲軸：提示詳情區下面還有內容（滾輪捲動）
+        local top, bottom = self.detailTop + self.infoH + PAD, self.listTop + self.listH
+        local vh = bottom - top
+        local th = math.max(16, math.floor(vh * vh / (vh + self.adminScrollMax)))
+        local ty = top + math.floor((vh - th) * (self.adminScroll or 0) / self.adminScrollMax)
+        local tc, tt = COL.hover, COL.textFaint
+        el:drawRect(self.detailX + self.detailW - 4, top, 4, vh, tc.a, tc.r, tc.g, tc.b)
+        el:drawRect(self.detailX + self.detailW - 4, ty, 4, th, tt.a, tt.r, tt.g, tt.b)
+    end
     local fy = el.height - self.footerH
     local bc = COL.border
     el:drawRect(PAD, fy, el.width - PAD * 2, 1, bc.a, bc.r, bc.g, bc.b)
@@ -807,7 +902,7 @@ function FleetWindow:draw(el)
         end
     end
     if quota then text(el, quota, PAD, fy + 6, "text") end
-    text(el, getText("IGUI_MVM_Disclosure"), self.detailX, fy + 6, "textFaint")
+    text(el, self.disclosure, self.detailX, fy + 6, "textFaint")
     if self.pending then
         text(el, getText("IGUI_MVM_Pending"), PAD, fy + 8 + fh, "accent")
     elseif b and b.status == "RECOVERY_REQUIRED" then
@@ -815,7 +910,7 @@ function FleetWindow:draw(el)
     elseif self.message then
         text(el, self.message, PAD, fy + 8 + fh, self.messageBad and "errorText" or "accent")
     end
-    if MVM.clientOverride(0) then text(el, getText("IGUI_MVM_Override_Active"), self.detailX, fy + 8 + fh, "errorText") end
+    if MVM.clientOverride(0) then text(el, self.overrideActive, self.detailX, fy + 8 + fh, "errorText") end
 end
 
 -- ------------------------------------------------------------------ 操作 ---

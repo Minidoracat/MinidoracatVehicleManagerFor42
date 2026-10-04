@@ -96,6 +96,7 @@
     "IGUI_MVM_Reason_PROTOCOL_MISMATCH": "Your Vehicle Manager version differs from the server",
     "IGUI_MVM_State_PENDING_REBIND": "Imported from the old claim mod - protected once the vehicle is seen",
     "IGUI_MVM_Reason_NO_SOURCE": "No old claim tables found",
+    "IGUI_MVM_Reason_LEGACY_CLAIMED": "This vehicle is still claimed in the old claim mod. It moves to its owner once an admin imports the old claims",
     "IGUI_MVM_Section_Name": "Name",
     "IGUI_MVM_Section_Share": "Sharing",
     "IGUI_MVM_Section_Members": "Shared with",

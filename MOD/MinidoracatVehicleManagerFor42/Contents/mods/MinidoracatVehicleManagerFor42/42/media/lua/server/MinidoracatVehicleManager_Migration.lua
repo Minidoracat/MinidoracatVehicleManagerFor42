@@ -23,10 +23,19 @@ local M = { mismatched = {}, lastMaintMs = 0 }
 MVM.Migration = M
 
 local LEGACY_VEHICLES = "MVCKByVehicleSQLID"
+local MVCK_ID = "Mysterious Vehicle Claim Key"
 local DAY_MS = 86400000
 
 function M.available()
     return ModData.exists(LEGACY_VEHICLES)
+end
+
+-- MVCK 還在 Mods=、車身 SQLID 在 MVCK 車輛表＝MVCK 綁著的車（並存期間 MVCK 仍在保護它）：本 MOD 不給綁，等匯入後
+-- 被看到時轉給原車主。MVCK 拿掉後不再擋（舊表一直留在存檔，沒匯入的伺服器才能照常綁那些車）
+function M.legacyClaimed(vehicle)
+    if not getActivatedMods():contains(MVCK_ID) or not ModData.exists(LEGACY_VEHICLES) then return false end
+    local legacy = vehicle:hasModData() and rawget(vehicle:getModData(), "SQLID") or nil
+    return type(legacy) == "number" and ModData.get(LEGACY_VEHICLES)[legacy] ~= nil
 end
 
 local function now() return getTimestampMs() end
@@ -183,6 +192,12 @@ function M.pendingCount(owner)
         if owner == nil or e.ownerUser == owner then n = n + 1 end
     end
     return n
+end
+
+function M.hasPending()
+    local st = O.state()
+    for _ in pairs(st and st.pendingRebindByLegacyKey or {}) do return true end
+    return false
 end
 
 -- 待轉列（只讀，沒有可用操作）：車主快照只給自己的；who＝nil 給管理員總表全部

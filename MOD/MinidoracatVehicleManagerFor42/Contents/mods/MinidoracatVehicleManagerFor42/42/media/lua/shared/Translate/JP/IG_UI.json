@@ -96,6 +96,7 @@
     "IGUI_MVM_Reason_PROTOCOL_MISMATCH": "車両管理のバージョンがサーバーと異なります",
     "IGUI_MVM_State_PENDING_REBIND": "旧登録MODから取り込み済み・車両を確認すると保護開始",
     "IGUI_MVM_Reason_NO_SOURCE": "旧登録テーブルが見つかりません",
+    "IGUI_MVM_Reason_LEGACY_CLAIMED": "この車両はまだ旧登録MODで登録されています。管理者が取り込むと元の所有者に移ります",
     "IGUI_MVM_Section_Name": "名前",
     "IGUI_MVM_Section_Share": "共有",
     "IGUI_MVM_Section_Members": "共有中のプレイヤー",

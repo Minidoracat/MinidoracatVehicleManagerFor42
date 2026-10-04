@@ -1429,8 +1429,18 @@ check(cmd(AD5, "adminMigration", { op = "FINALIZE" }).reason == "BAD_ARGS", "只
 -- 已載入的真車：按下匯入就當場轉正
 local real = vehicle(1, 101, 7001, "Base.CarNormal", 1, 1)
 real:getModData().SQLID = 1700000000101
+-- 並存期間、匯入前：MVCK 綁著的車誰都不能先綁（否則別人先綁走，匯入後原車主的待轉項永遠對不上）
+activeMods["Mysterious Vehicle Claim Key"] = true
+local bob5, alice5 = player("bob5", 1, 1), player("alice", 1, 1)
+check(claim(bob5, real).reason == "LEGACY_CLAIMED" and claim(alice5, real).reason == "LEGACY_CLAIMED" and O.lookup(real) == "UNCLAIMED",
+    "MVCK 還在、還沒匯入：MVCK 綁著的車陌生人與原車主都不能綁（LEGACY_CLAIMED）")
+local plain5 = vehicle(5, 105, 7005, "Base.CarNormal", 1, 1)
+check(cmd(bob5, "prepareClaim", { vehicleId = plain5.id }).ok, "沒有 MVCK 舊 ID 的車照常可綁")
+activeMods["Mysterious Vehicle Claim Key"] = nil
+check(cmd(bob5, "prepareClaim", { vehicleId = real.id }).ok, "MVCK 已從 Mods= 拿掉：舊表還在也不擋（沒匯入的伺服器照常綁）")
 activeMods["Mysterious Vehicle Claim Key"] = true -- MVCK 還在也能匯入
 local im = cmd(AD5, "adminMigration", { op = "IMPORT" })
+check(claim(bob5, real).reason == "ALREADY_CLAIMED", "匯入後：那台車已轉給原車主，別人綁回 ALREADY_CLAIMED")
 activeMods["Mysterious Vehicle Claim Key"] = nil
 check(im.ok and im.imported == 2 and im.skipped == 1 and im.rebound == 1 and im.pending == 1, "一鍵匯入：兩筆合格、一筆壞資料略過；已載入的車當場轉正")
 check(gmd.MVCKByVehicleSQLID ~= nil and gmd.MVCKByVehicleSQLID[1700000000101] ~= nil and gmd.MVCKByPlayerID ~= nil, "不刪 MVCK 原始資料")
@@ -1547,6 +1557,20 @@ check(owner(fake) == nil and owner(orig) == "erin" and logged("REBIND_MOVED_ORIG
 check(owner(stepVan) == "p0159" and owner(f350) == "p0164", "2047 撞號：換號的 StepVan 與拿到回收 2047 的 F350 各歸其主")
 check(MVM.Migration.embedded(17000000012047) == 2047 and MVM.Migration.embedded(17000000010) == 0
     and MVM.Migration.embedded(1700000000) == nil and MVM.Migration.embedded(17000000010047) == nil, "內嵌 sqlId 拆出（前導 0 不是 sqlId）")
+-- 匯入時還在 MSW 倉儲裡的車：卸車 addVehicleDebug 生車時（OnSpawnVehicleEnd）車身還沒有 SQLID，MSW 之後才還原 modData
+L.stored = 1700000000601
+gmd.MVCKByVehicleSQLID[L.stored] = entry("gina", "Base.Van")
+check(cmd(ADm, "adminMigration", { op = "IMPORT" }).imported == 1 and pend[L.stored] ~= nil and not O.hasOutOfWorld(),
+    "匯入時車在拖車倉儲裡：留為待轉項（帳本沒有移出世界的紀錄）")
+local unloaded = vehicle(8, 777, 8008, "Base.Van", 1, 1)
+local before = #logLines
+fire("OnSpawnVehicleEnd", unloaded)
+unloaded:getModData().SQLID = L.stored -- MSW 生車之後才還原車身 modData
+fire("OnTick")
+local got, moved2 = O.R.bySqlId[777] and O.R.bySqlId[777][1], false
+for i = before + 1, #logLines do if logLines[i]:find("REBOUND_MOVED", 1, true) then moved2 = true end end
+check(pend[L.stored] == nil and got ~= nil and got.ownerUser == "gina" and moved2,
+    "卸下後下一個 tick 自行轉正（規則 2），不必等有人碰車或 10 分鐘掃描")
 end
 
 do

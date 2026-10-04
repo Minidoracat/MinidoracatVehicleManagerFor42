@@ -1024,7 +1024,7 @@ end
 
 -- 伺服器（含 SP）包 BaseVehicle 方法表的 permanentlyRemove（同 ClientGuards 包 canAccessContainer 的做法：方法表在
 -- __classmetatables[BaseVehicle.class].__index，KahluaUtil.java:132-134、LuaJavaClassExposer.java:224-231,287）。
--- MSW（MSW_Common_Commands.lua:2239）與 Autotsar（ATAISLoadVehicle.lua:50,54）都從 Lua 呼叫它；Java 內部呼叫不經過這裡。
+-- MSW（MSW_Common_Commands.lua:2329）與 Autotsar（ATAISLoadVehicle.lua:50,54）都從 Lua 呼叫它；Java 內部呼叫不經過這裡。
 -- 本 MOD 的處理包在 pcall 裡、在原函式之前做（車的三欄位還讀得到），原函式一定照常執行
 local ORIG_REMOVE_KEY = "MinidoracatVehicleManager_permanentlyRemove"
 function O.installRemoveHook()

@@ -289,7 +289,8 @@ end
 
 -- 身分匯入列：1..IDENTITY_ROWS_MAX 列的連續陣列，每列 { u＝合法帳號（不重複）, s＝"" 或 SteamID64 字串 }。
 -- 先驗格式才交給 tonumber：它就是 Double.parseDouble，也吃 7.6E16、前後空白、0x1p56（KahluaUtil.java:293）。
--- 上限只是防呆：伺服器送出的 whitelist 封包本身在約 6000 帳號就會撞 1 MB 緩衝（NetworkUsersPacket）
+-- 上限只是防呆：伺服器送出的 whitelist 封包（NetworkUsersPacket）每帳號 34 bytes＋8 個字串，寫進 1,000,000 bytes 緩衝
+-- （NetworkUser.java:163-180、UdpConnection.java:40），每帳號約 90 bytes 時約 1.1 萬帳號才會撞上限
 S.IDENTITY_ROWS_MAX = 10000
 function TYPES.identityRows(v)
     if type(v) ~= "table" then return false end
@@ -401,6 +402,13 @@ local function claimable(vehicle)
 end
 
 local UNCLAIMED = { UNCLAIMED = true, UNCLAIMED_WITNESS_STRIPPED = true, UNCLAIMED_ORPHANED_OLD = true }
+-- 可以綁的車：沒有紀錄（lookup 也會順手把匯入後的 MVCK 待轉車轉給原車主），並存期間 MVCK 綁著、還沒匯入的車也不行
+-- （否則匯入前別人能先綁走，匯入後原車主的待轉項永遠對不上；Migration.lua M.legacyClaimed）
+local function claimRefusal(v)
+    if not UNCLAIMED[O.lookup(v)] then return "ALREADY_CLAIMED" end
+    if MVM.Migration and MVM.Migration.legacyClaimed(v) then return "LEGACY_CLAIMED" end
+    return nil
+end
 
 local function fail(reason) return { ok = false, reason = reason } end
 
@@ -468,8 +476,8 @@ H.prepareClaim = function(player, who, a)
     if not near(player, v) then return fail("TOO_FAR") end
     local bad = claimable(v)
     if bad then return fail(bad) end
-    local verdict = O.lookup(v)
-    if not UNCLAIMED[verdict] then return fail("ALREADY_CLAIMED") end
+    bad = claimRefusal(v)
+    if bad then return fail(bad) end
     -- 每位 actor 同時一筆，新的取代舊的；綁定確切物件＋native 三欄位（§6.1）
     local attempt = { id = getRandomUUID(), actor = who, vehicle = v, vehicleId = a.vehicleId,
         sqlId = v:getSqlId(), keyId = v:getKeyId(), script = v:getScriptName(), expiresAtMs = now() + ATTEMPT_TTL_MS }
@@ -493,7 +501,8 @@ H.claim = function(player, who, a)
     if blocked then return fail(blocked) end
     local bad = claimable(v)
     if bad then return fail(bad) end
-    if not UNCLAIMED[O.lookup(v)] then return fail("ALREADY_CLAIMED") end
+    bad = claimRefusal(v)
+    if bad then return fail(bad) end
     local rec = O.createRecord(who, v, O.hostPart(v, nil))
     O.audit("INFO", "CLAIM", { actor = who, role = "OWNER", oid = rec.oid, epoch = rec.epoch, owner = who,
         vehicle = rec.sqlIdHint, x = v:getX(), y = v:getY(), z = v:getZ() })
@@ -843,14 +852,14 @@ Events.EveryOneMinute.Add(S.minute)
 
 -- 新生與 DB 載入的車都觸發（Phase 0 gate 10）：即時 reconcile 身分、取消 PENDING_RELEASE。
 -- 拖車 MOD 卸車用 addVehicleDebug，本事件在它呼叫 addToWorld 時就觸發（42.21 LuaManager.java:10821 → BaseVehicle.java:7964
--- createPhysics → :904），零件 modData 是之後才還原（MSW_Common_Commands.lua:2289 生車、:2299-2301 還原；
--- ATAISLaunchVehicle.lua:66 生車、:88-93 還原零件）：
--- 有「已移出世界」的紀錄時，下一個 tick 再看一次，接回帶見證的車
+-- createPhysics → :904），此時還沒配 sqlId（:10822 才 VehiclesDB2.addVehicle），車身與零件 modData 也是之後才還原
+-- （MSW_Common_Commands.lua launchVehicle 先 addVehicleDebug、再 restoreSlotDataToVehicle；ATAISLaunchVehicle.lua:66 生車、
+-- :88-93 還原零件）：有「已移出世界」的紀錄（接回帶見證的車）或 MVCK 待轉項（車身 SQLID 是還原後才有）時，下一個 tick 再看一次
 R.recheck = {}
 Events.OnSpawnVehicleEnd.Add(function(vehicle)
     if O.state() == nil then return end
     O.observeVehicle(vehicle)
-    if O.hasOutOfWorld() then R.recheck[#R.recheck + 1] = vehicle end
+    if O.hasOutOfWorld() or (MVM.Migration and MVM.Migration.hasPending()) then R.recheck[#R.recheck + 1] = vehicle end
 end)
 
 -- 授權裝車後的拖車（O.noteLoad）：下一個 tick 觀測，趁 keyId 認領期限內接受 Autotsar 改寫的 keyId

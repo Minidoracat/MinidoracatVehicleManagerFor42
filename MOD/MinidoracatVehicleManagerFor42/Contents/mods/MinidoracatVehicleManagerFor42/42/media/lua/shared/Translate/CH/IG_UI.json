@@ -96,6 +96,7 @@
     "IGUI_MVM_Reason_PROTOCOL_MISMATCH": "你的車輛管理版本與伺服器不同",
     "IGUI_MVM_State_PENDING_REBIND": "由舊綁定 MOD 匯入，看到車輛後開始保護",
     "IGUI_MVM_Reason_NO_SOURCE": "找不到舊綁定資料表",
+    "IGUI_MVM_Reason_LEGACY_CLAIMED": "這台車還由舊綁定 MOD 綁定中，管理員匯入後會自動轉給原車主",
     "IGUI_MVM_Section_Name": "名稱",
     "IGUI_MVM_Section_Share": "分享",
     "IGUI_MVM_Section_Members": "已分享的玩家",

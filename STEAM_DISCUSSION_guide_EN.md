@@ -60,11 +60,11 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 [olist]
 [*] Make a full backup of the save (including the world save folder)
 [*] Add this mod to the server (MVCK can stay for now) and start the server
-[*] Press "Import all claims from MVCK" in the Admin tab of the fleet window: loaded vehicles move over at once, the rest the next time they load; the window shows how many were imported, bound now and still waiting
+[*] Press "Import all claims from MVCK" in the Admin tab of the fleet window: loaded vehicles move over at once, the rest the next time they load (vehicles still on a trailer move over when unloaded); the window shows how many were imported, bound now and still waiting
 [*] You can press it again; it only picks up claims made in MVCK since, without duplicates, and never deletes MVCK data
-[*] Once you are happy, remove MVCK from the server yourself. While both mods run, both protections apply
+[*] Once you are happy, remove MVCK from the server yourself. While both mods run, both protections apply, and vehicles claimed in MVCK cannot be claimed with this mod; the import moves them to their owners
 [/olist]
-MVCK sharing permissions are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default).
+MVCK sharing permissions (including public ones such as letting everyone ride) are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default).
 
 [h2]❓ FAQ[/h2]
 [b]Q: My character died. Is the car still mine?[/b]
