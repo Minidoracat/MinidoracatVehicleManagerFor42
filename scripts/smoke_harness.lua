@@ -947,15 +947,55 @@ MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 2, upsert
 check(Cl.buckets.alice.rows.o2 == nil and clientSent[1] and clientSent[1].command == "fleetResync", "跳號 → 丟棄並 resync")
 MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 1, upserts = { { oid = "o2" } }, removes = { "o1" } })
 check(Cl.buckets.alice.rows.o2 and Cl.buckets.alice.rows.o1 == nil, "連續 seq 套用 upsert／remove")
-do -- 失敗通知：有譯文顯示譯文；沒有譯文才用附代碼的通用說明（原本一律顯示原始代碼）
+do -- 失敗通知：有譯文顯示譯文；沒有譯文用不帶代碼的通用說明，代碼只進客戶端 log
     local halo, realGetText = nil, getText
     HaloTextHelper.addBadText = function(_, t) halo = t end
     getText = function(key, ...) if key == "IGUI_MVM_Reason_TOO_FAR" then return "walk over" end return realGetText(key, ...) end
     MVM.clientReceive("mutationAck", { to = "alice", requestId = "r-far", ok = false, reason = "TOO_FAR" })
     check(halo == "walk over", "失敗通知顯示原因譯文，不是原始代碼")
+    local logged, realLog = {}, MVM.log
+    MVM.log = function(msg) logged[#logged + 1] = tostring(msg) end
     MVM.clientReceive("mutationAck", { to = "alice", requestId = "r-gone", ok = false, reason = "NO_SUCH_RECORD" })
-    check(halo == "IGUI_MVM_Failed(NO_SUCH_RECORD)", "沒有譯文的原因退回附代碼的通用說明")
+    local codeLogged = false
+    for _, l in ipairs(logged) do if l:find("NO_SUCH_RECORD", 1, true) then codeLogged = true end end
+    MVM.log = realLog
+    check(halo == "IGUI_MVM_Failed" and codeLogged, "沒有譯文的原因退回不帶代碼的通用說明，代碼只寫進客戶端 log")
     getText, HaloTextHelper.addBadText = realGetText, function() end
+end
+do -- 伺服器會回給玩家的每個原因碼，四語都有 IGUI_MVM_Reason_*（從程式掃出來，不靠手列清單；目前 47 個）
+    local function readAll(path)
+        local fh = assert(io.open(path, "rb"))
+        local s = fh:read("a")
+        fh:close()
+        return s
+    end
+    local codes, n = {}, 0
+    local function add(text, pattern)
+        for c in text:gmatch(pattern) do
+            if not codes[c] then codes[c], n = true, n + 1 end
+        end
+    end
+    local srv = readAll(MEDIA .. "/server/MinidoracatVehicleManager_Server.lua")
+    for _, p in ipairs({ 'fail%("([A-Z_]+)"', 'return "([A-Z_]+)"', 'return nil, "([A-Z_]+)"', 'return nil, nil, "([A-Z_]+)"',
+        'ok = false, reason = "([A-Z_]+)"', 'fail%([^)]- and "([A-Z_]+)" or [%w_]+%)' }) do add(srv, p) end
+    add(readAll(MEDIA .. "/server/MinidoracatVehicleManager_PaidSlots.lua"), 'fail%("([A-Z_]+)"')
+    add(readAll(MEDIA .. "/server/MinidoracatVehicleManager_Migration.lua"), 'return false, "([A-Z_]+)"')
+    -- 帳本：只有載入判定與綁定前置條件的回傳會進 mutationAck（其他是 enforcement 或 lookup 結果）
+    local os = readAll(MEDIA .. "/server/MinidoracatVehicleManager_OwnershipSystem.lua")
+    for _, fn in ipairs({ "O%.ready%(%)", "O%.claimBlocked%(owner%)" }) do
+        local body = assert(os:match("function " .. fn .. "(.-)\nend\n"), fn)
+        add(body, 'return false, "([A-Z_]+)"')
+        add(body, 'return "([A-Z_]+)"')
+    end
+    local missing = {}
+    for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
+        local json = readAll(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json")
+        for c in pairs(codes) do
+            if not json:find('"IGUI_MVM_Reason_' .. c .. '": "', 1, true) then missing[#missing + 1] = lang .. ":" .. c end
+        end
+    end
+    check(n >= 47 and codes.NOT_CLAIMABLE_TOWED and codes.RECIPIENT_QUOTA and codes.INVALID_PLAN and #missing == 0,
+        "伺服器回給玩家的原因碼（" .. n .. " 個）四語都有 IGUI_MVM_Reason_*" .. (#missing > 0 and (" 缺 " .. table.concat(missing, " ")) or ""))
 end
 MVM.clientReceive("mutationAck", { to = "alice", requestId = "r", ok = false, reason = "PROTOCOL_MISMATCH" })
 clientSent = {}
@@ -2103,6 +2143,7 @@ check(E.status == "READY" and type(H.changed) == "function", "註冊成功才 RE
 local cur = {}
 for _, id in ipairs(H.source.currencies) do cur[id] = true end
 check(cur.survivor and cur.cat, "來源允許所有 Economy 幣別（服主可改用任一幣別計價）")
+check(H.source.nameKey == "IGUI_MVM_SourceName", "registerSource 帶來源名稱翻譯鍵 nameKey（經濟管理台用翻譯顯示來源）")
 
 -- 付款即生效、方案由 VM 經 setPlan 送：registerProduct 帶 instant，不帶沙盒對應
 local P = H.product
@@ -2245,9 +2286,9 @@ check(not BU.autoPaused(PLAN, { rentalCommitted = 2 }, { autoRenew = true, autoR
     and not BU.autoPaused(PLAN, { rentalCommitted = 2 }, { autoRenewState = "pending_off", autoTerms = { price = 1 } }),
     "自動續租：條款變了才要玩家同意（且方案仍提供）；超額、不提供只顯示暫停；已關閉的不算")
 check(BU.termsText(nil, PLAN, { price = 200, currency = "survivor", days = 7 }, 2)
-        == "IGUI_MVM_Slots_NewPrice(500 survivor,400 survivor)"
+        == "IGUI_MVM_Slots_NewPrice(IGUI_MVM_Slots_Money(500,survivor),IGUI_MVM_Slots_Money(400,survivor))"
     and BU.termsText(nil, PLAN, { price = 250, currency = "survivor", days = 5 }, 1)
-        == "IGUI_MVM_Slots_NewTerms(250 survivor,7,250 survivor,5)",
+        == "IGUI_MVM_Slots_NewTerms(IGUI_MVM_Slots_Money(250,survivor),7,IGUI_MVM_Slots_Money(250,survivor),5)",
     "條款變更一句話：只有租金變寫每期金額（原值）；天數或幣別也變才連天數一起寫")
 local over2 = BU.notices(envOf({ rentalCommitted = 6, rentals = { liveR, endedR } }))
 local stopped = BU.notices(envOf({ rentalCommitted = 2, rentals = { { autoRenewState = "on" },
@@ -2340,15 +2381,41 @@ check(PS.changeLine("rentalCurrency", "survivor", "cat", name)
     and PS.lastText({ actor = "test", reason = "  " }) == "IGUI_MVM_Paid_LastByNoReason(test)"
     and PS.trim("  summer \n") == "summer",
     "變更前後與橫幅：誰（設定檔另外標示）、哪個欄位、舊值改為新值；原因只有空白視為沒寫")
-local realText = getText
-getText = function(key, ...)
-    if key == "IGUI_MVM_Paid_FileErr_invalid_type" and select("#", ...) == 0 then return "x" end
-    return realText(key, ...)
+local paidLog, realPaidLog = {}, MVM.log
+MVM.log = function(msg) paidLog[#paidLog + 1] = tostring(msg) end
+local unknownText = PS.fileErrorText("unknown_product", "rent.price")
+MVM.log = realPaidLog
+check(PS.fileErrorText("invalid_plan", "rent.limit")
+        == "IGUI_MVM_Paid_FileErr_invalid_plan(IGUI_MVM_Paid_Name_rentalLimit,rent.limit)"
+    and PS.fileErrorText("missing_field", "buy") == "IGUI_MVM_Paid_FileErr_missing_field(buy,buy)"
+    and PS.fileErrorText("unknown_field", "buy.discount") == "IGUI_MVM_Paid_FileErr_unknown_field(buy.discount,buy.discount)"
+    and PS.fileErrorText("invalid_json", "rent.price") == "IGUI_MVM_Paid_FileErr_invalid_json"
+    and unknownText == "IGUI_MVM_Paid_FileErr_other" and not unknownText:find("unknown_product", 1, true)
+    and paidLog[1] ~= nil and paidLog[1]:find("unknown_product", 1, true) ~= nil,
+    "設定檔錯誤句：%1＝欄位顯示名稱（對不到方案欄位就是檔案鍵）、%2＝檔案鍵；沒有欄位的碼不帶參數；未知碼走不帶參數的 other，原碼只進 log")
+do -- 錯誤句的四語字串：每個碼都有、帶欄位的有 %1 與 %2、沒有欄位與 other 不帶參數（Economy 以同一組參數組句）
+    local bad = {}
+    for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
+        local fh = assert(io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json", "rb"))
+        local text = fh:read("a")
+        fh:close()
+        local function value(code) return text:match('"IGUI_MVM_Paid_FileErr_' .. code .. '": "([^\n]-)",?\n') end
+        for _, code in ipairs({ "invalid_json", "unreadable", "write_failed", "other" }) do
+            local v = value(code)
+            if v == nil or v:find("%", 1, true) then bad[#bad + 1] = lang .. ":" .. code end
+        end
+        for _, code in ipairs({ "missing_field", "invalid_type", "invalid_plan" }) do
+            local v = value(code)
+            if v == nil or not v:find("%1", 1, true) or not v:find("%2", 1, true) then bad[#bad + 1] = lang .. ":" .. code end
+        end
+        for _, code in ipairs({ "unknown_field" }) do
+            local v = value(code)
+            if v == nil or not v:find("%2", 1, true) then bad[#bad + 1] = lang .. ":" .. code end
+        end
+        if not text:find('"IGUI_MVM_SourceName": "', 1, true) then bad[#bad + 1] = lang .. ":SourceName" end
+    end
+    check(#bad == 0, "設定檔錯誤句四語：參數照約定（欄位名 %1、檔案鍵 %2；沒有欄位與 other 不帶參數）、來源名稱有譯文" .. (#bad > 0 and (" " .. table.concat(bad, " ")) or ""))
 end
-check(PS.fileErrorText("invalid_type", "rent.price") == "IGUI_MVM_Paid_FileErr_invalid_type(rent.price)"
-    and PS.fileErrorText("unknown_product", nil) == "IGUI_MVM_Paid_FileErr_other(unknown_product,)",
-    "設定檔錯誤：認得的錯誤碼附檔案鍵名，不認得的照原碼列出")
-getText = realText
 check(PS.INPUT_DIGITS >= #tostring(1000000000),
     "設定視窗整數欄打得下 Economy 允許的最大價格 1000000000（10 位）")
 local fxs, frows, fn = PS.flow({ 100, 90, 40 }, 300, 200, 480, 6)
@@ -2706,6 +2773,7 @@ MinidoracatEconomy = { CURRENCIES = { survivor = {}, cat = {} }, v1 = { API_MAJO
             setPlan = function(_, values, opts)
                 F.calls, F.opts = F.calls + 1, opts
                 if F.notReady then return { ok = false, error = "not_ready" } end
+                if F.weird then return { ok = false, error = F.weird } end
                 if values.rentalPrice < 1 then return { ok = false, error = "invalid_plan", field = "rentalPrice" } end
                 if values.permanentCurrency ~= "survivor" and values.permanentCurrency ~= "cat" then
                     return { ok = false, error = "invalid_plan", field = "permanentCurrency" }
@@ -2718,7 +2786,18 @@ MinidoracatEconomy = { CURRENCIES = { survivor = {}, cat = {} }, v1 = { API_MAJO
                 F.last = { actor = opts.actor, origin = opts.origin, at = nowMs, reason = opts.reason, revision = F.rev }
                 return { ok = true, updated = true, revision = F.rev, changed = changed }
             end,
-            setPlanSource = function(_, src) F.source = src; return { ok = true } end }
+            -- 照 Economy 驗 problem：nil 或 { key, field?, ref? }，key／field 是翻譯鍵格式、ref ≤64；字串一律拒收
+            setPlanSource = function(_, src)
+                local p = src.problem
+                local function tkey(v) return type(v) == "string" and #v >= 1 and #v <= 96 and v:match("^[%w_]+$") ~= nil end
+                if p ~= nil and (type(p) ~= "table" or not tkey(p.key) or (p.field ~= nil and not tkey(p.field))
+                    or (p.ref ~= nil and (type(p.ref) ~= "string" or #p.ref > 64))) then
+                    F.sourceRejected = true
+                    return { ok = false, error = "invalid_args", field = "problem" }
+                end
+                F.source = src
+                return { ok = true }
+            end }
     end } }
 boot()
 for k in pairs(files) do files[k] = nil end
@@ -2759,7 +2838,12 @@ check(F.plan.rentalPrice == 300 and F.plan.rentalEnabled == true and F.opts.orig
     and F.opts.reason == 'spring "sale" A' .. utf8.char(0x590F) and PS.status.state == "ok" and PS.status.source == "file"
     and PS.status.revision == 1,
     "改檔：5 秒輪詢讀到 → setPlan(origin=file、actor=file、reason=檔內 reason，含跳脫字元與 Python 預設的非 ASCII \\u 跳脫）")
-check(F.source.file == "Zomboid/Lua/" .. CFG and F.source.problem == nil, "setPlanSource：設定檔路徑、沒有錯誤")
+check(F.source.file == "Zomboid/Lua/" .. CFG and F.source.problem == nil and not F.sourceRejected, "setPlanSource：設定檔路徑、沒有錯誤")
+local function isProblem(p, key, field, ref)
+    return type(p) == "table" and p.key == key and p.field == field and p.ref == ref
+end
+local PLAN_OF = {}
+for _, f in ipairs(MVM.PAID_FIELDS) do PLAN_OF[f.file] = f.key end
 poll()
 check(F.calls == 1, "內容沒變：不重送")
 
@@ -2768,7 +2852,9 @@ local function bad(s, err, field, label)
     local n = F.calls
     poll()
     check(F.calls == n and PS.status.state == "error" and PS.status.error == err and PS.status.field == field
-        and F.source.problem == err .. (field and (" " .. field) or "") and F.plan.rentalPrice == 300, label)
+        and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_" .. err,
+            PLAN_OF[field or ""] and ("IGUI_MVM_Paid_Name_" .. PLAN_OF[field]) or nil, field)
+        and not F.sourceRejected and F.plan.rentalPrice == 300, label)
 end
 bad('{"buy": ', "invalid_json", nil, "壞 JSON：invalid_json，不送 Economy，方案維持")
 local st0 = PS.status
@@ -2794,9 +2880,56 @@ poll()
 check(PS.status.state == "ok" and F.opts.reason == nil and F.plan.rentalPrice == 300, "合法的 3.0e2 照收（型別檢查判整數）、reason: null 當作沒給")
 put(cfg("0"))
 poll()
-check(PS.status.error == "invalid_plan" and PS.status.field == "rent.price" and F.source.problem == "invalid_plan rent.price"
+check(PS.status.error == "invalid_plan" and PS.status.field == "rent.price"
+    and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_invalid_plan", "IGUI_MVM_Paid_Name_rentalPrice", "rent.price")
     and text(STATUS):find('"field": "rent.price"', 1, true) and F.plan.rentalPrice == 300,
-    "Economy 回 invalid_plan：field 從 rentalPrice 轉回檔案鍵名 rent.price")
+    "Economy 回 invalid_plan：field 從 rentalPrice 轉回檔案鍵名 rent.price；problem 送翻譯鍵（句子與欄位名）與檔案鍵")
+local mapOk, seenFile, nRows = true, {}, 0
+for _, f in ipairs(MVM.PAID_FIELDS) do
+    nRows = nRows + 1
+    local group = f.file:match("^(%a+)%.%a+$")
+    if E.DEFAULTS[f.key] == nil or seenFile[f.file] or (group ~= "buy" and group ~= "rent") then
+        mapOk = false
+    end
+    seenFile[f.file] = true
+end
+check(mapOk and nRows == 12 and PLAN_OF["buy.enabled"] == "permanentEnabled" and PLAN_OF["rent.autoRenew"] == "autoRenewAllowed"
+    and PLAN_OF["rent.graceHours"] == "graceHours",
+    "共用欄位對照 MVM.PAID_FIELDS：12 欄、對到預設方案、檔案鍵不重複，server 的對照就是這一份")
+check(isProblem(PS.problem("missing_field", "buy"), "IGUI_MVM_Paid_FileErr_missing_field", nil, "buy")
+    and isProblem(PS.problem("invalid_type", "rent.autoRenew"), "IGUI_MVM_Paid_FileErr_invalid_type",
+        "IGUI_MVM_Paid_Name_autoRenewAllowed", "rent.autoRenew")
+    and isProblem(PS.problem("write_failed"), "IGUI_MVM_Paid_FileErr_write_failed", nil, nil) and PS.problem(nil) == nil,
+    "problem：對不到方案欄位（群組名）時沒有 field、ref 仍是檔案鍵；沒有欄位的碼沒有 ref；沒有錯誤＝nil")
+local missingKeys = {}
+local wantKeys = { "IGUI_MVM_SourceName", "IGUI_MVM_Paid_FileErr_other" }
+for _, c in ipairs({ "invalid_json", "unreadable", "write_failed", "missing_field", "invalid_type", "unknown_field", "invalid_plan" }) do
+    wantKeys[#wantKeys + 1] = "IGUI_MVM_Paid_FileErr_" .. c
+end
+for _, f in ipairs(MVM.PAID_FIELDS) do wantKeys[#wantKeys + 1] = "IGUI_MVM_Paid_Name_" .. f.key end
+for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
+    local fh = io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json")
+    local json = fh and fh:read("*a") or ""
+    if fh then fh:close() end
+    for _, k in ipairs(wantKeys) do
+        if not json:find('"' .. k .. '"', 1, true) then missingKeys[#missingKeys + 1] = lang .. ":" .. k end
+    end
+end
+check(#missingKeys == 0, "server 送出的翻譯鍵（來源名稱、設定檔錯誤句、欄位名）四語都有（缺：" .. table.concat(missingKeys, ",") .. "）")
+F.weird = "unknown_product"
+local serverLog, realServerLog = {}, MVM.log
+MVM.log = function(msg) serverLog[#serverLog + 1] = tostring(msg) end
+put(cfg("290"))
+poll()
+MVM.log = realServerLog
+F.weird = nil
+local codeInLog = false
+for _, l in ipairs(serverLog) do if l:find("unknown_product", 1, true) then codeInLog = true end end
+check(PS.status.error == "unknown_product" and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_other", nil, nil)
+    and text(STATUS):find('"error": "unknown_product"', 1, true) and codeInLog,
+    "沒有專屬句子的錯誤碼：problem 只送不帶參數的 FileErr_other（沒有 field／ref）；原碼寫進伺服器 log，狀態檔照記原碼")
+put(cfg("0"))
+poll()
 F.notReady = true
 put(cfg("280"))
 poll()
@@ -2811,7 +2944,8 @@ getFileReader = function(path, ...) if path == CFG then return nil end return re
 local before, n3 = text(CFG), F.calls
 poll()
 check(PS.status.state == "error" and PS.status.error == "unreadable" and F.calls == n3 and text(CFG) == before
-    and F.plan.rentalPrice == 280 and F.source.problem == "unreadable", "設定檔存在但讀不到：unreadable，方案不動、不用目前方案覆寫")
+    and F.plan.rentalPrice == 280 and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_unreadable", nil, nil),
+    "設定檔存在但讀不到：unreadable，方案不動、不用目前方案覆寫")
 local st1 = PS.status
 poll()
 check(PS.status == st1, "讀不到：同一狀態不重複報")

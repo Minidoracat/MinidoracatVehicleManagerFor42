@@ -18,21 +18,17 @@ local PS = { lastText = nil, lastPollMs = 0, status = nil }
 MVM.PaidSlots = PS
 PS.POLL_MS = 5000
 
--- 檔案鍵（群組.鍵）→ Economy 方案欄位；kind 是 JSON 型別
-local FIELDS = {
-    { "buy", "enabled", "permanentEnabled", "bool" }, { "buy", "price", "permanentPrice", "int" },
-    { "buy", "currency", "permanentCurrency", "id" }, { "buy", "limit", "permanentLimit", "int" },
-    { "rent", "enabled", "rentalEnabled", "bool" }, { "rent", "price", "rentalPrice", "int" },
-    { "rent", "currency", "rentalCurrency", "id" }, { "rent", "limit", "rentalLimit", "int" },
-    { "rent", "days", "rentalDays", "int" }, { "rent", "graceHours", "graceHours", "int" },
-    { "rent", "reminderHours", "reminderHours", "int" }, { "rent", "autoRenew", "autoRenewAllowed", "bool" },
-}
-local FILE_KEY, ORDER, BY_PLAN, KNOWN = {}, { buy = {}, rent = {} }, {}, {}
-for _, f in ipairs(FIELDS) do
-    FILE_KEY[f[3]] = f[1] .. "." .. f[2]
-    KNOWN[f[1] .. "." .. f[2]] = true
-    ORDER[f[1]][#ORDER[f[1]] + 1] = f[2]
-    BY_PLAN[f[3]] = f
+-- 檔案鍵（群組.鍵）↔ Economy 方案欄位：shared MVM.PAID_FIELDS（client 設定視窗共用）。這裡拆成 { 群組, 鍵, 方案欄位, kind }
+local FIELDS, FILE_KEY, ORDER, BY_PLAN, KNOWN, PLAN_OF = {}, {}, { buy = {}, rent = {} }, {}, {}, {}
+for i, s in ipairs(MVM.PAID_FIELDS) do
+    local group, key = s.file:match("^(%w+)%.(%w+)$")
+    local f = { group, key, s.key, s.kind }
+    FIELDS[i] = f
+    FILE_KEY[s.key] = s.file
+    KNOWN[s.file] = true
+    PLAN_OF[s.file] = s.key
+    ORDER[group][#ORDER[group] + 1] = key
+    BY_PLAN[s.key] = f
 end
 
 local function typeOk(kind, v)
@@ -206,6 +202,22 @@ local function writeText(path, text)
 end
 
 local STATUS_ORDER = { "state", "source", "revision", "error", "field", "at", "economy" }
+-- 有專屬句子的錯誤碼（IGUI_MVM_Paid_FileErr_<碼>，%1＝欄位顯示名稱、%2＝檔案鍵）；其他碼用不帶參數的 _other
+local FILE_ERRORS = { invalid_json = true, unreadable = true, write_failed = true, missing_field = true,
+    invalid_type = true, unknown_field = true, invalid_plan = true }
+
+-- 給 Economy 唯讀總覽的錯誤說明：只送翻譯鍵與原文資料，句子由客戶端組。不認得的碼不上畫面：
+-- 只送通用句，原始碼寫進伺服器 log（狀態檔照樣記原碼，給服主查）
+function PS.problem(code, field)
+    if code == nil then return nil end
+    if FILE_ERRORS[code] ~= true then
+        MVM.log("paid-slots problem without a translation: " .. tostring(code) .. " field=" .. tostring(field))
+        return { key = "IGUI_MVM_Paid_FileErr_other" }
+    end
+    local plan = field and PLAN_OF[field]
+    return { key = "IGUI_MVM_Paid_FileErr_" .. code,
+        field = plan and ("IGUI_MVM_Paid_Name_" .. plan) or nil, ref = field and field:sub(1, 64) or nil }
+end
 
 -- 寫狀態檔並告訴 Economy 設定檔有沒有錯（唯讀總覽顯示）
 local function report(st)
@@ -215,8 +227,7 @@ local function report(st)
     for _, k in ipairs(STATUS_ORDER) do doc[k] = st[k] == nil and NULL or st[k] end
     if not writeText(X.folder() .. "paid-slots.status.json", X.json(doc)) then MVM.log("paid-slots.status.json write failed") end
     if E.src then
-        local problem = st.error and (st.error .. (st.field and (" " .. st.field) or "")) or nil
-        pcall(E.src.setPlanSource, MVM.ECON_PRODUCT, { file = PS.displayPath(), problem = problem })
+        pcall(E.src.setPlanSource, MVM.ECON_PRODUCT, { file = PS.displayPath(), problem = PS.problem(st.error, st.field) })
     end
 end
 

@@ -51,13 +51,15 @@ function BU.purchaseKey(res)
     return "IGUI_MVM_Slots_PaidDone"
 end
 
--- 拒絕碼：本 MOD 的原因（server validatePurchase 的 CONFIG_BLOCKED 等）→ Economy 的錯誤文字 → 原始碼
+-- 拒絕碼：本 MOD 的原因（server validatePurchase 的 CONFIG_BLOCKED 等）→ Economy 的錯誤文字 → 不帶代碼的通用說明
+-- （代碼寫進客戶端 log 供回報）
 function BU.reasonText(code, E)
     local key = "IGUI_MVM_Reason_" .. tostring(code)
     local t = getText(key)
     if t ~= key then return t end
     if E and E.errorText then return E.errorText(code) end
-    return getText("IGUI_MVM_Failed", tostring(code))
+    MVM.log("no translation for reason " .. tostring(code))
+    return getText("IGUI_MVM_Failed")
 end
 
 -- 狀態列訊息綁在這個權益／方案版本上：新狀態到達（任一版本變了）就清掉舊訊息
@@ -89,7 +91,8 @@ function BU.currencyName(E, id)
     return cur and getText(cur.nameKey) or tostring(id)
 end
 
-function BU.money(E, amount, currency) return tostring(amount or 0) .. " " .. BU.currencyName(E, currency) end
+-- 金額＋幣別（數字與幣別的順序交給譯文）
+function BU.money(E, amount, currency) return getText("IGUI_MVM_Slots_Money", amount or 0, BU.currencyName(E, currency)) end
 
 -- 數量步進器的值夾在 1..hi
 function BU.clamp(v, hi) return math.max(1, math.min(hi, math.floor(tonumber(v) or 1))) end

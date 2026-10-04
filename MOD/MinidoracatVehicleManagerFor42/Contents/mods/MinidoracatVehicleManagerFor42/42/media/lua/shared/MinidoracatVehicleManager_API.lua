@@ -9,6 +9,22 @@ MVM.LOG_PREFIX = "[MinidoracatVehicleManagerFor42] "
 -- Economy 選用整合（付費名額）：來源與產品 id，server 註冊與 client 查詢共用同一組字串
 MVM.ECON_SOURCE = "MinidoracatVehicleManagerFor42"
 MVM.ECON_PRODUCT = "vehicle_slot"
+-- 付費名額方案 12 欄，設定檔（paid-slots.json）的順序：key＝Economy 方案欄位（翻譯 IGUI_MVM_Paid_Name_<key>），
+-- file＝設定檔鍵（群組.鍵），kind＝bool／int／currency。server 讀寫設定檔與 client 設定視窗共用這一份
+MVM.PAID_FIELDS = {
+    { key = "permanentEnabled", file = "buy.enabled", kind = "bool" },
+    { key = "permanentPrice", file = "buy.price", kind = "int" },
+    { key = "permanentCurrency", file = "buy.currency", kind = "currency" },
+    { key = "permanentLimit", file = "buy.limit", kind = "int" },
+    { key = "rentalEnabled", file = "rent.enabled", kind = "bool" },
+    { key = "rentalPrice", file = "rent.price", kind = "int" },
+    { key = "rentalCurrency", file = "rent.currency", kind = "currency" },
+    { key = "rentalLimit", file = "rent.limit", kind = "int" },
+    { key = "rentalDays", file = "rent.days", kind = "int" },
+    { key = "graceHours", file = "rent.graceHours", kind = "int" },
+    { key = "reminderHours", file = "rent.reminderHours", kind = "int" },
+    { key = "autoRenewAllowed", file = "rent.autoRenew", kind = "bool" },
+}
 
 -- Lua 5.1／Kahlua 沒有位元運算：每個 action 是 2 的冪，以整數除法測位
 MVM.ACTIONS = { PASSENGER = 1, DRIVE = 2, CARGO = 4, FUEL = 8, REPAIR = 16, SALVAGE = 32, TOW = 64, TRACK = 128, MANAGE = 256 }

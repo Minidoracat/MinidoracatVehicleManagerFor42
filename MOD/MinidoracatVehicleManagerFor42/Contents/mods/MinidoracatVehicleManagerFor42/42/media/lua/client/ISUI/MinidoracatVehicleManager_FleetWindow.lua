@@ -1257,6 +1257,7 @@ end
 local function createFloat()
     if F.float then return end
     local x, y = floatDefault()
+    local fallback = getText("IGUI_MVM_FloatFallback") -- 圖示載入失敗時畫的一個字（建立時取一次，不每幀查譯文）
     F.float = UI.FloatButton.new({
         size = FLOAT_SIZE, alwaysOnTop = false, x = x, y = y,
         colors = { surface = COL.surface, hover = COL.hover, border = COL.border },
@@ -1265,7 +1266,7 @@ local function createFloat()
             local on = MVM.clientOverride(0)
             local c = on and COL.errorText or COL.text
             if not UI.Icons.draw(btn, "steeringwheel", 6, 6, FLOAT_SIZE - 12, c, 1) then
-                btn:drawTextCentre("V", FLOAT_SIZE / 2, FLOAT_SIZE / 2 - 8, c.r, c.g, c.b, 1, UIFont.Medium)
+                btn:drawTextCentre(fallback, FLOAT_SIZE / 2, FLOAT_SIZE / 2 - 8, c.r, c.g, c.b, 1, UIFont.Medium)
             end
             if on then
                 btn:drawRectBorder(0, 0, FLOAT_SIZE, FLOAT_SIZE, 1, c.r, c.g, c.b)

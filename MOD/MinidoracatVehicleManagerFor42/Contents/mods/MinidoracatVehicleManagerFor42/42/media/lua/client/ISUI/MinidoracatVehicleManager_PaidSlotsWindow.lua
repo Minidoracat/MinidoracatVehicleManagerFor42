@@ -19,21 +19,8 @@ MVM.PaidSlotsUI = PS
 -- ------------------------------------------------------------ 純邏輯（harness 可測） ---
 local function tbl(t) return type(t) == "table" and t or {} end
 
--- 方案 12 欄（Economy P.FIELDS）與設定檔鍵名（契約第 4 節）
-PS.FIELDS = {
-    { key = "permanentEnabled", file = "buy.enabled", kind = "bool" },
-    { key = "permanentPrice", file = "buy.price", kind = "int" },
-    { key = "permanentCurrency", file = "buy.currency", kind = "currency" },
-    { key = "permanentLimit", file = "buy.limit", kind = "int" },
-    { key = "rentalEnabled", file = "rent.enabled", kind = "bool" },
-    { key = "rentalPrice", file = "rent.price", kind = "int" },
-    { key = "rentalCurrency", file = "rent.currency", kind = "currency" },
-    { key = "rentalDays", file = "rent.days", kind = "int" },
-    { key = "rentalLimit", file = "rent.limit", kind = "int" },
-    { key = "graceHours", file = "rent.graceHours", kind = "int" },
-    { key = "reminderHours", file = "rent.reminderHours", kind = "int" },
-    { key = "autoRenewAllowed", file = "rent.autoRenew", kind = "bool" },
-}
+-- 方案 12 欄與設定檔鍵：shared MVM.PAID_FIELDS（server 讀寫設定檔也用這一份）。畫面順序由 layoutForm 自己排
+PS.FIELDS = MVM.PAID_FIELDS
 local SPEC, BY_FILE = {}, {}
 for _, f in ipairs(PS.FIELDS) do SPEC[f.key], BY_FILE[f.file] = f, f end
 PS.SPEC, PS.BY_FILE = SPEC, BY_FILE
@@ -182,11 +169,20 @@ function PS.bannerText(lc, others, oldBase, newBase, kept, currencyName)
         table.concat(parts, getText("IGUI_MVM_Sep"), 1, #parts))
 end
 
--- 狀態檔的錯誤碼 → 說明（field 用設定檔鍵名）；沒有譯文的碼照原樣列出
+-- 設定檔錯誤（狀態檔的 error 碼＋field 檔案鍵）→ 說明句：%1＝欄位顯示名稱（對不到方案欄位就是檔案鍵）、
+-- %2＝檔案鍵；沒有欄位的碼不帶參數；不認得的碼走不帶參數的 _other，原始碼只寫進客戶端 log。
+-- server 交給 Economy 的 problem 用同一組字串
+local NO_FIELD = { invalid_json = true, unreadable = true, write_failed = true }
+local WITH_FIELD = { missing_field = true, invalid_type = true, unknown_field = true, invalid_plan = true }
 function PS.fileErrorText(code, field)
-    local key = "IGUI_MVM_Paid_FileErr_" .. tostring(code)
-    if getText(key) == key then return getText("IGUI_MVM_Paid_FileErr_other", tostring(code), tostring(field or "")) end
-    return getText(key, tostring(field or ""))
+    if NO_FIELD[code] then return getText("IGUI_MVM_Paid_FileErr_" .. code) end
+    if not WITH_FIELD[code] then
+        MVM.log("paid-slots file error without a translation: " .. tostring(code) .. " field=" .. tostring(field))
+        return getText("IGUI_MVM_Paid_FileErr_other")
+    end
+    local ref = field ~= nil and tostring(field) or ""
+    local f = BY_FILE[ref]
+    return getText("IGUI_MVM_Paid_FileErr_" .. code, f and PS.name(f.key) or ref, ref)
 end
 
 -- ------------------------------------------------------------------ 視窗 ---
@@ -522,7 +518,8 @@ function P:noteText(keys)
             was[#was + 1] = PS.valueText(SPEC[k], self.base[k], currencyName)
         end
     end
-    if text == nil and #was > 0 then text = getText("IGUI_MVM_Paid_Was", table.concat(was, " ", 1, #was)) end
+    if text == nil and #was == 2 then text = getText("IGUI_MVM_Paid_Was", getText("IGUI_MVM_Slots_Money", was[1], was[2])) end
+    if text == nil and #was == 1 then text = getText("IGUI_MVM_Paid_Was", was[1]) end
     return text, token
 end
 
@@ -806,7 +803,7 @@ function P:confirm(keys, values, revision, warn)
         lines[#lines + 1] = ""
         lines[#lines + 1] = getText("IGUI_MVM_Paid_ImpactHead")
         for _, m in ipairs(impacts) do
-            lines[#lines + 1] = "- " .. (m[2] ~= nil and getText(m[1], m[2]) or getText(m[1]))
+            lines[#lines + 1] = getText("IGUI_MVM_Paid_ImpactItem", m[2] ~= nil and getText(m[1], m[2]) or getText(m[1]))
         end
     end
     lines[#lines + 1] = ""
@@ -842,8 +839,7 @@ function P:onSet(ack)
     end
     local f = BY_FILE[tostring(ack.field)]
     self.badField = f and f.key or nil
-    local text = MVM.reasonText(ack.reason)
-    if f then text = text .. getText("IGUI_MVM_Sep") .. PS.name(f.key) end
+    local text = f and getText("IGUI_MVM_Paid_RejectedNamed", PS.name(f.key)) or MVM.reasonText(ack.reason)
     self:say(text, "errorText")
     -- 別人先改了：重新讀，沒改的欄位換成最新值、改過的保留，橫幅說明
     if ack.reason == "STALE_REVISION" then self:load() end

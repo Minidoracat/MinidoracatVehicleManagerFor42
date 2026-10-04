@@ -65,12 +65,13 @@ local function resync(who)
     if p and principal(0) == who then C.request(p, "fleetResync", {}) end
 end
 
--- 失敗原因：有譯文用譯文；沒有就用附代碼的通用說明（含下一步）。通知與車隊視窗共用
+-- 失敗原因：有譯文用譯文；沒有就用不帶代碼的通用說明（含下一步），代碼寫進客戶端 log 供回報。通知與車隊視窗共用
 function MVM.reasonText(reason)
     local key = "IGUI_MVM_Reason_" .. tostring(reason)
     local t = getText(key)
-    if t == key then return getText("IGUI_MVM_Failed", tostring(reason)) end
-    return t
+    if t ~= key then return t end
+    MVM.log("no translation for reason " .. tostring(reason))
+    return getText("IGUI_MVM_Failed")
 end
 
 -- 投影或越權狀態變了：清見證快取、重列物品欄的車上容器（ISInventoryPage.lua:1330 dirtyUI 對每位本機玩家 refreshBackpacks）

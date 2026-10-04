@@ -69,8 +69,8 @@ function E.init()
     local currencies = {}
     for id in pairs(MinidoracatEconomy.CURRENCIES or {}) do currencies[#currencies + 1] = id end
     E.currencies = currencies
-    local ok, src, err = pcall(api.registerSource, { modId = MVM.ECON_SOURCE, displayName = { EN = "Vehicle Manager" },
-        currencies = currencies, reasonCodes = E.REASON_CODES })
+    local ok, src, err = pcall(api.registerSource, { modId = MVM.ECON_SOURCE, nameKey = "IGUI_MVM_SourceName",
+        displayName = { EN = "Vehicle Manager" }, currencies = currencies, reasonCodes = E.REASON_CODES })
     if not ok then return failed(src) end
     if type(src) ~= "table" or type(src.registerProduct) ~= "function" or type(src.getEntitlement) ~= "function" then
         return failed(err or "no_entitlement_methods")
