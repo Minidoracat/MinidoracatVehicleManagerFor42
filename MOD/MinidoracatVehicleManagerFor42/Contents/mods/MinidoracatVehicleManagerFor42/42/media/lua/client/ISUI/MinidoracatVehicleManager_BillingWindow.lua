@@ -82,6 +82,49 @@ end
 -- 數量步進器的值夾在 1..hi（hi ≥ 1 才會畫步進器）
 function BU.clamp(v, hi) return math.max(1, math.min(hi, math.floor(tonumber(v) or 1))) end
 
+-- 避頭：這些全形標點不放行首。Kahlua 字串是 UTF-16，string.byte 回碼元；標準 Lua 回位元組，比不到、無副作用
+local NO_LINE_START = { [12289] = true, [12290] = true, [65292] = true, [65307] = true, [65306] = true, [65281] = true,
+    [65311] = true, [65289] = true, [12301] = true, [12303] = true, [12305] = true, [12299] = true }
+local function wordChar(b) return b ~= nil and ((b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122)) end
+
+-- 貪婪換行：量字寬（measure(s, font)）找最長可放前綴，有空白就在最後一個空白斷（中日文沒有空白就照字切）。
+-- 不從英數字串中間斷（14 不會變成 1／4）；數字和後面的中日文單位（7 日、7 天，中間的空白也算）一起換到下一行；
+-- 整行都是英數字才照字切
+function BU.wrap(out, s, width, font, measure)
+    for para in (s .. "\n"):gmatch("(.-)\n") do
+        local rest = para
+        if rest == "" then out[#out + 1] = "" end
+        while rest ~= "" do
+            local n = #rest
+            if measure(rest, font) > width then
+                local lo, hi = 1, n
+                while lo < hi do
+                    local mid = math.floor((lo + hi + 1) / 2)
+                    if measure(rest:sub(1, mid), font) <= width then lo = mid else hi = mid - 1 end
+                end
+                local space = rest:sub(1, lo):find(" [^ ]*$")
+                n = (space and space > lo / 2) and space or lo
+                local cut = n
+                local unit = rest:byte(cut + 1)
+                if rest:byte(cut) == 32 and unit ~= nil and unit > 127 then
+                    local d = rest:byte(cut - 1)
+                    if d ~= nil and d >= 48 and d <= 57 then
+                        cut = cut - 1
+                        while cut > 1 and wordChar(rest:byte(cut)) do cut = cut - 1 end
+                    end
+                end
+                while cut > 1 and (NO_LINE_START[rest:byte(cut + 1)]
+                    or (wordChar(rest:byte(cut)) and rest:byte(cut + 1) ~= 32)) do
+                    cut = cut - 1
+                end
+                if cut > 1 then n = cut end
+            end
+            out[#out + 1] = (rest:sub(1, n):gsub("%s+$", ""))
+            rest = (rest:sub(n + 1):gsub("^%s+", ""))
+        end
+    end
+end
+
 -- 一次能買斷幾個（0＝不能買）：每次最多 100 個，且買完不超過永久名額上限
 function BU.permanentMax(plan, ent)
     return math.max(0, math.min(100, (plan.permanentLimit or 0) - (ent.permanent or 0)))
@@ -181,32 +224,6 @@ local LAYOUT = "MinidoracatVehicleManagerSlots"
 
 local function fontH(font) return getTextManager():getFontHeight(font) end
 local function measure(s, font) return getTextManager():MeasureStringX(font, s) end
--- 避頭：這些全形標點不放行首。Kahlua 字串是 UTF-16，string.byte 回碼元；標準 Lua 回位元組，比不到、無副作用
-local NO_LINE_START = { [12289] = true, [12290] = true, [65292] = true, [65307] = true, [65306] = true, [65281] = true,
-    [65311] = true, [65289] = true, [12301] = true, [12303] = true, [12305] = true, [12299] = true }
-
--- 貪婪換行：量字寬找最長可放前綴，有空白就在最後一個空白斷（中日文沒有空白就照字切）
-local function wrap(out, s, width, font)
-    for para in (s .. "\n"):gmatch("(.-)\n") do
-        local rest = para
-        if rest == "" then out[#out + 1] = "" end
-        while rest ~= "" do
-            local n = #rest
-            if measure(rest, font) > width then
-                local lo, hi = 1, n
-                while lo < hi do
-                    local mid = math.floor((lo + hi + 1) / 2)
-                    if measure(rest:sub(1, mid), font) <= width then lo = mid else hi = mid - 1 end
-                end
-                local space = rest:sub(1, lo):find(" [^ ]*$")
-                n = (space and space > lo / 2) and space or lo
-                while n > 1 and NO_LINE_START[rest:byte(n + 1)] do n = n - 1 end
-            end
-            out[#out + 1] = (rest:sub(1, n):gsub("%s+$", ""))
-            rest = (rest:sub(n + 1):gsub("^%s+", ""))
-        end
-    end
-end
 
 -- 滑鼠把焦點下的控制項捲出可視範圍（它被隱藏）：焦點改到第一個看得見的控制項、不畫框。
 -- 不處理的話 Focus 會把隱藏的控制項當失效目標，從第一個目標重走而把內容捲回頂端
@@ -383,7 +400,7 @@ end
 function W:addText(s, token, font)
     font = font or FS
     local parts = {}
-    wrap(parts, s, self.innerW, font)
+    BU.wrap(parts, s, self.innerW, font, measure)
     for _, t in ipairs(parts) do
         self:textAt(t, PAD, self.y, token, font)
         self.y = self.y + fontH(font) + 2

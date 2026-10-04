@@ -2254,6 +2254,17 @@ check(BU.autoPauseReason(PLAN, { rentalCommitted = 2 }, { autoRenew = true, auto
     and BU.autoPauseReason(noAuto, { rentalCommitted = 2 }, autoOn(agreed)) == "IGUI_MVM_Slots_AutoPausedNotOffered"
     and BU.autoPauseReason(PLAN, { rentalCommitted = 2 }, { autoRenewState = "pending_off", autoTerms = { price = 1 } }) == nil,
     "自動續費暫停原因：同意的租金／天數變了、超過上限、停租、不提供自動續費依序區分；已關閉的不顯示")
+local wrapped = {}
+BU.wrap(wrapped, "-------12 days", 8, nil, function(s) return #s end)
+check(wrapped[1] == "-------" and wrapped[2] == "12 days" and wrapped[3] == nil,
+    "名額視窗換行：照字切時不從數字中間斷，數字和後面緊接的字一起換到下一行")
+wrapped = {}
+BU.wrap(wrapped, "abcdefghij", 4, nil, function(s) return #s end)
+check(wrapped[1] == "abcd" and wrapped[2] == "efgh" and wrapped[3] == "ij", "名額視窗換行：整行都是英數字時照字切")
+wrapped = {}
+BU.wrap(wrapped, "------\227\128\129" .. "7 \230\151\165\233\150\147", 12, nil, function(s) return #s end)
+check(wrapped[1] == "------\227\128\129" and wrapped[2] == "7 \230\151\165\233\150\147",
+    "名額視窗換行：數字和後面的中日文單位（中間有空白）一起換到下一行")
 
 -- 載入真正視窗操作方法；只替代未啟動遊戲時不存在的 UI 建構依賴與 Economy 傳輸。
 local savedUI, savedPanel, savedFont, savedCore = MinidoracatUI, ISPanel, UIFont, getCore
