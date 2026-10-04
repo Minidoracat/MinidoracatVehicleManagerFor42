@@ -1,10 +1,10 @@
--- 綁定名額視窗（車隊視窗「名額」按鈕開啟）：基本／永久／租用／總計、價格、錢包，買斷 k 個、
--- 租約清單（每張租約各自續租、各自自動續費）與新租約 n 個。付款全走 Economy client
--- （MinidoracatEconomy.v1.Client.Entitlements，late bind、不 require）：先 quote 取得 server 鎖定的報價，
--- 玩家看過摘要按「付款」才以同一張 quoteId purchase。
--- 規則：畫面只顯示 server 回來的狀態（不樂觀更新）；逾時＝結果未知，不自動重送、不換新報價，
--- 只提供「查詢購買結果」（唯讀讀同一筆 order）；自動續費預設關、勾選前先確認該張租約的條款，送出後照 server 狀態顯示。
--- 一次只有一筆玩家發起的待確認購買（entitlement.pendingOrderId）；自動續費的待確認付款只擋同一張租約續租。
+-- 綁定名額視窗（車隊視窗「名額」按鈕開啟）：最上面是能綁幾台，下面是買斷／租用兩顆主按鈕與「我的租約」
+-- （每張租約一張卡片：剩餘時間、續租、自動續租；只有需要處理時才多一行）。買斷、租用、續租、同意自動續租
+-- 都在視窗內的確認頁（sheet）完成。付款全走 Economy client（MinidoracatEconomy.v1.Client.Entitlements，
+-- late bind、不 require）：付款鈕先 quote，報價金額等於確認頁金額才立刻以同一張 quoteId purchase；
+-- 不同（方案剛改）就不付款，確認頁換成新金額並提示。名額商品付款當下生效（Economy instant 商品）。
+-- 規則：畫面只顯示 server 回來的狀態（不樂觀更新）；付款逾時＝結果未知，不自動重送、不換新報價，
+-- 只提供「查詢購買結果」（唯讀讀同一筆 order）；自動續租預設關、開啟前先在確認頁同意該張租約的條款。
 -- 伺服器整合狀態（fleetSnapshot 的 quota.economy）不是 READY 時只顯示原因、不呼叫 Economy（SP 也是）。
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Client"
@@ -17,6 +17,7 @@ MVM.BillingUI = BU
 
 -- ------------------------------------------------------------ 純邏輯（harness 可測） ---
 local function tbl(t) return type(t) == "table" and t or {} end
+local DAY_MS = 86400000
 
 -- Economy client 權益 facade；沒裝、舊版（rev < 2）或還是單一租約（沒有 rentals 能力）回 nil
 function BU.api()
@@ -42,18 +43,12 @@ function BU.blocker(quota, hasApi, env)
     return nil
 end
 
--- 耐久狀態 → 提示鍵；未列出的一律當「未知」，絕不冒充已保存
-local DURABLE = { confirmed = "IGUI_MVM_Slots_Saved", pending = "IGUI_MVM_Slots_WaitSave",
-    rolledback = "IGUI_MVM_Slots_RolledBack" }
-function BU.durableKey(status) return DURABLE[status] or "IGUI_MVM_Slots_SaveUnknown" end
-
--- 購買回覆 → 提示鍵；server 拒絕回 nil（呼叫端顯示原因碼）。ok 只代表 server 受理，是否耐久看快照
+-- 購買回覆 → 狀態列鍵；server 拒絕回 nil（呼叫端顯示原因碼）。名額付款當下生效，受理就是完成
 function BU.purchaseKey(res)
     if res.unknown or res.error == "timeout" then return "IGUI_MVM_Slots_NoAnswer" end
     if not res.ok then return nil end
     if res.duplicate then return "IGUI_MVM_Slots_Duplicate" end
-    local ent = type(res.snapshot) == "table" and res.snapshot.entitlement
-    return BU.durableKey(type(ent) == "table" and type(ent.durable) == "table" and ent.durable.status or nil)
+    return "IGUI_MVM_Slots_PaidDone"
 end
 
 -- 拒絕碼：本 MOD 的原因（server validatePurchase 的 CONFIG_BLOCKED 等）→ Economy 的錯誤文字 → 原始碼
@@ -65,6 +60,12 @@ function BU.reasonText(code, E)
     return getText("IGUI_MVM_Failed", tostring(code))
 end
 
+-- 狀態列訊息綁在這個權益／方案版本上：新狀態到達（任一版本變了）就清掉舊訊息
+function BU.stateKey(env)
+    local e, p = tbl(tbl(env).entitlement), tbl(tbl(env).plan)
+    return tostring(e.revision) .. "/" .. tostring(p.revision)
+end
+
 -- 剩餘時間（天, 時）；已到或缺欄位回 nil。時間是 server 的 epoch ms，與本機時鐘相差時僅影響顯示
 function BU.timeLeft(untilMs, now)
     if type(untilMs) ~= "number" or untilMs <= now then return nil end
@@ -73,13 +74,24 @@ function BU.timeLeft(untilMs, now)
     return days, hours - days * 24
 end
 
+-- 剩餘時間文字：整天只寫天數，不到一天只寫小時
+function BU.leftText(untilMs, now)
+    local d, h = BU.timeLeft(untilMs, now)
+    if d == nil then return nil end
+    if d > 0 and h == 0 then return getText("IGUI_MVM_Slots_Days", d) end
+    if d > 0 then return getText("IGUI_MVM_Slots_DaysHours", d, h) end
+    return getText("IGUI_MVM_Slots_Hours", h)
+end
+
 function BU.currencyName(E, id)
     if E and E.currencyName then return E.currencyName(id) end
     local cur = MinidoracatEconomy and MinidoracatEconomy.CURRENCIES and MinidoracatEconomy.CURRENCIES[id]
     return cur and getText(cur.nameKey) or tostring(id)
 end
 
--- 數量步進器的值夾在 1..hi（hi ≥ 1 才會畫步進器）
+function BU.money(E, amount, currency) return tostring(amount or 0) .. " " .. BU.currencyName(E, currency) end
+
+-- 數量步進器的值夾在 1..hi
 function BU.clamp(v, hi) return math.max(1, math.min(hi, math.floor(tonumber(v) or 1))) end
 
 -- 避頭：這些全形標點不放行首。Kahlua 字串是 UTF-16，string.byte 回碼元；標準 Lua 回位元組，比不到、無副作用
@@ -125,7 +137,7 @@ function BU.wrap(out, s, width, font, measure)
     end
 end
 
--- 一次能買斷幾個（0＝不能買）：每次最多 100 個，且買完不超過永久名額上限
+-- 一次能買斷幾個（0＝不能買）：每次最多 100 個，且買完不超過買斷名額上限
 function BU.permanentMax(plan, ent)
     return math.max(0, math.min(100, (plan.permanentLimit or 0) - (ent.permanent or 0)))
 end
@@ -139,7 +151,7 @@ function BU.findRental(ent, id)
     return nil
 end
 
--- 租用合計（有效＋等待存檔的租約名額，rentalCommitted）超過服主調低後的上限
+-- 租用合計（有效租約的名額，rentalCommitted）超過服主調低後的上限
 function BU.overLimit(plan, ent) return (ent.rentalCommitted or 0) > (plan.rentalLimit or 0) end
 
 BU.RENTALS_MAX = 10 -- 快照缺 rentalsMax 時的保守值（Economy 的 E.RENTALS_MAX）
@@ -155,20 +167,24 @@ function BU.newRental(plan, ent)
     return room
 end
 
--- 已到期的租約續租是從存檔確認起算、重新計入租用合計；租期中、寬限、暫停中的已經算在 rentalCommitted 裡
-local function restarts(r) return r.state == "expired" or type(r.paidUntil) ~= "number" end
+-- 確認頁數量上限（買斷／新租約）
+function BU.sheetMax(env, kind)
+    local plan, ent = tbl(env.plan), tbl(env.entitlement)
+    if kind == "permanent" then return plan.permanentEnabled and BU.permanentMax(plan, ent) or 0 end
+    return plan.rentalEnabled and (BU.newRental(plan, ent)) or 0
+end
 
--- 這張租約不能續租的原因鍵，可續租回 nil（玩家自己的待確認購買另由 canPurchase 擋）
+-- 已到期的租約續租從付款時重新起算、重新計入租用合計；租期中、寬限中的已經算在 rentalCommitted 裡
+local function restarts(r) return r.state == "expired" or type(r.paidUntil) ~= "number" end
+BU.restarts = restarts
+
+-- 這張租約不能續租："OVER"＝續租後超過上限、"PAUSED"＝暫停販售／停租／系統暫停；可續租回 nil。
+-- 原因文字由清單上方的說明（BU.notices）負責，卡片只在 OVER 而整體未超額時自己說明
 function BU.renewReason(env, r)
     local plan, ent = tbl(env.plan), tbl(env.entitlement)
-    if r.pendingOrderId ~= nil then
-        return r.autoPending and "IGUI_MVM_Slots_AutoPaySaving" or "IGUI_MVM_Slots_RenewPending"
-    end
     local extra = restarts(r) and (r.quantity or 0) or 0
-    if (ent.rentalCommitted or 0) + extra > (plan.rentalLimit or 0) then return "IGUI_MVM_Slots_RenewOver" end
-    if env.available == false or not plan.rentalEnabled or r.state == "paused_terms" or r.state == "paused_system" then
-        return "IGUI_MVM_Slots_RenewPaused"
-    end
+    if (ent.rentalCommitted or 0) + extra > (plan.rentalLimit or 0) then return "OVER" end
+    if env.available == false or not plan.rentalEnabled or r.state == "paused_system" then return "PAUSED" end
     return nil
 end
 
@@ -183,22 +199,75 @@ end
 -- 方案目前的租用條款，和租約記錄的 terms／同意的 autoTerms 同形
 function BU.planTerms(plan) return { price = plan.rentalPrice, currency = plan.rentalCurrency, days = plan.rentalDays } end
 
--- 這組條款（租約這期的 terms 或自動續費同意的 autoTerms）和目前方案的租金、幣別、天數不同；其他方案欄位不算
+-- 這組條款（租約這期的 terms 或自動續租同意的 autoTerms）和目前方案的租金、幣別、天數不同；其他方案欄位不算
 function BU.termsDiffer(plan, t)
     return type(t) == "table"
         and (t.price ~= plan.rentalPrice or t.currency ~= plan.rentalCurrency or t.days ~= plan.rentalDays)
 end
 
--- 自動續費開著卻不會扣款的原因鍵：同意的條款與方案不同 → 租用合計超過上限 → 停租 → 不提供自動續費 →
--- server 說暫停但原因不在上面（通用說明）；沒有暫停回 nil
-function BU.autoPauseReason(plan, ent, r)
-    if not BU.autoRenewOn(r) then return nil end
-    if BU.termsDiffer(plan, r.autoTerms) then return "IGUI_MVM_Slots_AutoTermsChanged" end
-    if BU.overLimit(plan, ent) then return "IGUI_MVM_Slots_AutoPausedOver" end
-    if not plan.rentalEnabled then return "IGUI_MVM_Slots_AutoPausedOff" end
-    if not plan.autoRenewAllowed then return "IGUI_MVM_Slots_AutoPausedNotOffered" end
-    if r.autoRenewState == "paused_terms" then return "IGUI_MVM_Slots_AutoRenewPausedTerms" end
-    return nil
+-- 自動續租開著但這期不會扣款（卡片的開關改寫「暫停」）
+function BU.autoPaused(plan, ent, r)
+    if not BU.autoRenewOn(r) then return false end
+    local s = r.autoRenewState
+    return s == "paused_terms" or s == "paused_system" or BU.termsDiffer(plan, r.autoTerms) or BU.overLimit(plan, ent)
+        or not plan.rentalEnabled or not plan.autoRenewAllowed
+end
+
+-- 需要玩家重新同意：自動續租開著、同意的條款和方案不同，而且方案仍提供自動續租
+function BU.needsConsent(plan, r)
+    return BU.autoRenewOn(r) and BU.termsDiffer(plan, r.autoTerms) and plan.rentalEnabled == true
+        and plan.autoRenewAllowed == true
+end
+
+-- 條款變更的一句話：只有租金變就寫租金，幣別或天數也變就連天數一起寫。t 是租約記下的條款
+function BU.termsText(E, plan, t, qn)
+    local new = BU.money(E, (plan.rentalPrice or 0) * qn, plan.rentalCurrency)
+    local old = BU.money(E, (t.price or 0) * qn, t.currency)
+    if t.currency == plan.rentalCurrency and t.days == plan.rentalDays then
+        return getText("IGUI_MVM_Slots_NewPrice", new, old)
+    end
+    return getText("IGUI_MVM_Slots_NewTerms", new, plan.rentalDays or 0, old, t.days or 0)
+end
+
+-- 「我的租約」上方的說明，每種狀態只說一次：{ 鍵, 參數... }
+function BU.notices(env)
+    local plan, ent = tbl(env.plan), tbl(env.entitlement)
+    local out, rentals = {}, BU.rentals(ent)
+    if #rentals == 0 then return out end
+    if BU.overLimit(plan, ent) then
+        out[#out + 1] = { "IGUI_MVM_Slots_OverLimit", plan.rentalLimit or 0, ent.rentalCommitted or 0 }
+    end
+    if not plan.rentalEnabled then out[#out + 1] = { "IGUI_MVM_Slots_RentalStopped" } end
+    local auto, system = false, false
+    for _, r in ipairs(rentals) do
+        if BU.autoRenewOn(r) then auto = true end
+        if r.state == "paused_system" or r.autoRenewState == "paused_system" then system = true end
+    end
+    if auto and plan.rentalEnabled and not plan.autoRenewAllowed then out[#out + 1] = { "IGUI_MVM_Slots_AutoNotOffered" } end
+    if system then out[#out + 1] = { "IGUI_MVM_Slots_SystemPaused" } end
+    return out
+end
+
+-- 確認頁的金額：買斷／新租約＝數量 × 單價；續租與同意自動續租＝該張名額 × 目前租金。回 金額, 幣別, 名額數
+function BU.sheetMoney(env, sheet)
+    local plan, ent = tbl(env.plan), tbl(env.entitlement)
+    if sheet.kind == "permanent" then return (plan.permanentPrice or 0) * sheet.qty, plan.permanentCurrency, sheet.qty end
+    local n = sheet.qty
+    if sheet.kind ~= "rental" then
+        local r = BU.findRental(ent, sheet.rental)
+        n = r and r.quantity or 0
+    end
+    return (plan.rentalPrice or 0) * n, plan.rentalCurrency, n
+end
+
+-- 報價和確認頁上的金額、幣別一致才付款
+function BU.quoteMatches(q, expect)
+    return type(q) == "table" and type(expect) == "table" and q.amount == expect.amount and q.currency == expect.currency
+end
+
+function BU.balance(env, currency)
+    local b = type(env.balances) == "table" and env.balances[currency]
+    return type(b) == "table" and b.available or 0
 end
 
 -- ------------------------------------------------------------------ 視窗 ---
@@ -215,11 +284,13 @@ if not (UI and UI.API_MAJOR == 1 and (UI.API_REVISION or 0) >= 7 and CAPS and CA
 end
 local Focus = CAPS.focus and UI.Focus or nil
 
-local theme = UI.Theme.create({ colors = { surface = { r = 0.04, g = 0.045, b = 0.05, a = 0.95 } } })
+-- 底色不透明；card＝租約卡片底色（比底色亮一階）
+local theme = UI.Theme.create({ colors = { surface = { r = 0.04, g = 0.045, b = 0.05, a = 1 },
+    card = { r = 0.085, g = 0.09, b = 0.1, a = 1 } } })
 local COL = theme.colors
-local FS, FM = UIFont.Small, UIFont.Medium
+local FS, FM, FL = UIFont.Small, UIFont.Medium, UIFont.Large
 local PAD, GAP, SCROLL_W = 12, 6, 6
-local DAY_MS = 86400000
+local CARD_PAD, CARD_GAP = 8, 12
 local LAYOUT = "MinidoracatVehicleManagerSlots"
 
 local function fontH(font) return getTextManager():getFontHeight(font) end
@@ -236,7 +307,15 @@ local function keepFocus(slots)
 end
 
 local Body = ISPanel:derive("MVMSlotsBody")
-function Body:prerender() self.slots:tick() end
+-- 卡片底色畫在控制項之前（prerender → children → render）；只畫可視範圍內的部分
+function Body:prerender()
+    local slots, h = self.slots, self.height
+    slots:tick()
+    for _, f in ipairs(slots.fills) do
+        local y0, y1 = math.max(0, f.y - slots.scroll), math.min(h, f.y + f.h - slots.scroll)
+        if y1 > y0 then theme:fill(self, PAD, y0, slots.innerW, y1 - y0, "card", "round") end
+    end
+end
 -- 內容比可視高度高（大字級／小螢幕）時捲動：只畫完整落在可視範圍的列，右側畫細捲軸
 function Body:render()
     local slots, h = self.slots, self.height
@@ -309,20 +388,36 @@ local function bucket()
     return owner and C.buckets[owner] or nil
 end
 
-local function dialogWidth() return math.min(480, getCore():getScreenWidth() - 40) end
+-- 勾選框寬度跟著標籤（框架只在建構時量一次）
+local function relabel(box, label)
+    box:setLabel(label)
+    box:setWidth(box.extraW + measure(label, FS))
+end
+
+function W:checkbox(label, onChange)
+    local box = self:adopt(UI.Checkbox.new({ x = 0, y = 0, label = label, theme = theme, target = self, onChange = onChange }))
+    box.extraW = box.width - measure(label, FS)
+    return box
+end
 
 function W.new()
-    local self = setmetatable({ lines = {}, placed = {}, controls = {}, rows = {}, focusList = {}, focusPool = {},
-        dirty = true, scroll = 0, contentH = 0, buyQty = 1, rentQty = 1 }, W)
+    local self = setmetatable({ lines = {}, placed = {}, fills = {}, controls = {}, rows = {}, focusList = {}, focusPool = {},
+        dirty = true, scroll = 0, contentH = 0, innerW = 0 }, W)
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
-    local w = math.min(560, sw - 40)
-    -- autoY：視窗還在我們放的位置（玩家沒拖、沒讀回存檔位置）時，每次重排依新高度垂直置中
+    local w = math.min(520, sw - 40)
+    -- autoY：視窗還在我們放的位置（玩家沒拖、沒讀回上次的位置）時，每次重排依新高度垂直置中
     self.autoY = math.floor((sh - 200) / 2)
     self.win = UI.Window.new({ x = math.floor((sw - w) / 2), y = self.autoY, width = w, height = 200,
         title = getText("IGUI_MVM_SlotsTitle"), icon = "coins", theme = theme })
     -- 鍵盤／手把目標＝排版記下的控制項，含捲出可視範圍而暫時隱藏的；描述帶 scrollOwner，
     -- Focus 落點前請 body 捲過去（Body:scrollTo），所以看不到的控制項滑鼠點不到、鍵盤仍走得到
     self.win.keyboardTargets = function() return self.focusList end
+    -- Esc／手把 B：在確認頁回總覽；在總覽交回框架（手把 B 關窗）
+    self.win.onEscape = function()
+        if self.sheet == nil then return false end
+        self:closeSheet()
+        return true
+    end
     local top = self.win:contentTop()
     local body = Body:new(0, top, w, 100)
     body.background = false
@@ -332,18 +427,21 @@ function W.new()
     self.body = body
     self.ch = fontH(FS) + 10
     local step = math.max(28, self.ch)
-    self.btnBuy = self:button(nil, W.onBuyPermanent, "primary")
-    self.buyLess = self:stepButton("-", "buyQty", -1, step)
-    self.buyMore = self:stepButton("+", "buyQty", 1, step)
-    self.btnRent = self:button(nil, W.onRent, "primary")
-    self.rentLess = self:stepButton("-", "rentQty", -1, step)
-    self.rentMore = self:stepButton("+", "rentQty", 1, step)
+    self.btnBuy = self:button(getText("IGUI_MVM_Btn_BuySlots"), W.onBuyPermanent, "primary")
+    self.btnRent = self:button(getText("IGUI_MVM_Btn_RentSlots"), W.onRent, "primary")
     self.btnCheck = self:button(getText("IGUI_MVM_Btn_CheckOrder"), W.onCheckOrder)
     self.btnRefresh = self:button(getText("IGUI_MVM_Btn_Refresh"), W.onRefresh, "ghost", "reload")
-    self.btnPlans = self:button(getText("IGUI_MVM_Btn_ManagePlans"), W.onAdminPlans, "ghost", "settings")
-    self.buyLess._focusGroup, self.buyMore._focusGroup, self.btnBuy._focusGroup = "buy", "buy", "buy"
-    self.rentLess._focusGroup, self.rentMore._focusGroup, self.btnRent._focusGroup = "rent", "rent", "rent"
-    self.btnCheck._focusGroup, self.btnRefresh._focusGroup, self.btnPlans._focusGroup = "tail", "tail", "tail"
+    self.btnAdmin = self:button(getText("IGUI_MVM_Btn_PaidSettings"), W.onAdmin, "ghost", "settings")
+    self.less = self:stepButton("-", -1, step)
+    self.more = self:stepButton("+", 1, step)
+    self.sheetAuto = self:checkbox(getText("IGUI_MVM_Slots_AutoRenew"), function(t, checked)
+        if t.sheet then t.sheet.auto = checked; t.dirty = true end
+    end)
+    self.btnCancel = self:button(getText("UI_Cancel"), W.closeSheet)
+    self.btnPay = self:button(nil, W.onPay, "primary")
+    self.btnCheck._focusGroup, self.btnRefresh._focusGroup, self.btnAdmin._focusGroup = "tail", "tail", "tail"
+    self.less._focusGroup, self.more._focusGroup = "qty", "qty"
+    self.btnCancel._focusGroup, self.btnPay._focusGroup = "acts", "acts"
     return self
 end
 
@@ -359,27 +457,27 @@ function W:button(title, fn, style, icon, size)
         style = style, icon = icon, theme = theme, target = self, onClick = fn }))
 end
 
-function W:stepButton(title, key, delta, size)
+function W:stepButton(title, delta, size)
     local b = self:button(title, W.onStep, nil, nil, size)
-    b.qtyKey, b.internal = key, delta
+    b.internal = delta
     return b
 end
 
--- 每張租約一列：續租按鈕＋自動續費開關，用到才建（最多 rentalsMax 張）
+-- 每張租約：續租、自動續租開關、（需要時）同意新條款；用到才建（最多 rentalsMax 張）
 function W:rentalRow(i)
     local row = self.rows[i]
     if row == nil then
-        row = { renew = self:button(nil, W.onRenew) }
-        row.auto = self:adopt(UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Slots_AutoRenew"), theme = theme,
-            target = self, onChange = function(t, checked, box) t:onAutoRenew(checked, box) end }))
-        row.renew._focusGroup, row.auto._focusGroup = "rental" .. i, "rental" .. i
+        row = { renew = self:button(getText("IGUI_MVM_Btn_Renew"), W.onRenew),
+            agree = self:button(getText("IGUI_MVM_Btn_AgreeTerms"), W.onAgree, "primary") }
+        row.auto = self:checkbox(getText("IGUI_MVM_Slots_AutoRenew"), function(t, checked, box) t:onAutoRenew(checked, box) end)
+        row.renew._focusGroup, row.auto._focusGroup, row.agree._focusGroup = "card" .. i, "card" .. i, "agree" .. i
         self.rows[i] = row
     end
     return row
 end
 
 function W:say(text, token)
-    self.message, self.messageToken, self.dirty = text, token or "accent", true
+    self.message, self.messageToken, self.messageAt, self.dirty = text, token or "text", false, true
 end
 
 -- 捲動並當場重放控制項：只有完整落在可視範圍的控制項顯示（看不到的不能用滑鼠點）
@@ -397,19 +495,20 @@ function W:textAt(s, x, y, token, font)
     self.lines[#self.lines + 1] = { text = s, x = x, y = y, token = token or "text", font = font or FS }
 end
 
-function W:addText(s, token, font)
+-- 換行後逐行排；x／width 省略＝整個內容寬
+function W:addText(s, token, font, x, width)
     font = font or FS
     local parts = {}
-    BU.wrap(parts, s, self.innerW, font, measure)
+    BU.wrap(parts, s, width or self.innerW, font, measure)
     for _, t in ipairs(parts) do
-        self:textAt(t, PAD, self.y, token, font)
+        self:textAt(t, x or PAD, self.y, token, font)
         self.y = self.y + fontH(font) + 2
     end
 end
 
 function W:section(text)
     self.y = self.y + GAP
-    self:addText(text, "textMuted", FM)
+    self:addText(text, "text", FM)
 end
 
 -- 控制項排進目前這一列（列內垂直置中）；捲動時依 contentY 重放
@@ -427,8 +526,8 @@ function W:span(ctrls, top)
     end
 end
 
--- 由左至右擺一列控制項，放不下就換行。top＝這列說明文字的起點（捲動時一起帶進來）
-function W:placeRow(ctrls, top)
+-- 由左至右擺一列控制項，放不下就換行
+function W:placeRow(ctrls)
     local x, rowY, rowH = PAD, self.y, 0
     for _, c in ipairs(ctrls) do rowH = math.max(rowH, c.height) end
     for _, c in ipairs(ctrls) do
@@ -437,33 +536,59 @@ function W:placeRow(ctrls, top)
         x = x + c.width + GAP
     end
     if rowH > 0 then self.y = rowY + rowH + GAP end
-    self:span(ctrls, top or ctrls[1] and ctrls[1].contentY)
+    self:span(ctrls, ctrls[1] and ctrls[1].contentY)
 end
 
--- 數量步進器：標籤 [-] 數值 [+] [動作 k 個]；數值是文字，不是焦點目標
-function W:stepper(labelKey, value, hi, less, more, action, actionKey, enabled)
-    action:setTitle(getText(actionKey, value))
-    less:setEnabled(enabled and value > 1)
-    more:setEnabled(enabled and value < hi)
-    action:setEnabled(enabled)
-    local rowY, rowH = self.y, math.max(less.height, action.height)
-    local textY = rowY + math.floor((rowH - fontH(FS)) / 2)
-    local label, num, numW = getText(labelKey), tostring(value), measure("000", FS)
-    local x = PAD
-    self:textAt(label, x, textY)
-    x = x + measure(label, FS) + GAP
-    self:put(less, x, rowY, rowH)
-    x = x + less.width + GAP
-    self:textAt(num, x + math.floor((numW - measure(num, FS)) / 2), textY)
-    x = x + numW + GAP
-    self:put(more, x, rowY, rowH)
-    x = x + more.width + GAP
-    if x + action.width > PAD + self.innerW then x, rowY = PAD, rowY + rowH + GAP end
-    self:put(action, x, rowY, rowH)
+-- 一列：左邊文字（x0..right 之間換行），控制項靠右；剩給文字的寬度太窄就文字一行、控制項下一行靠右
+function W:sideRow(text, token, ctrls, x0, right)
+    local cw, ch = 0, 0
+    for _, c in ipairs(ctrls) do cw, ch = cw + c.width + GAP, math.max(ch, c.height) end
+    local tw = right - x0 - cw
+    local stacked = tw < self.innerW / 3
+    if stacked then tw = right - x0 end
+    local parts = {}
+    BU.wrap(parts, text, tw, FS, measure)
+    local lh = fontH(FS) + 2
+    local rowY, textH = self.y, #parts * lh
+    local rowH = stacked and textH or math.max(ch, textH)
+    local ty = rowY + math.floor((rowH - textH) / 2)
+    for i, t in ipairs(parts) do self:textAt(t, x0, ty + (i - 1) * lh, token) end
+    local cy = stacked and rowY + textH + GAP or rowY
+    local x = right - cw + GAP
+    for _, c in ipairs(ctrls) do
+        self:put(c, x, cy, stacked and ch or rowH)
+        x = x + c.width + GAP
+    end
+    self.y = (stacked and cy + ch or rowY + rowH) + GAP
+    self:span(ctrls, rowY)
+end
+
+-- 主按鈕在左、右邊一行價格與上限（或不能用的原因）
+function W:buttonLine(btn, info)
+    local x = PAD + btn.width + GAP
+    local parts = {}
+    BU.wrap(parts, info, PAD + self.innerW - x, FS, measure)
+    local lh = fontH(FS) + 2
+    local rowY = self.y
+    local rowH = math.max(btn.height, #parts * lh)
+    self:put(btn, PAD, rowY, rowH)
+    local ty = rowY + math.floor((rowH - #parts * lh) / 2)
+    for i, t in ipairs(parts) do self:textAt(t, x, ty + (i - 1) * lh, "textMuted") end
     self.y = rowY + rowH + GAP
-    local row = { less, more, action }
-    self:span(row, less.contentY)
-    return row
+    self:span({ btn }, rowY)
+end
+
+-- 一列控制項靠右（確認頁的取消／付款）
+function W:rowRight(ctrls)
+    local w, h = -GAP, 0
+    for _, c in ipairs(ctrls) do w, h = w + c.width + GAP, math.max(h, c.height) end
+    local x, rowY = PAD + self.innerW - w, self.y
+    for _, c in ipairs(ctrls) do
+        self:put(c, x, rowY, h)
+        x = x + c.width + GAP
+    end
+    self.y = rowY + h + GAP
+    self:span(ctrls, rowY)
 end
 
 -- 焦點描述：排版順序中連續、同一 _focusGroup 的控制項併成一組（每列一組，左右鍵在組內走）。
@@ -481,7 +606,7 @@ function W:buildFocus()
         end
         local m = 0
         d.control = nil
-        while i <= #placed and placed[i]._focusGroup == group do
+        while i <= #placed and placed[i]._focusGroup == group and (group ~= nil or m == 0) do
             local c = placed[i]
             m = m + 1
             d.controls[m] = c
@@ -506,61 +631,40 @@ function W:tick()
     end
 end
 
+-- 狀態列訊息只描述說出它時的狀態：之後權益或方案版本變了（新狀態到達）就清掉
+function W:syncMessage(key)
+    if self.messageAt == false then
+        self.messageAt = key
+    elseif self.message ~= nil and self.messageAt ~= key then
+        self.message = nil
+    end
+end
+
 function W:layout()
     self.dirty, self.laidOutAt = false, getTimestampMs()
     local b = bucket()
     local q = b and b.quota
-    local E, CL = BU.api()
+    local E = BU.api()
     -- 只有 server 整合 READY 才碰 Economy（SP／未安裝／失敗時不送任何 Economy 命令）
     self.live = E ~= nil and q ~= nil and q.economy == "READY"
     local env = self.live and E.getState(SRC, PROD) or nil
     self.env, self.quota, self.admin = env, q, b and b.admin
     if self.live and env == nil and not self.requested then self:requestState() end
-    for _, c in ipairs(self.controls) do c:setVisible(false) end
-    self.lines, self.placed, self.y, self.innerW = {}, {}, PAD, self.win.width - PAD * 2
-
-    self:addText(getText("IGUI_MVM_Slots_Section_Now"), "textMuted", FM)
-    if q then
-        self:addText(getText("IGUI_MVM_Slots_Base", q.base or 0))
-        self:addText(getText("IGUI_MVM_Slots_Permanent", q.permanent or 0))
-        self:addText(getText("IGUI_MVM_Slots_Rental", q.rental or 0))
-        self:addText(getText("IGUI_MVM_Slots_Total", q.total or 0, q.used or 0), "accent")
-        if (q.pending or 0) > 0 then self:addText(getText("IGUI_MVM_Slots_Pending", q.pending), "accent") end
-    end
-
+    self:syncMessage(BU.stateKey(env))
     local blocker = BU.blocker(q, E ~= nil, env)
-    local ent = {}
-    if blocker then
-        self.y = self.y + GAP
-        local loading = blocker == "IGUI_MVM_Loading" or blocker == "IGUI_MVM_Slots_LoadingPrices"
-        if loading and self.stateError then
-            self:addText(self.stateError, "errorText")
-        else
-            self:addText(getText(blocker), loading and "textMuted" or "errorText")
-        end
-    elseif env.ok == false then
-        self.y = self.y + GAP
-        self:addText(BU.reasonText(env.error, E), "errorText")
-    else
-        ent = tbl(env.entitlement)
-        self:layoutOffer(E, env, q.total or 0)
+    local s = self.sheet
+    if s and (blocker or env.ok == false or (s.rental and BU.findRental(tbl(env.entitlement), s.rental) == nil)
+        or ((s.kind == "permanent" or s.kind == "rental") and BU.sheetMax(env, s.kind) < 1)) then
+        self.sheet = nil
     end
+    for _, c in ipairs(self.controls) do c:setVisible(false) end
+    self.lines, self.placed, self.fills, self.y, self.innerW = {}, {}, {}, PAD, self.win.width - PAD * 2
 
-    -- 狀態列與查詢／重新整理／管理入口
-    self.y = self.y + GAP
-    if self.busy then
-        self:addText(getText("IGUI_MVM_Pending"), "accent")
-    elseif self.message then
-        self:addText(self.message, self.messageToken)
+    if self.sheet then
+        self:layoutSheet(E, env, q)
+    else
+        self:layoutOverview(E, env, q, blocker)
     end
-    local tail = {}
-    if self.live and (self.order ~= nil or ent.pendingOrderId ~= nil) then
-        self.btnCheck:setEnabled(self.busy == nil)
-        tail[#tail + 1] = self.btnCheck
-    end
-    tail[#tail + 1] = self.btnRefresh
-    if self.admin ~= nil and CL and CL.openAdminPlans then tail[#tail + 1] = self.btnPlans end
-    self:placeRow(tail)
 
     local top = self.win:contentTop()
     local sh = getCore():getScreenHeight()
@@ -577,138 +681,224 @@ function W:layout()
     keepFocus(self)
 end
 
--- 價格與購買：玩家待確認提示、買斷步進器、租約清單、新租約步進器、錢包。total＝目前綁定上限
-function W:layoutOffer(E, env, total)
-    local plan, ent = tbl(env.plan), tbl(env.entitlement)
-    local waiting = E.waitText(ent.wait)
-    if waiting then self:addText(waiting, "accent") end
-    if ent.pendingOrderId ~= nil or self.order ~= nil then self:addText(getText("IGUI_MVM_Slots_PendingBlock"), "accent") end
-    if env.available == false then self:addText(getText("IGUI_MVM_Slots_Paused"), "accent") end
-    local canBuy = self:canPurchase()
-
-    self:section(getText("IGUI_MVM_Slots_Section_Buy"))
-    local currencies = {}
-    if plan.permanentEnabled then
-        local name = BU.currencyName(E, plan.permanentCurrency)
-        currencies[1] = plan.permanentCurrency
-        self:addText(getText("IGUI_MVM_Slots_PermanentPrice", plan.permanentPrice or 0, name, ent.permanent or 0,
-            plan.permanentLimit or 0))
-        local hi = BU.permanentMax(plan, ent)
-        if hi < 1 then
-            self:addText(getText("IGUI_MVM_Slots_PermanentLimit", plan.permanentLimit or 0), "textMuted")
-        else
-            self.buyQty = BU.clamp(self.buyQty, hi)
-            local k = self.buyQty
-            local row = self:stepper("IGUI_MVM_Slots_Quantity", k, hi, self.buyLess, self.buyMore, self.btnBuy,
-                "IGUI_MVM_Btn_BuyN", canBuy)
-            self:addText(getText("IGUI_MVM_Slots_BuySubtotal", k * (plan.permanentPrice or 0), name, total + k), "textMuted")
-            self:span(row)
-        end
-    else
-        self:addText(getText("IGUI_MVM_Slots_PermanentOff"), "textMuted")
-    end
-
-    self:section(getText("IGUI_MVM_Slots_Section_Rental"))
-    local name = BU.currencyName(E, plan.rentalCurrency)
-    if plan.rentalEnabled then
-        self:addText(getText("IGUI_MVM_Slots_RentalPlan", plan.rentalDays or 0, plan.rentalPrice or 0, name))
-        if plan.rentalCurrency ~= currencies[1] then currencies[#currencies + 1] = plan.rentalCurrency end
-    else
-        self:addText(getText("IGUI_MVM_Slots_RentalOff"), "textMuted")
-    end
-    local rentals = BU.rentals(ent)
-    if #rentals > 0 then
-        self:addText(getText("IGUI_MVM_Slots_RentalSummary", ent.rentalCommitted or 0, plan.rentalLimit or 0))
-        if BU.overLimit(plan, ent) then self:addText(getText("IGUI_MVM_Slots_OverLimit", plan.rentalLimit or 0), "accent") end
-        if not plan.autoRenewAllowed then self:addText(getText("IGUI_MVM_Slots_AutoRenewNotOffered"), "textMuted") end
-        local now = getTimestampMs()
-        for i, r in ipairs(rentals) do self:layoutRental(i, r, env, E, now, canBuy) end
-    elseif plan.rentalEnabled then
-        self:addText(getText("IGUI_MVM_Slots_NoRentals", plan.rentalLimit or 0), "textMuted")
-    end
-    if plan.rentalEnabled then
-        local hi, why, arg = BU.newRental(plan, ent)
-        if why == nil then
-            self.rentQty = BU.clamp(self.rentQty, hi)
-            local n = self.rentQty
-            local row = self:stepper("IGUI_MVM_Slots_NewRental", n, hi, self.rentLess, self.rentMore, self.btnRent,
-                "IGUI_MVM_Btn_RentN", canBuy)
-            self:addText(getText("IGUI_MVM_Slots_RentSubtotal", n * (plan.rentalPrice or 0), name, plan.rentalDays or 0,
-                total + n), "textMuted")
-            self:span(row)
-        elseif why ~= "IGUI_MVM_Slots_OverLimit" then -- 超過上限的說明已在租約清單上方
-            self:addText(getText(why, arg), "textMuted")
-        end
-    end
-
-    self.y = self.y + GAP
-    for _, id in ipairs(currencies) do
-        local bal = type(env.balances) == "table" and env.balances[id]
-        self:addText(getText("IGUI_MVM_Slots_Balance", BU.currencyName(E, id), bal and bal.available or 0), "textMuted")
+-- 狀態列：處理中（灰）或最後一則訊息（成功白、錯誤紅、需要你處理金）
+function W:status()
+    if self.busy then
+        self:addText(getText("IGUI_MVM_Slots_Busy"), "textMuted")
+    elseif self.message then
+        self:addText(self.message, self.messageToken)
     end
 end
 
--- 一張租約：狀態行、續租＋自動續費一列、續租價格或不能續租的原因、自動續費狀態
-function W:layoutRental(i, r, env, E, now, canBuy)
-    local plan, ent = tbl(env.plan), tbl(env.entitlement)
-    local qn, days = r.quantity or 0, plan.rentalDays or 0
-    local top = self.y
-    local function terms(key, t) -- 條款文字：每期金額（單價 × 名額）、幣別、天數
-        return getText(key, (t.price or 0) * qn, BU.currencyName(E, t.currency), t.price or 0, qn, t.days or 0)
+-- 總覽：可綁定台數（大字）、分項、買斷／租用、我的租約、錢包、頁尾按鈕
+function W:layoutOverview(E, env, q, blocker)
+    if q then
+        self:addText(getText("IGUI_MVM_Slots_Headline", q.total or 0, q.used or 0), "text", FL)
+        self:addText(getText("IGUI_MVM_Slots_Breakdown", q.base or 0, q.permanent or 0, q.rental or 0), "textMuted")
     end
-    if type(r.paidUntil) ~= "number" then
-        -- 新租約已付款、等存檔：還沒有租期，沒有可操作的東西
-        self:addText(getText("IGUI_MVM_Slots_RentalNew", qn, type(r.terms) == "table" and r.terms.days or days), "accent")
-        if type(r.terms) == "table" then self:addText(terms("IGUI_MVM_Slots_RentalTerms", r.terms), "textMuted") end
-        return
-    end
-    local d, h = BU.timeLeft(r.paidUntil, now)
-    if d then
-        self:addText(getText("IGUI_MVM_Slots_RentalActive", qn, d, h))
-    else
-        local gd, gh = BU.timeLeft(r.graceUntil, now)
-        if gd then
-            self:addText(getText("IGUI_MVM_Slots_RentalGrace", qn, gd * 24 + gh), "accent")
+    self.y = self.y + GAP
+    if blocker then
+        local loading = blocker == "IGUI_MVM_Loading" or blocker == "IGUI_MVM_Slots_LoadingPrices"
+        if loading and self.stateError then
+            self:addText(self.stateError, "errorText")
         else
-            self:addText(getText("IGUI_MVM_Slots_RentalExpired", qn), "textMuted")
+            self:addText(getText(blocker), loading and "textMuted" or "errorText")
         end
+    elseif env.ok == false then
+        self:addText(BU.reasonText(env.error, E), "errorText")
+    else
+        self:layoutOffer(E, env)
     end
-    if type(r.terms) == "table" then self:addText(terms("IGUI_MVM_Slots_RentalTerms", r.terms), "textMuted") end
+    self.y = self.y + GAP
+    self:status()
+    local tail = {}
+    if self.live and self.order ~= nil then
+        self.btnCheck:setEnabled(self.busy == nil)
+        tail[#tail + 1] = self.btnCheck
+    end
+    tail[#tail + 1] = self.btnRefresh
+    if self.admin ~= nil then tail[#tail + 1] = self.btnAdmin end
+    self:placeRow(tail)
+end
+
+function W:layoutOffer(E, env)
+    local plan, ent = tbl(env.plan), tbl(env.entitlement)
+    local canBuy = self:canPurchase()
+    if env.available == false and (plan.permanentEnabled or plan.rentalEnabled) then
+        self:addText(getText("IGUI_MVM_Slots_SalesPaused"), "text")
+    end
+    local hi, info = BU.permanentMax(plan, ent), nil
+    if not plan.permanentEnabled then
+        info = getText("IGUI_MVM_Slots_PermanentOff")
+    elseif hi < 1 then
+        info = getText("IGUI_MVM_Slots_BuyFull", ent.permanent or 0, plan.permanentLimit or 0)
+    else
+        info = getText("IGUI_MVM_Slots_BuyInfo", plan.permanentPrice or 0, BU.currencyName(E, plan.permanentCurrency),
+            ent.permanent or 0, plan.permanentLimit or 0)
+    end
+    self.btnBuy:setEnabled(canBuy and plan.permanentEnabled == true and hi >= 1)
+    self:buttonLine(self.btnBuy, info)
+
+    local room, why, arg = BU.newRental(plan, ent)
+    if not plan.rentalEnabled then
+        info = getText("IGUI_MVM_Slots_RentalOff")
+    elseif why == nil or why == "IGUI_MVM_Slots_OverLimit" then -- 超過上限的說明在租約清單上方
+        info = getText("IGUI_MVM_Slots_RentInfo", plan.rentalPrice or 0, BU.currencyName(E, plan.rentalCurrency),
+            plan.rentalDays or 0, ent.rentalCommitted or 0, plan.rentalLimit or 0)
+    elseif why == "IGUI_MVM_Slots_RentalFull" then
+        info = getText(why, ent.rentalCommitted or 0, arg)
+    else
+        info = getText(why, arg)
+    end
+    self.btnRent:setEnabled(canBuy and plan.rentalEnabled == true and room >= 1)
+    self:buttonLine(self.btnRent, info)
+
+    local rentals = BU.rentals(ent)
+    if #rentals > 0 then
+        self:section(getText("IGUI_MVM_Slots_Section_Rentals"))
+        for _, n in ipairs(BU.notices(env)) do
+            self:addText(n[2] ~= nil and getText(n[1], n[2], n[3]) or getText(n[1]), "text")
+        end
+        local now = getTimestampMs()
+        for i, r in ipairs(rentals) do self:layoutCard(i, r, env, E, now, canBuy) end
+    end
+
+    -- 錢包：方案用到的幣別各一筆
+    local parts, ids = {}, { plan.rentalCurrency }
+    if plan.permanentEnabled and plan.permanentCurrency ~= plan.rentalCurrency then
+        table.insert(ids, 1, plan.permanentCurrency)
+    end
+    for _, id in ipairs(ids) do
+        parts[#parts + 1] = getText("IGUI_MVM_Slots_Wallet", BU.currencyName(E, id), BU.balance(env, id))
+    end
+    if #parts > 0 then
+        self.y = self.y + GAP
+        self:addText(table.concat(parts, getText("IGUI_MVM_Sep"), 1, #parts), "textMuted")
+    end
+end
+
+-- 一張租約卡片：「N 個名額 · 剩 X」＋續租＋自動續租一列；要玩家同意新條款時多一行（金色＋同意鈕）
+function W:layoutCard(i, r, env, E, now, canBuy)
+    local plan, ent = tbl(env.plan), tbl(env.entitlement)
+    local qn = r.quantity or 0
+    local top = self.y + (i > 1 and CARD_GAP - GAP or 0)
+    self.y = top + CARD_PAD
+    local left, text, token = BU.leftText(r.paidUntil, now), nil, "text"
+    if left then
+        text = getText("IGUI_MVM_Slots_Card", qn, left)
+    else
+        local grace = BU.leftText(r.graceUntil, now)
+        text = grace and getText("IGUI_MVM_Slots_CardGrace", qn, grace) or getText("IGUI_MVM_Slots_CardExpired", qn)
+        if grace == nil then token = "textMuted" end
+    end
     local row = self:rentalRow(i)
-    row.renew.internal, row.auto.internal = r.id, r.id
-    row.renew:setTitle(getText("IGUI_MVM_Btn_Renew", days))
+    row.renew.internal, row.auto.internal, row.agree.internal = r.id, r.id, r.id
     local why = BU.renewReason(env, r)
     row.renew:setEnabled(canBuy and why == nil)
     local ctrls = { row.renew }
-    local ar = r.autoRenewState or "off"
     local on = BU.autoRenewOn(r)
-    if plan.autoRenewAllowed or on or ar == "pending_off" then
+    if plan.autoRenewAllowed or on or r.autoRenewState == "pending_off" then
         row.auto:setChecked(on, true)
-        row.auto:setEnabled(self.busy == nil and (on or plan.autoRenewAllowed == true))
+        relabel(row.auto, getText(BU.autoPaused(plan, ent, r) and "IGUI_MVM_Slots_AutoPaused" or "IGUI_MVM_Slots_AutoRenew"))
+        row.auto:setEnabled(self.live and self.busy == nil and (on or plan.autoRenewAllowed == true))
         ctrls[2] = row.auto
     end
-    self:placeRow(ctrls, top)
-    local amount, name = qn * (plan.rentalPrice or 0), BU.currencyName(E, plan.rentalCurrency)
-    if why then
-        self:addText(getText(why), "textMuted")
-    elseif restarts(r) then
-        self:addText(getText("IGUI_MVM_Slots_RenewRestart", amount, name, days), "textMuted")
-    else
-        local nd, nh = BU.timeLeft(r.paidUntil + days * DAY_MS, now)
-        self:addText(getText("IGUI_MVM_Slots_RenewPrice", amount, name, nd or 0, nh or 0), "textMuted")
+    local x0, right = PAD + CARD_PAD, PAD + self.innerW - CARD_PAD
+    self:sideRow(text, token, ctrls, x0, right)
+    if BU.needsConsent(plan, r) then
+        row.agree:setEnabled(self.live and self.busy == nil)
+        self:sideRow(BU.termsText(E, plan, r.autoTerms, qn), "accent", { row.agree }, x0, right)
     end
-    if ctrls[2] then
-        self:addText(getText("IGUI_MVM_Slots_AutoRenewState", E.autoRenewText and E.autoRenewText(ar) or ar), "textMuted")
-        local pause = BU.autoPauseReason(plan, ent, r)
-        if pause == "IGUI_MVM_Slots_AutoTermsChanged" then
-            local was, now = r.autoTerms, BU.planTerms(plan)
-            self:addText(getText(pause, (was.price or 0) * qn, BU.currencyName(E, was.currency), was.days or 0,
-                (now.price or 0) * qn, BU.currencyName(E, now.currency), now.days or 0), "accent")
-        elseif pause then
-            self:addText(getText(pause), "accent")
+    if why == "OVER" and not BU.overLimit(plan, ent) then
+        self:addText(getText("IGUI_MVM_Slots_RenewOver", plan.rentalLimit or 0), "textMuted", FS, x0, right - x0)
+    end
+    self.y = self.y - GAP + CARD_PAD
+    self.fills[#self.fills + 1] = { y = top, h = self.y - top }
+    self.y = self.y + GAP
+end
+
+-- 確認頁：標題、（買斷／租用）數量、合計、付款後可綁定台數、餘額前後、（租用）到期自動續租、取消／付款
+local SHEET_TITLES = { permanent = "IGUI_MVM_Btn_BuySlots", rental = "IGUI_MVM_Btn_RentSlots", renew = "IGUI_MVM_Btn_Renew",
+    auto = "IGUI_MVM_Slots_AutoRenew" }
+
+function W:layoutSheet(E, env, q)
+    local s, plan, ent = self.sheet, tbl(env.plan), tbl(env.entitlement)
+    self:addText(getText(SHEET_TITLES[s.kind]), "text", FM)
+    self.y = self.y + GAP
+    if s.kind == "permanent" or s.kind == "rental" then
+        local hi = BU.sheetMax(env, s.kind)
+        s.qty = BU.clamp(s.qty, hi)
+        self:qtyRow(s.qty, hi)
+    end
+    local amount, cur, n = BU.sheetMoney(env, s)
+    local name = BU.currencyName(E, cur)
+    local days = plan.rentalDays or 0
+    local r = s.rental and BU.findRental(ent, s.rental)
+    if s.kind == "permanent" or s.kind == "rental" then
+        self:addText(s.kind == "rental" and getText("IGUI_MVM_Slots_SheetRentTotal", days, amount, name)
+            or getText("IGUI_MVM_Slots_SheetTotal", amount, name), "text")
+        self:addText(getText("IGUI_MVM_Slots_SheetAfter", (q and q.total or 0) + n), "textMuted")
+    elseif s.kind == "renew" then
+        if restarts(r) then
+            self:addText(getText("IGUI_MVM_Slots_SheetRestart", n, days), "text")
+        else
+            self:addText(getText("IGUI_MVM_Slots_SheetRenew", n, days,
+                BU.leftText(r.paidUntil + days * DAY_MS, getTimestampMs()) or ""), "text")
         end
+        if BU.termsDiffer(plan, r.terms) then self:addText(BU.termsText(E, plan, r.terms, n), "text") end
+    else
+        self:addText(getText("IGUI_MVM_Slots_SheetAuto", n, days, amount, name), "text")
+        self:addText(getText("IGUI_MVM_Slots_SheetAutoNote"), "textMuted")
     end
-    self:span(ctrls)
+    local have = BU.balance(env, cur)
+    local short = s.kind ~= "auto" and have < amount
+    if short then
+        self:addText(getText("IGUI_MVM_Slots_QuoteShort", name, have, amount - have), "errorText")
+    elseif s.kind ~= "auto" then
+        self:addText(getText("IGUI_MVM_Slots_SheetBalance", name, have, have - amount), "textMuted")
+    end
+    if s.kind == "rental" and plan.autoRenewAllowed then
+        self.y = self.y + GAP
+        self.sheetAuto:setChecked(s.auto == true, true)
+        self.sheetAuto:setEnabled(self.busy == nil)
+        -- 開關標籤只放短句（標籤不換行）；每期金額另起一行灰字，照內容寬換行
+        relabel(self.sheetAuto, getText("IGUI_MVM_Slots_SheetAutoBox"))
+        self:placeRow({ self.sheetAuto })
+        self:addText(getText("IGUI_MVM_Slots_SheetAutoEach", amount, name), "textMuted")
+        self:span({ self.sheetAuto })
+    end
+    if s.notice then self:addText(getText("IGUI_MVM_Slots_PriceChanged"), "accent") end
+    self.y = self.y + GAP
+    self:status()
+    if s.kind == "auto" then
+        self.btnPay:setTitle(getText("IGUI_MVM_Btn_Agree"))
+        self.btnPay:setEnabled(self.live and self.busy == nil and plan.autoRenewAllowed == true)
+    else
+        self.btnPay:setTitle(getText("IGUI_MVM_Btn_PayN", amount))
+        self.btnPay:setEnabled(self:canPurchase() and not short and n >= 1)
+    end
+    self.btnCancel:setEnabled(self.busy == nil)
+    self:rowRight({ self.btnCancel, self.btnPay })
+end
+
+-- 數量：標籤 [-] 數值 [+]；數值是文字，不是焦點目標
+function W:qtyRow(value, hi)
+    local less, more = self.less, self.more
+    less:setEnabled(self.busy == nil and value > 1)
+    more:setEnabled(self.busy == nil and value < hi)
+    local rowY, rowH = self.y, less.height
+    local textY = rowY + math.floor((rowH - fontH(FS)) / 2)
+    local label, num, numW = getText("IGUI_MVM_Slots_Quantity"), tostring(value), measure("000", FS)
+    local x = PAD
+    self:textAt(label, x, textY)
+    x = x + measure(label, FS) + GAP
+    self:put(less, x, rowY, rowH)
+    x = x + less.width + GAP
+    self:textAt(num, x + math.floor((numW - measure(num, FS)) / 2), textY)
+    x = x + numW + GAP
+    self:put(more, x, rowY, rowH)
+    self.y = rowY + rowH + GAP
+    self:span({ less, more }, rowY)
 end
 
 -- ------------------------------------------------------------------ 操作 ---
@@ -718,139 +908,154 @@ function W:localRefusal(why)
     self:say(BU.reasonText(why or "invalid_args", BU.api()), "errorText")
 end
 
--- 玩家自己的待確認購買（本機訂單或快照的 pendingOrderId）才擋；自動續費的待確認付款不擋新購買
+-- 付款結果未知（self.order）時不能再買，直到查回同一筆的結果
 function W:canPurchase()
     local env = self.env
-    if not self.live or self.busy or self.order or not env or env.ok == false or env.available == false then return false end
-    return tbl(env.entitlement).pendingOrderId == nil
+    return self.live == true and not self.busy and self.order == nil and env ~= nil and env.ok ~= false
+        and env.available ~= false
+end
+
+function W:openSheet(kind, rental)
+    if kind == "auto" then
+        if not self.live or self.busy then return end
+    elseif not self:canPurchase() then
+        return
+    end
+    self.sheet = { kind = kind, rental = rental, qty = 1 }
+    self:say(nil)
+end
+
+function W:closeSheet()
+    if self.busy == "quote" or self.busy == "purchase" then return end
+    self.sheet = nil
+    self:say(nil)
 end
 
 -- 步進器：只改數量，下次排版夾回範圍
 function W:onStep(b)
-    self[b.qtyKey], self.dirty = (self[b.qtyKey] or 1) + b.internal, true
+    if self.sheet then self.sheet.qty, self.dirty = (self.sheet.qty or 1) + b.internal, true end
 end
 
 function W:onBuyPermanent()
-    local env = tbl(self.env)
-    local hi = BU.permanentMax(tbl(env.plan), tbl(env.entitlement))
-    if hi >= 1 then self:startQuote("permanent", BU.clamp(self.buyQty, hi)) end
+    if BU.sheetMax(tbl(self.env), "permanent") >= 1 then self:openSheet("permanent") end
 end
 
 function W:onRent()
-    local env = tbl(self.env)
-    local hi = BU.newRental(tbl(env.plan), tbl(env.entitlement))
-    if hi >= 1 then self:startQuote("rental", BU.clamp(self.rentQty, hi)) end
+    if BU.sheetMax(tbl(self.env), "rental") >= 1 then self:openSheet("rental") end
 end
 
--- 續租不送數量：server 依該張租約的名額報價
 function W:onRenew(b)
     local env = tbl(self.env)
     local r = BU.findRental(tbl(env.entitlement), b.internal)
-    if r == nil or BU.renewReason(env, r) ~= nil then return end
-    self:startQuote("rental", nil, r.id)
+    if r ~= nil and BU.renewReason(env, r) == nil then self:openSheet("renew", r.id) end
+end
+
+function W:onAgree(b)
+    local env = tbl(self.env)
+    local r = BU.findRental(tbl(env.entitlement), b.internal)
+    if r ~= nil and tbl(env.plan).autoRenewAllowed then self:openSheet("auto", r.id) end
+end
+
+-- 付款鈕：先報價；報價金額與確認頁一致才付款（onQuote）。同意自動續租直接送出
+function W:onPay()
+    local s, env = self.sheet, tbl(self.env)
+    if s == nil then return end
+    s.notice = nil
+    local plan, ent = tbl(env.plan), tbl(env.entitlement)
+    if s.kind == "auto" then return self:sendAutoRenew(true, ent.revision, plan.revision, s.rental) end
+    if s.kind ~= "renew" then s.qty = BU.clamp(s.qty, BU.sheetMax(env, s.kind)) end
+    local amount, cur, n = BU.sheetMoney(env, s)
+    s.expect = { amount = amount, currency = cur }
+    -- 續租不送數量：server 依該張租約的名額報價
+    if s.kind == "renew" then return self:startQuote("rental", nil, s.rental) end
+    self:startQuote(s.kind, n)
 end
 
 function W:startQuote(kind, quantity, rental)
     local E = BU.api()
     if E == nil or not self:canPurchase() then return end
-    self.busy, self.quoting = "quote", { kind = kind, quantity = quantity, rental = rental }
+    self.busy = "quote"
     self:say(nil)
     local rid, why = E.quote(SRC, PROD, kind, quantity, function(res) self:onQuote(res) end, rental)
     if rid == nil then self:localRefusal(why) end
 end
 
--- 報價摘要＝最後確認：動作與數量、起算方式、價格、付款前後餘額、付款後上限；餘額不足只告知缺額，不提供付款
+-- 報價回來：金額、幣別等於確認頁上的就付款；不同（方案剛改）不付款，確認頁依新方案重算並提示
 function W:onQuote(res)
     self.busy, self.dirty = nil, true
-    local ask = self.quoting or {}
-    self.quoting = nil
-    if res.unknown then return self:say(getText("IGUI_MVM_Slots_QuoteNoAnswer"), "accent") end
+    if res.unknown then return self:say(getText("IGUI_MVM_Slots_QuoteNoAnswer"), "errorText") end
     if not res.ok or type(res.quote) ~= "table" then return self:say(BU.reasonText(res.error, BU.api()), "errorText") end
-    local E = BU.api()
-    local q = res.quote
-    local env = type(res.snapshot) == "table" and res.snapshot or self.env or {}
-    local plan, ent = tbl(env.plan), tbl(env.entitlement)
-    local r = ask.rental and BU.findRental(ent, ask.rental)
-    local n = tonumber(q.quantity) or ask.quantity or (r and r.quantity) or 1
-    local days = plan.rentalDays or "?"
-    local grow, first = n, nil
-    if q.kind == "permanent" then
-        first = getText("IGUI_MVM_Slots_QuotePermanent", n)
-    elseif ask.rental == nil then
-        first = getText("IGUI_MVM_Slots_QuoteRental", n, days)
-    elseif r and restarts(r) then
-        first = getText("IGUI_MVM_Slots_QuoteRenewExpired", n, days)
-    else
-        first, grow = getText("IGUI_MVM_Slots_QuoteRenew", n, days), 0
+    local s = self.sheet
+    if s == nil then return end
+    if not BU.quoteMatches(res.quote, s.expect) then
+        s.notice = true
+        return
     end
-    local name = BU.currencyName(E, q.currency)
-    local bal = type(env.balances) == "table" and env.balances[q.currency]
-    local have, amount = bal and bal.available or 0, q.amount or 0
-    local parts = { first }
-    if r and q.kind ~= "permanent" and BU.termsDiffer(plan, r.terms) then
-        -- 續租用目前方案的條款：先寫出這張租約原本的條款 → 新條款
-        local was = r.terms
-        parts[2] = getText("IGUI_MVM_Slots_QuoteTermsChange", (was.price or 0) * n, BU.currencyName(E, was.currency),
-            was.days or 0, (plan.rentalPrice or 0) * n, BU.currencyName(E, plan.rentalCurrency), plan.rentalDays or 0)
-    end
-    parts[#parts + 1] = getText("IGUI_MVM_Slots_QuotePrice", amount, name)
-    local opts = { title = getText("IGUI_MVM_SlotsTitle"), theme = theme, width = dialogWidth() }
-    if have < amount then
-        parts[#parts + 1] = getText("IGUI_MVM_Slots_QuoteShort", name, have, amount - have)
-        opts.confirmText = getText("UI_Ok")
-        opts.onResult = function() self.modal = nil end
-    else
-        parts[#parts + 1] = getText("IGUI_MVM_Slots_QuoteBalance", have, name, have - amount)
-        local total = self.quota and self.quota.total
-        if grow > 0 and total then parts[#parts + 1] = getText("IGUI_MVM_Slots_QuoteLimit", total + grow) end
-        parts[#parts + 1] = getText("IGUI_MVM_Slots_QuoteNote")
-        opts.confirmText, opts.cancelText = getText("IGUI_MVM_Btn_Pay"), getText("UI_Cancel")
-        opts.onResult = function(ok) self.modal = nil; if ok then self:purchase(q) end end
-    end
-    opts.text = table.concat(parts, "\n")
-    self.modal = UI.Dialog.show(opts)
+    self:purchase(res.quote)
 end
 
 function W:purchase(q)
     local E = BU.api()
     if E == nil or not self:canPurchase() then return end
+    local s = self.sheet
     self.busy = "purchase"
     self:say(nil)
     -- 付款前保留 server 指定的識別；查詢只讀同一筆，不用其他新訂單猜測付款結果。
-    self.order = { quoteId = q.id, orderId = q.orderId }
+    -- 新租約勾了到期自動續租：意圖跟著這筆訂單，直到它有最終結果（付款逾時後查回 paid 也照樣送同意）
+    self.order = { quoteId = q.id, orderId = q.orderId,
+        auto = s and s.kind == "rental" and s.auto and { terms = q.termsRevision } or nil }
     local rid, why = E.purchase(SRC, q.id, function(res) self:onPurchase(res) end)
-    if rid == nil then self.order = nil; self:localRefusal(why) end
+    if rid == nil then
+        self.order = nil
+        self:localRefusal(why)
+    end
+end
+
+-- 訂單有了最終結果：付款完成且勾了自動續租，就替這張新租約（id＝訂單 id）送同意，條款＝報價的方案版本，
+-- 權益版本取這次回覆的快照；退款、未付款只說明結果
+function W:finishOrder(o, res, key)
+    self.order = nil
+    local auto = o.auto
+    if auto and o.orderId ~= nil and key == "IGUI_MVM_Slots_PaidDone" then
+        local snap = tbl(res.snapshot)
+        return self:sendAutoRenew(true, tbl(snap.entitlement).revision, tonumber(auto.terms) or tbl(snap.plan).revision,
+            o.orderId, key)
+    end
+    self:say(getText(key), "text")
 end
 
 function W:onPurchase(res)
-    self.busy = nil
+    self.busy, self.dirty = nil, true
     local key = BU.purchaseKey(res)
+    local o = self.order
     if key == nil then
         self.order = nil
         return self:say(BU.reasonText(res.error, BU.api()), "errorText")
     end
-    self.order.orderId = self.order.orderId or res.orderId
-    if key == "IGUI_MVM_Slots_Saved" or key == "IGUI_MVM_Slots_RolledBack" then self.order = nil end
-    self:say(getText(key), key == "IGUI_MVM_Slots_RolledBack" and "errorText" or "accent")
+    self.sheet = nil
+    if o and res.orderId then o.orderId = o.orderId or res.orderId end
+    if key == "IGUI_MVM_Slots_NoAnswer" then return self:say(getText(key), "accent") end
+    self:finishOrder(o or {}, res, key)
 end
 
 -- 查詢只讀：優先查 server 在報價指定的 orderId；舊報價缺 orderId 時查原 quoteId，絕不重送購買。
 function W:onCheckOrder()
     local E = BU.api()
-    if E == nil or not self.live or self.busy then return end
     local o = self.order
-    local ent = self.env and tbl(self.env.entitlement) or {}
-    local id = o and (o.orderId or o.quoteId) or ent.pendingOrderId
-    if id == nil then return end
-    if o == nil then self.order = { orderId = id } end
+    if E == nil or not self.live or self.busy or o == nil then return end
+    local id = o.orderId or o.quoteId
     self.busy = "order"
     self:say(nil)
     local rid, why = E.getOrder(SRC, PROD, id, function(res) self:onOrder(res, id) end)
     if rid == nil then self:localRefusal(why) end
 end
 
+local OUTCOME_KEYS = { paid = "IGUI_MVM_Slots_PaidDone", refunded = "IGUI_MVM_Slots_Refunded",
+    not_paid = "IGUI_MVM_Slots_NoOrder" }
+
+-- 只有查回同一筆、而且 server 給了最終結果才解除付款鎖；其他一律維持「查詢購買結果」
 function W:onOrder(res, requestedId)
-    self.busy = nil
+    self.busy, self.dirty = nil, true
     if res.unknown then return self:say(getText("IGUI_MVM_Slots_NoAnswer"), "accent") end
     if not res.ok then return self:say(BU.reasonText(res.error, BU.api()), "errorText") end
     local pending = self.order
@@ -860,52 +1065,46 @@ function W:onOrder(res, requestedId)
     end
     local sameOrder = pending and order.orderId ~= nil and order.orderId == pending.orderId
     local E = BU.api()
-    local outcome = E and E.orderOutcome and E.orderOutcome(res) or "unknown"
-    if not sameOrder or res.known ~= true then
-        return self:say(getText("IGUI_MVM_Slots_NoAnswer"), "accent")
-    end
-    if outcome == "paid" or outcome == "refunded" or outcome == "not_paid" then self.order = nil end
-    if outcome == "not_paid" then return self:say(getText("IGUI_MVM_Slots_NoOrder"), "accent") end
-    local key = BU.durableKey(type(order.durable) == "table" and order.durable.status or nil)
-    local text = getText(key)
-    if order.status ~= nil and E and E.orderStatusText then text = E.orderStatusText(order.status) .. " - " .. text end
-    self:say(text, key == "IGUI_MVM_Slots_RolledBack" and "errorText" or "accent")
+    local key = sameOrder and res.known == true and E and E.orderOutcome and OUTCOME_KEYS[E.orderOutcome(res)]
+    if not key then return self:say(getText("IGUI_MVM_Slots_NoAnswer"), "accent") end
+    self:finishOrder(pending, res, key)
 end
 
--- 勾選狀態只跟 server：點擊後先還原，開啟要先確認該張租約的條款，關閉直接送；結果等快照（取消顯示待確認）
+-- 勾選狀態只跟 server：點擊後先還原；關閉直接送，開啟先到確認頁同意該張租約的條款
 function W:onAutoRenew(checked, box)
     local env = tbl(self.env)
     local plan, ent = tbl(env.plan), tbl(env.entitlement)
     local r = box and BU.findRental(ent, box.internal)
     local on = r ~= nil and BU.autoRenewOn(r)
     if box then box:setChecked(on, true) end
-    local E = BU.api()
-    if r == nil or E == nil or not self.live or self.busy or checked == on then return end
-    if not checked then return self:sendAutoRenew(false, ent, plan, r.id) end
-    if not plan.autoRenewAllowed then return end
-    local qn = r.quantity or 0
-    self.modal = UI.Dialog.show({ title = getText("IGUI_MVM_SlotsTitle"), theme = theme, width = dialogWidth(),
-        text = getText("IGUI_MVM_Slots_ConfirmAutoRenew", qn * (plan.rentalPrice or 0), BU.currencyName(E, plan.rentalCurrency),
-            qn, plan.rentalDays or 0, plan.rentalPrice or 0),
-        confirmText = getText("IGUI_MVM_Btn_TurnOn"), cancelText = getText("UI_Cancel"),
-        onResult = function(ok) self.modal = nil; if ok then self:sendAutoRenew(true, ent, plan, r.id) end end })
+    if r == nil or not self.live or self.busy or checked == on then return end
+    if not checked then return self:sendAutoRenew(false, ent.revision, plan.revision, r.id) end
+    if plan.autoRenewAllowed then self:openSheet("auto", r.id) end
 end
 
-function W:sendAutoRenew(enabled, ent, plan, rental)
+-- paidKey：付款後替新租約送同意（狀態列先說付款完成，同意失敗時一併說明）
+function W:sendAutoRenew(enabled, revision, termsRevision, rental, paidKey)
     local E = BU.api()
     if E == nil or self.busy then return end
     self.busy = "autoRenew"
     self:say(nil)
-    local rid, why = E.setAutoRenew(SRC, PROD, enabled, ent.revision, plan.revision, function(res)
-        self.busy = nil
+    local function failed(text)
+        self:say(paidKey and getText("IGUI_MVM_Slots_PaidAutoFailed", text) or text, "errorText")
+    end
+    local rid, why = E.setAutoRenew(SRC, PROD, enabled, revision, termsRevision, function(res)
+        self.busy, self.dirty = nil, true
         if res.unknown then
             E.requestState(SRC, PROD)
-            return self:say(getText("IGUI_MVM_Slots_AutoRenewUnknown"), "accent")
+            return failed(getText("IGUI_MVM_Slots_AutoRenewUnknown"))
         end
-        if not res.ok then return self:say(BU.reasonText(res.error, E), "errorText") end
-        self:say(getText("IGUI_MVM_Slots_AutoRenewSent"), "accent")
+        if not res.ok then return failed(BU.reasonText(res.error, E)) end
+        if self.sheet and self.sheet.kind == "auto" then self.sheet = nil end
+        self:say(paidKey and getText(paidKey) or nil, "text")
     end, rental)
-    if rid == nil then self:localRefusal(why) end
+    if rid == nil then
+        self.busy = nil
+        failed(BU.reasonText(why or "invalid_args", E))
+    end
 end
 
 -- requested 只限制自動載入一次；失敗後由重新整理明示重試，避免每幀重送。
@@ -934,12 +1133,9 @@ function W:onRefresh()
     if p then C.request(p, "fleetResync", {}) end
 end
 
--- 方案與價格只在 Economy 管理頁維護（沙盒同步也在那裡），這裡只開入口
-function W:onAdminPlans()
-    local _, CL = BU.api()
-    if not (CL and CL.openAdminPlans and CL.openAdminPlans(SRC, PROD)) then
-        self:say(getText("IGUI_MVM_Slots_NoEconomyAdmin"), "errorText")
-    end
+-- 付費名額設定（管理員）；伺服器也會檢查管理員資格。框架太舊（< rev 11）時設定視窗不存在，說明要更新
+function W:onAdmin()
+    if MVM.PaidSlotsWindow then MVM.PaidSlotsWindow.open(self.win) else self:say(getText("IGUI_MVM_NeedFramework"), "errorText") end
 end
 
 function W.open()
@@ -953,6 +1149,6 @@ function W.open()
     stopDrag(w.body)
     w.win:setVisible(true)
     w.win:bringToTop()
-    w.requested, w.dirty = false, true
+    w.requested, w.dirty, w.sheet = false, true, nil
     return w
 end

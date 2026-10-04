@@ -477,6 +477,7 @@ function FleetWindow:build()
     self.btnMigrate = self:button(getText("IGUI_MVM_Btn_ImportMVCK"), FleetWindow.onImportMVCK)
     self.btnIdentity = self:button(getText("IGUI_MVM_Btn_ImportIdentity"), FleetWindow.onImportIdentity)
     self.btnRebind = self:button("", FleetWindow.onRebindIdentity, "danger")
+    self.btnPaidSlots = self:button(getText("IGUI_MVM_Btn_PaidSettings"), FleetWindow.onPaidSlots, "normal", "settings")
     self.overrideBox = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Override_Toggle"), theme = theme, target = self,
         onChange = FleetWindow.onOverride })
     self.overrideBox:setVisible(false)
@@ -489,7 +490,7 @@ function FleetWindow:build()
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap,
         self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
         self.btnPickShown, self.btnPickClear, self.batchEntry, self.btnBatch, self.btnBatchDefault, self.defaultEntry,
-        self.btnDefaultQuota, self.btnMigrate, self.btnIdentity, self.btnRebind, self.btnLook, self.overrideBox }
+        self.btnDefaultQuota, self.btnMigrate, self.btnIdentity, self.btnRebind, self.btnLook, self.overrideBox, self.btnPaidSlots }
     for _, cb in ipairs(self.checks) do self.detailControls[#self.detailControls + 1] = cb end
     for _, b in ipairs(self.memberButtons) do
         self.actionButtons[#self.actionButtons + 1] = b
@@ -649,7 +650,11 @@ function FleetWindow:layoutDetail()
         if b ~= nil and b.migrationAvailable then
             y = self:heading("IGUI_MVM_Section_MVCK", y)
             place(self.btnMigrate, x0, y)
+            y = y + step + PAD
         end
+        -- 付費名額設定（方案存在伺服器的 paid-slots.json；視窗內說明 Economy 不在場、框架太舊時按下說明要更新）
+        y = self:heading("IGUI_MVM_Section_PaidSlots", y)
+        place(self.btnPaidSlots, x0, y)
         -- 全服預設名額與越權開關固定在詳情區底部：選哪一列都在同一個位置
         local box = self.overrideBox
         local oy = self.listTop + self.listH - (self.fh + 4) - box.height - GAP - (self.fh + 2) * 2
@@ -795,7 +800,7 @@ function FleetWindow:draw(el)
         quota = self.totals and getText("IGUI_MVM_Admin_Totals", self.totals.players, self.totals.bound)
     elseif used ~= nil then
         quota = getText("IGUI_MVM_Quota", used, total)
-        if q and ((q.paid or 0) > 0 or (q.pending or 0) > 0) then
+        if q and (q.paid or 0) > 0 then
             -- 大字級左欄放不下分項就只顯示已用／上限（分項在名額視窗），不壓到右側說明
             local paid = getText("IGUI_MVM_QuotaPaid", used, total, q.base or 0, q.paid or 0)
             if getTextManager():MeasureStringX(FS, paid) <= self.detailX - PAD * 2 then quota = paid end
@@ -1070,6 +1075,10 @@ end
 
 function FleetWindow:onSlots()
     if MVM.BillingWindow then MVM.BillingWindow.open() else self:say("IGUI_MVM_NeedFramework") end
+end
+
+function FleetWindow:onPaidSlots()
+    if MVM.PaidSlotsWindow then MVM.PaidSlotsWindow.open(self.win) else self:say("IGUI_MVM_NeedFramework") end
 end
 
 -- -------------------------------------------------------------- 外觀視窗 ---

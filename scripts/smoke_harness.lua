@@ -118,6 +118,7 @@ function getFileReader(path)
     local i = 0
     return { readLine = function() i = i + 1; return lines[i] end, close = function() end }
 end
+function cacheFileExists(path) return files[path] ~= nil end -- 與 getFileReader 同一個 Lua 目錄根
 
 SandboxVars = { MinidoracatVehicleManager = { ClaimsPerPlayer = 3, MaxMembersPerVehicle = 6,
     ClaimDistance = 2.5, AllowFactionShare = true, InactivityReleaseDays = 0, InactivityGraceDays = 7,
@@ -317,6 +318,7 @@ require("MinidoracatVehicleManager_Tracking")
 require("MinidoracatVehicleManager_Migration")
 require("MinidoracatVehicleManager_Export")
 require("MinidoracatVehicleManager_Economy")
+require("MinidoracatVehicleManager_PaidSlots")
 require("MinidoracatVehicleManager_ClaimTags")
 require("MinidoracatVehicleManager_CommandGate") -- shared：真遊戲排在所有 server 檔之前；本 harness 的第三方假處理器在情境內才註冊
 BaseVehicle, __classmetatables = nil, nil
@@ -2058,7 +2060,7 @@ local function fake(rev, caps)
                     if H.throw then error("economy read failed") end
                     if H.fail then return { ok = false, error = H.fail } end
                     if productId ~= MVM.ECON_PRODUCT then return { ok = false, error = "unknown_product" } end
-                    return { ok = true, entitlement = H.ents[user] or { usable = 0, permanent = 0, rental = 0, pendingQuantity = 0 } }
+                    return { ok = true, entitlement = H.ents[user] or { usable = 0, permanent = 0, rental = 0 } }
                 end,
                 onEntitlementChanged = function(fn)
                     if H.subscribeThrow then error("subscription failed") end
@@ -2066,7 +2068,7 @@ local function fake(rev, caps)
                 end }
         end } }
 end
-local RICH = { entitlements = true, subscriptions = true, rentals = true }
+local RICH = { entitlements = true, subscriptions = true, rentals = true, setPlan = true }
 boot()
 SB.ClaimsPerPlayer = 1
 fake(2, RICH)
@@ -2083,6 +2085,9 @@ check(E.status == "UNSUPPORTED" and H.calls == 0, "舊版 rev 1（無 entitlemen
 fake(2, { entitlements = true, subscriptions = true })
 E.init()
 check(E.status == "UNSUPPORTED" and H.calls == 0, "rev 2 但仍是單一租約（無 rentals 能力）：不註冊")
+fake(2, { entitlements = true, subscriptions = true, rentals = true })
+E.init()
+check(E.status == "UNSUPPORTED" and H.calls == 0, "舊版 Economy（沒有 setPlan 能力，方案仍歸 Economy）：不註冊")
 fake(2, RICH)
 H.productResult = { ok = false, error = "invalid_args" }
 E.init()
@@ -2099,32 +2104,13 @@ local cur = {}
 for _, id in ipairs(H.source.currencies) do cur[id] = true end
 check(cur.survivor and cur.cat, "來源允許所有 Economy 幣別（服主可改用任一幣別計價）")
 
--- 沙盒雙向同步交給 Economy：每個方案欄位都要對到 sandbox-options.txt 的真實選項，且預設值一致
+-- 付款即生效、方案由 VM 經 setPlan 送：registerProduct 帶 instant，不帶沙盒對應
 local P = H.product
-local fh = io.open((MEDIA:gsub("/lua$", "")) .. "/sandbox-options.txt")
-local txt = fh:read("*a")
-fh:close()
-local defaults = {}
-for name, body in txt:gmatch("option MinidoracatVehicleManager%.(%w+)%s*(%b{})") do
-    local d = (body:match("default%s*=%s*([^,}]*)"):gsub("%s+$", ""))
-    local v = d
-    if d == "true" then v = true elseif d == "false" then v = false elseif tonumber(d) then v = tonumber(d) end
-    defaults["MinidoracatVehicleManager." .. name] = v
-end
-local fields, mapped = 0, true
-for field, opt in pairs(P.sandbox) do
-    if field ~= "revision" then
-        fields = fields + 1
-        if defaults[opt] == nil or defaults[opt] ~= P.defaults[field] then mapped = false end
-    end
-end
-for field in pairs(P.defaults) do if P.sandbox[field] == nil then mapped = false end end
-check(fields == 12 and mapped and P.defaults.revision == nil, "12 個方案欄位都對到真實沙盒選項、預設一致、不含 revision")
-check(P.sandbox.revision == "MinidoracatVehicleManager.PaidSlotPlanRevision" and defaults[P.sandbox.revision] == 0,
-    "沙盒包含 Economy 管理的版本欄位，購買方案 defaults 不包含 revision")
-check(P.defaults.permanentEnabled == false and P.defaults.rentalEnabled == false, "預設兩種販售都關閉，由服主開啟")
+check(P.instant == true and P.sandbox == nil, "registerProduct 帶 instant、不帶 sandbox")
+check(P.defaults.permanentEnabled == false and P.defaults.rentalEnabled == false and P.defaults.revision == nil,
+    "預設兩種販售都關閉（由服主開啟），defaults 不含 revision")
 
--- 上限＝基本＋usable；pending 不計入
+-- 上限＝基本＋usable
 local AL = player("alice", 0, 0)
 local ADM = player("admin", 0, 0, { admin = true })
 local cars = {}
@@ -2132,23 +2118,21 @@ for i = 1, 4 do cars[i] = vehicle(i, 100 + i, 5000 + i, "Base.CarNormal", 1, 1) 
 local a1 = claim(AL, cars[1])
 check(a1.ok and cmd(AL, "prepareClaim", { vehicleId = 2 }).reason == "QUOTA_EXCEEDED", "沒有付費名額：基本 1 格用完")
 check(E.validatePurchase("alice", MVM.ECON_PRODUCT, "permanent", 1, {}) == true, "名額用完仍可購買（買格就是為了提高上限）")
-H.ents.alice = { usable = 0, permanent = 0, rental = 0, pendingQuantity = 1, state = "none" }
-check(cmd(AL, "prepareClaim", { vehicleId = 2 }).reason == "QUOTA_EXCEEDED", "付款待確認（pending）不計入上限")
-H.ents.alice = { usable = 2, permanent = 1, rental = 1, pendingQuantity = 0, state = "active" }
+H.ents.alice = { usable = 2, permanent = 1, rental = 1, state = "active" }
 local a2, a3 = claim(AL, cars[2]), claim(AL, cars[3])
 check(a2.ok and a3.ok, "已確認永久＋租用：上限＝基本＋usable")
 cmd(AL, "fleetSubscribe", {}, false)
 local snap = lastOf(AL, "fleetSnapshot")
 local q = snap.quota
 check(q.base == 1 and q.paid == 2 and q.permanent == 1 and q.rental == 1 and q.total == 3 and q.used == 3
-    and q.economy == "READY" and snap.quotaLimit == 3, "fleetSnapshot 名額分項：基本／永久／租用／總計／整合狀態")
+    and q.economy == "READY" and q.pending == nil and snap.quotaLimit == 3, "fleetSnapshot 名額分項：基本／永久／租用／總計／整合狀態（沒有待確認欄位）")
 cmd(ADM, "adminSetQuota", { usernames = { "alice" }, amount = 0 })
 check(O.quotaBase("alice") == 0 and O.quotaLimit("alice") == 2, "管理員個人上限取代基本（絕對值），付費名額照加")
 cmd(ADM, "adminSetQuota", { usernames = { "alice" }, amount = -1 })
 
 -- 權益變更推送：只重送該玩家的快照
 local n = #outbox.alice
-H.ents.alice = { usable = 3, permanent = 2, rental = 1, pendingQuantity = 0, state = "active" }
+H.ents.alice = { usable = 3, permanent = 2, rental = 1, state = "active" }
 H.changed("alice", MVM.ECON_PRODUCT, {})
 check(#outbox.alice == n + 1 and lastOf(AL, "fleetSnapshot").quota.total == 4, "權益變更：重送該玩家快照，名額即時更新")
 H.changed("alice", "other_product", {})
@@ -2156,7 +2140,7 @@ H.changed("bob", MVM.ECON_PRODUCT, {})
 check(#outbox.alice == n + 1, "別的產品、沒訂閱的玩家都不推送")
 
 -- 到期／退款／Economy 不可用：只擋新增，既有綁定與管理照常
-H.ents.alice = { usable = 1, permanent = 1, rental = 0, pendingQuantity = 0, state = "expired" }
+H.ents.alice = { usable = 1, permanent = 1, rental = 0, state = "expired" }
 check(cmd(AL, "prepareClaim", { vehicleId = 4 }).reason == "QUOTA_EXCEEDED", "租約到期後超額：拒絕新綁定")
 check(records() == 3 and rec(a2.oid).recordState == "ACTIVE" and rec(a3.oid).recordState == "ACTIVE", "超額的既有綁定不解除")
 H.throw = true
@@ -2184,7 +2168,8 @@ boot(rdisk, true); gmd = rgmd
 okv, why = E.validatePurchase("alice", MVM.ECON_PRODUCT, "rental", 1, {})
 check(okv == false and why == "RECOVERY_REQUIRED", "帳本需復原時拒絕購買")
 
--- client：API 探測、可用性提示與購買結果判讀
+-- client：API 探測、可用性提示、名額視窗純邏輯（BU）與付費名額設定視窗純邏輯（PS）
+do
 isClient = function() return true end
 assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_BillingWindow.lua"))()
 isClient = function() return false end
@@ -2201,20 +2186,27 @@ check(BU.blocker(nil, true, {}) == "IGUI_MVM_Loading" and BU.blocker({ economy =
     and BU.blocker({ economy = "READY" }, false, nil) == "IGUI_MVM_Slots_Unsupported"
     and BU.blocker({ economy = "READY" }, true, nil) == "IGUI_MVM_Slots_LoadingPrices"
     and BU.blocker({ economy = "READY" }, true, {}) == nil, "付費區塊可用性：server 整合狀態優先，缺 client API 明確提示")
-local function durable(s) return { ok = true, snapshot = { entitlement = { durable = { status = s } } } } end
 check(BU.purchaseKey({ ok = false, error = "timeout", unknown = true }) == "IGUI_MVM_Slots_NoAnswer"
     and BU.purchaseKey({ ok = false, error = "insufficient_funds" }) == nil
-    and BU.purchaseKey(durable("pending")) == "IGUI_MVM_Slots_WaitSave"
-    and BU.purchaseKey(durable("confirmed")) == "IGUI_MVM_Slots_Saved"
-    and BU.purchaseKey(durable("rolledback")) == "IGUI_MVM_Slots_RolledBack"
-    and BU.purchaseKey({ ok = true }) == "IGUI_MVM_Slots_SaveUnknown", "購買結果：逾時＝未知；沒有耐久證明不冒充已保存")
+    and BU.purchaseKey({ ok = true, duplicate = true }) == "IGUI_MVM_Slots_Duplicate"
+    and BU.purchaseKey({ ok = true, snapshot = { entitlement = { durable = { status = "pending" } } } }) == "IGUI_MVM_Slots_PaidDone",
+    "購買結果：逾時＝未知、拒絕回原因碼；受理即完成，不看存檔狀態（付款當下生效）")
+check(BU.stateKey(nil) == "nil/nil" and BU.stateKey({ entitlement = { revision = 4 }, plan = { revision = 2 } }) == "4/2",
+    "狀態列訊息綁定權益／方案版本")
+local HOUR, DAY, T0 = 3600000, 86400000, 1000000
+check(BU.leftText(T0 + 7 * DAY, T0) == "IGUI_MVM_Slots_Days(7)"
+    and BU.leftText(T0 + 6 * DAY + 23 * HOUR, T0) == "IGUI_MVM_Slots_DaysHours(6,23)"
+    and BU.leftText(T0 + 5 * HOUR - 1, T0) == "IGUI_MVM_Slots_Hours(5)"
+    and BU.leftText(T0, T0) == nil and BU.leftText(nil, T0) == nil,
+    "剩餘時間：整天只寫天數（不寫 0 小時）、不到一天只寫小時、已到期不顯示")
 
--- 步進器範圍與租用閘門
-local PLAN = { permanentLimit = 10, rentalLimit = 5, rentalEnabled = true, rentalPrice = 250, rentalCurrency = "survivor",
-    rentalDays = 7, autoRenewAllowed = true, revision = 3 }
+-- 上限、續租、自動續租暫停與清單說明
+local PLAN = { permanentEnabled = true, permanentLimit = 10, permanentPrice = 1000, permanentCurrency = "survivor",
+    rentalLimit = 5, rentalEnabled = true, rentalPrice = 250, rentalCurrency = "survivor", rentalDays = 7,
+    autoRenewAllowed = true, revision = 3 }
 check(BU.permanentMax(PLAN, { permanent = 2 }) == 8 and BU.permanentMax({ permanentLimit = 500 }, { permanent = 0 }) == 100
     and BU.permanentMax(PLAN, { permanent = 10 }) == 0 and BU.clamp(12, 8) == 8 and BU.clamp(0, 8) == 1,
-    "買斷步進器：1..min(100, 上限－已買)，買滿就不給買")
+    "買斷數量：1..min(100, 上限－已買)，買滿就不給買")
 local function rentalsOf(n)
     local t = {}
     for i = 1, n do t[i] = { id = "r" .. i, quantity = 1 } end
@@ -2226,34 +2218,56 @@ local _, overWhy = BU.newRental(PLAN, { rentalCommitted = 6, rentals = rentalsOf
 local _, countWhy, countMax = BU.newRental({ rentalLimit = 50 }, { rentalCommitted = 10, rentalsMax = 10, rentals = rentalsOf(10) })
 check(room == 2 and roomWhy == nil and fullWhy == "IGUI_MVM_Slots_RentalFull" and overWhy == "IGUI_MVM_Slots_OverLimit"
     and countWhy == "IGUI_MVM_Slots_RentalCount" and countMax == 10, "新租約：上限－租用合計；滿額、超過上限、張數已滿各自說明")
-local function envOf(ent, available) return { ok = true, available = available, plan = PLAN, entitlement = ent } end
+local function envOf(ent, available, plan) return { ok = true, available = available, plan = plan or PLAN, entitlement = ent } end
+check(BU.sheetMax(envOf({ permanent = 2, rentalCommitted = 3, rentals = rentalsOf(2) }), "permanent") == 8
+    and BU.sheetMax(envOf({ rentalCommitted = 3, rentals = rentalsOf(2) }), "rental") == 2
+    and BU.sheetMax(envOf({}, nil, { permanentLimit = 10 }), "permanent") == 0,
+    "確認頁數量上限：買斷看剩餘上限、租用看 newRental；不開放就是 0")
 local liveR = { id = "a", quantity = 2, state = "active", paidUntil = 1 }
 local endedR = { id = "b", quantity = 2, state = "expired", paidUntil = 1 }
 check(BU.renewReason(envOf({ rentalCommitted = 5 }), liveR) == nil
-    and BU.renewReason(envOf({ rentalCommitted = 6 }), liveR) == "IGUI_MVM_Slots_RenewOver"
+    and BU.renewReason(envOf({ rentalCommitted = 6 }), liveR) == "OVER"
     and BU.renewReason(envOf({ rentalCommitted = 3 }), endedR) == nil
-    and BU.renewReason(envOf({ rentalCommitted = 4 }), endedR) == "IGUI_MVM_Slots_RenewOver"
-    and BU.renewReason(envOf({ rentalCommitted = 2 }, false), liveR) == "IGUI_MVM_Slots_RenewPaused"
-    and BU.renewReason(envOf({ rentalCommitted = 2 }), { quantity = 1, state = "paused_system", paidUntil = 1 }) == "IGUI_MVM_Slots_RenewPaused"
-    and BU.renewReason(envOf({ rentalCommitted = 2 }), { quantity = 1, state = "active", paidUntil = 1, pendingOrderId = "o" })
-        == "IGUI_MVM_Slots_RenewPending"
-    and BU.renewReason(envOf({ rentalCommitted = 2 }), { quantity = 1, state = "grace", paidUntil = 1, pendingOrderId = "o",
-        autoPending = true }) == "IGUI_MVM_Slots_AutoPaySaving",
-    "續租：有效租約看合計是否超過上限，已到期的要加回自己的名額；待確認付款、暫停販售各自說明")
+    and BU.renewReason(envOf({ rentalCommitted = 4 }), endedR) == "OVER"
+    and BU.renewReason(envOf({ rentalCommitted = 2 }, false), liveR) == "PAUSED"
+    and BU.renewReason(envOf({ rentalCommitted = 2 }), { quantity = 1, state = "paused_system", paidUntil = 1 }) == "PAUSED",
+    "續租：有效租約看合計是否超過上限，已到期的要加回自己的名額；暫停販售／系統暫停不能續租")
 local agreed = { price = 250, currency = "survivor", days = 7 }
 local function autoOn(terms) return { autoRenew = true, autoRenewState = "paused_terms", autoTerms = terms, quantity = 2 } end
-local noRent = { rentalLimit = 5, rentalPrice = 250, rentalCurrency = "survivor", rentalDays = 7, autoRenewAllowed = true }
 local noAuto = { rentalLimit = 5, rentalEnabled = true, rentalPrice = 250, rentalCurrency = "survivor", rentalDays = 7 }
-check(BU.autoPauseReason(PLAN, { rentalCommitted = 2 }, { autoRenew = true, autoRenewState = "on", autoTerms = agreed }) == nil
-    and BU.autoPauseReason(PLAN, { rentalCommitted = 2 }, autoOn({ price = 200, currency = "survivor", days = 7 }))
-        == "IGUI_MVM_Slots_AutoTermsChanged"
-    and BU.autoPauseReason(PLAN, { rentalCommitted = 2 }, autoOn({ price = 250, currency = "survivor", days = 5 }))
-        == "IGUI_MVM_Slots_AutoTermsChanged"
-    and BU.autoPauseReason(PLAN, { rentalCommitted = 6 }, autoOn(agreed)) == "IGUI_MVM_Slots_AutoPausedOver"
-    and BU.autoPauseReason(noRent, { rentalCommitted = 2 }, autoOn(agreed)) == "IGUI_MVM_Slots_AutoPausedOff"
-    and BU.autoPauseReason(noAuto, { rentalCommitted = 2 }, autoOn(agreed)) == "IGUI_MVM_Slots_AutoPausedNotOffered"
-    and BU.autoPauseReason(PLAN, { rentalCommitted = 2 }, { autoRenewState = "pending_off", autoTerms = { price = 1 } }) == nil,
-    "自動續費暫停原因：同意的租金／天數變了、超過上限、停租、不提供自動續費依序區分；已關閉的不顯示")
+local raised = autoOn({ price = 200, currency = "survivor", days = 7 })
+check(not BU.autoPaused(PLAN, { rentalCommitted = 2 }, { autoRenew = true, autoRenewState = "on", autoTerms = agreed })
+    and BU.autoPaused(PLAN, { rentalCommitted = 2 }, raised) and BU.needsConsent(PLAN, raised)
+    and BU.autoPaused(PLAN, { rentalCommitted = 6 }, { autoRenewState = "on", autoTerms = agreed })
+    and not BU.needsConsent(PLAN, { autoRenewState = "on", autoTerms = agreed })
+    and BU.autoPaused(noAuto, { rentalCommitted = 2 }, { autoRenewState = "on", autoTerms = agreed })
+    and not BU.needsConsent(noAuto, raised)
+    and not BU.autoPaused(PLAN, { rentalCommitted = 2 }, { autoRenewState = "pending_off", autoTerms = { price = 1 } }),
+    "自動續租：條款變了才要玩家同意（且方案仍提供）；超額、不提供只顯示暫停；已關閉的不算")
+check(BU.termsText(nil, PLAN, { price = 200, currency = "survivor", days = 7 }, 2)
+        == "IGUI_MVM_Slots_NewPrice(500 survivor,400 survivor)"
+    and BU.termsText(nil, PLAN, { price = 250, currency = "survivor", days = 5 }, 1)
+        == "IGUI_MVM_Slots_NewTerms(250 survivor,7,250 survivor,5)",
+    "條款變更一句話：只有租金變寫每期金額（原值）；天數或幣別也變才連天數一起寫")
+local over2 = BU.notices(envOf({ rentalCommitted = 6, rentals = { liveR, endedR } }))
+local stopped = BU.notices(envOf({ rentalCommitted = 2, rentals = { { autoRenewState = "on" },
+    { state = "paused_system", autoRenewState = "paused_system" } } }, nil,
+    { rentalLimit = 5, rentalEnabled = false, autoRenewAllowed = false }))
+local offer = BU.notices(envOf({ rentalCommitted = 2, rentals = { { autoRenewState = "on" } } }, nil, noAuto))
+check(#over2 == 1 and over2[1][1] == "IGUI_MVM_Slots_OverLimit" and over2[1][2] == 5 and over2[1][3] == 6
+    and #stopped == 2 and stopped[1][1] == "IGUI_MVM_Slots_RentalStopped" and stopped[2][1] == "IGUI_MVM_Slots_SystemPaused"
+    and #offer == 1 and offer[1][1] == "IGUI_MVM_Slots_AutoNotOffered"
+    and #BU.notices(envOf({ rentalCommitted = 6, rentals = {} })) == 0,
+    "租約清單說明：每種狀態只說一次（兩張租約超額只一句）；停租時不另說不提供自動續租；沒有租約不說")
+local renewEnv = envOf({ rentals = { { id = "r9", quantity = 3 } } })
+local amount, cur, n = BU.sheetMoney(renewEnv, { kind = "renew", rental = "r9" })
+local pAmount, pCur, pN = BU.sheetMoney(renewEnv, { kind = "permanent", qty = 2 })
+local rAmount = BU.sheetMoney(renewEnv, { kind = "rental", qty = 4 })
+check(amount == 750 and cur == "survivor" and n == 3 and pAmount == 2000 and pCur == "survivor" and pN == 2 and rAmount == 1000
+    and BU.quoteMatches({ amount = 750, currency = "survivor" }, { amount = 750, currency = "survivor" })
+    and not BU.quoteMatches({ amount = 900, currency = "survivor" }, { amount = 750, currency = "survivor" })
+    and not BU.quoteMatches({ amount = 750, currency = "cat" }, { amount = 750, currency = "survivor" }),
+    "確認頁金額：買斷／新租約＝數量×單價、續租＝該張名額×目前租金；報價金額或幣別不同就不算相符")
 local wrapped = {}
 BU.wrap(wrapped, "-------12 days", 8, nil, function(s) return #s end)
 check(wrapped[1] == "-------" and wrapped[2] == "12 days" and wrapped[3] == nil,
@@ -2266,117 +2280,390 @@ BU.wrap(wrapped, "------\227\128\129" .. "7 \230\151\165\233\150\147", 12, nil, 
 check(wrapped[1] == "------\227\128\129" and wrapped[2] == "7 \230\151\165\233\150\147",
     "名額視窗換行：數字和後面的中日文單位（中間有空白）一起換到下一行")
 
+-- 付費名額設定視窗純邏輯：變更清單、整份送出、草稿 rebase、影響說明
+isClient = function() return true end
+assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua"))()
+isClient = function() return false end
+local PS = MVM.PaidSlotsUI
+local BASE = { permanentEnabled = true, permanentPrice = 1000, permanentCurrency = "survivor", permanentLimit = 10,
+    rentalEnabled = true, rentalPrice = 250, rentalCurrency = "survivor", rentalDays = 7, rentalLimit = 5,
+    graceHours = 24, reminderHours = 24, autoRenewAllowed = true, revision = 4 }
+local draft = PS.draftOf(BASE)
+check(#PS.FIELDS == 12 and draft.permanentPrice == "1000" and draft.rentalCurrency == "survivor" and draft.autoRenewAllowed == true
+    and #PS.changes(BASE, draft) == 0 and PS.BY_FILE["rent.price"].key == "rentalPrice"
+    and PS.same(PS.SPEC.rentalDays, "007", 7) and not PS.same(PS.SPEC.rentalDays, "", 0),
+    "設定草稿：12 欄、整數存成文字；剛載入沒有變更；設定檔鍵名對回方案欄位；整數比數值、空白不等於 0")
+draft.rentalPrice, draft.rentalCurrency, draft.rentalLimit = "300", "cat", "2"
+local changed = PS.changes(BASE, draft)
+local values = PS.payload(draft)
+draft.graceHours = "1x"
+local bad, badKey = PS.payload(draft)
+draft.graceHours = "24"
+check(#changed == 3 and changed[1] == "rentalPrice" and changed[2] == "rentalCurrency" and changed[3] == "rentalLimit"
+    and values.rentalPrice == 300 and values.rentalLimit == 2 and values.permanentEnabled == true and values.revision == nil
+    and bad == nil and badKey == "graceHours",
+    "套用：變更依欄位順序列出；送出整份 12 欄、型別正確；有欄位不是整數就不送並指出那一欄")
+local NEWER = {}
+for k, v in pairs(BASE) do NEWER[k] = v end
+NEWER.permanentPrice, NEWER.rentalLimit, NEWER.revision = 1200, 4, 5
+local rebased, others = PS.rebase(BASE, NEWER, draft)
+check(rebased.permanentPrice == "1200" and rebased.rentalPrice == "300" and rebased.rentalLimit == "2"
+    and rebased.graceHours == "24" and #others == 2 and others[1] == "permanentPrice" and others[2] == "rentalLimit",
+    "rebase：沒改的欄位換成最新值、我改過的保留（含別人也改了的欄位）；回報別人改了哪些欄位")
+local function keysOf(list)
+    local t = {}
+    for i, m in ipairs(list) do t[i] = m[1] .. (m[2] ~= nil and ("=" .. tostring(m[2])) or "") end
+    return table.concat(t, " ")
+end
+local function withDraft(edit)
+    local d = PS.draftOf(BASE)
+    for k, v in pairs(edit) do d[k] = v end
+    return keysOf(PS.impacts(BASE, d))
+end
+check(withDraft({ rentalPrice = "300", rentalLimit = "2" })
+        == "IGUI_MVM_Paid_Impact_RentTerms IGUI_MVM_Paid_Impact_RentLimit=2"
+    and withDraft({ permanentPrice = "1200", rentalLimit = "9", graceHours = "48" }) == ""
+    and withDraft({ rentalEnabled = false, rentalPrice = "300" }) == "IGUI_MVM_Paid_Impact_RentOff"
+    and withDraft({ autoRenewAllowed = false }) == "IGUI_MVM_Paid_Impact_AutoOff"
+    and withDraft({ permanentEnabled = false }) == "IGUI_MVM_Paid_Impact_BuyOff"
+    and withDraft({ permanentLimit = "3" }) == "IGUI_MVM_Paid_Impact_BuyLimit=3",
+    "影響說明只列這次會發生的：改租金才提自動續租、調低上限才提超額；漲買斷價、調高上限、改寬限不列")
+local function name(id) return "<" .. tostring(id) .. ">" end
+check(PS.changeLine("rentalCurrency", "survivor", "cat", name)
+        == "IGUI_MVM_Paid_ChangeLine(IGUI_MVM_Paid_Name_rentalCurrency,<survivor>,<cat>)"
+    and PS.changeLine("rentalEnabled", true, false, name)
+        == "IGUI_MVM_Paid_ChangeLine(IGUI_MVM_Paid_Name_rentalEnabled,IGUI_MVM_Paid_On,IGUI_MVM_Paid_Off)"
+    and PS.bannerText({ actor = "test2" }, { "permanentPrice" }, BASE, NEWER, true, name)
+        == "IGUI_MVM_Paid_BannerKept(test2,IGUI_MVM_Paid_ChangeShort(IGUI_MVM_Paid_Name_permanentPrice,1000,1200))"
+    and PS.bannerText({ origin = "file", actor = "file" }, { "rentalLimit" }, BASE, NEWER, false, name)
+        == "IGUI_MVM_Paid_Banner(IGUI_MVM_Paid_FileActor,IGUI_MVM_Paid_ChangeShort(IGUI_MVM_Paid_Name_rentalLimit,5,4))"
+    and PS.lastText({ actor = "test", reason = "  " }) == "IGUI_MVM_Paid_LastByNoReason(test)"
+    and PS.trim("  summer \n") == "summer",
+    "變更前後與橫幅：誰（設定檔另外標示）、哪個欄位、舊值改為新值；原因只有空白視為沒寫")
+local realText = getText
+getText = function(key, ...)
+    if key == "IGUI_MVM_Paid_FileErr_invalid_type" and select("#", ...) == 0 then return "x" end
+    return realText(key, ...)
+end
+check(PS.fileErrorText("invalid_type", "rent.price") == "IGUI_MVM_Paid_FileErr_invalid_type(rent.price)"
+    and PS.fileErrorText("unknown_product", nil) == "IGUI_MVM_Paid_FileErr_other(unknown_product,)",
+    "設定檔錯誤：認得的錯誤碼附檔案鍵名，不認得的照原碼列出")
+getText = realText
+check(PS.INPUT_DIGITS >= #tostring(1000000000),
+    "設定視窗整數欄打得下 Economy 允許的最大價格 1000000000（10 位）")
+local fxs, frows, fn = PS.flow({ 100, 90, 40 }, 300, 200, 480, 6)
+local oxs, _, on = PS.flow({ 50, 50 }, 300, 200, 480, 6)
+check(fxs[1] == 300 and frows[1] == 0 and fxs[2] == 200 and frows[2] == 1 and fxs[3] == 296 and frows[3] == 1 and fn == 2
+    and on == 1 and oxs[2] == 356,
+    "設定視窗價格列：幣別與註記放不下就換到下一行、對齊輸入框左緣；放得下維持一行")
+
 -- 載入真正視窗操作方法；只替代未啟動遊戲時不存在的 UI 建構依賴與 Economy 傳輸。
 local savedUI, savedPanel, savedFont, savedCore = MinidoracatUI, ISPanel, UIFont, getCore
 getCore = function() return { getScreenWidth = function() return 1920 end } end
 local savedWindow, savedBillingUI = MVM.BillingWindow, MVM.BillingUI
-local shown
 MinidoracatUI = { v1 = { API_MAJOR = 1, API_REVISION = 7,
     CAPABILITIES = { window = true, controls = true, dialog = true },
     Theme = { create = function(options) return options end },
-    Dialog = { show = function(opts) shown = opts; return opts end } } }
+    Dialog = { show = function(opts) return opts end } } }
 ISPanel = { derive = function() return {} end }
-UIFont = { Small = 1, Medium = 2 }
+UIFont = { Small = 1, Medium = 2, Large = 3 }
 isClient = function() return true end
 assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_BillingWindow.lua"))()
 isClient = function() return false end
+-- 設定視窗用到 rev 11 的 Button:setActive：框架較舊時不建視窗，名額視窗的管理員入口改說明要更新框架
+local savedPaid = MVM.PaidSlotsWindow
+MVM.PaidSlotsWindow = nil
+MinidoracatUI.v1.API_REVISION = 10
+isClient = function() return true end
+assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua"))()
+local rev10 = MVM.PaidSlotsWindow
+MinidoracatUI.v1.API_REVISION = 11
+assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua"))()
+isClient = function() return false end
+local rev11 = MVM.PaidSlotsWindow
+MVM.PaidSlotsWindow = nil
+local adminProbe = setmetatable({}, MVM.BillingWindow)
+adminProbe:onAdmin()
+check(rev10 == nil and rev11 ~= nil and adminProbe.message == "IGUI_MVM_NeedFramework" and adminProbe.messageToken == "errorText",
+    "設定視窗需要框架 rev 11：rev 10 不建視窗，入口按下說明要更新框架")
+do -- 設定視窗捲動：內容高於可視就捲、只顯示完整在可視範圍的控制項、輸入框停到畫面外並放掉鍵盤、頁尾不捲
+    local function ctl(y, entry)
+        local c = { contentY = y, contentX = 20, height = 30, x = 20, visible = true }
+        function c:setY(v) self.y = v end
+        function c:setX(v) self.x = v end
+        function c:setVisible(v) self.visible = v end
+        if entry then
+            c.focused = true
+            c._entry = { unfocus = function() c.focused = false end }
+            c._entry.parent = c
+            function c:isFocused() return self.focused end
+        end
+        return c
+    end
+    local first, field, last, footBtn = ctl(10), ctl(400, true), ctl(600), ctl(0)
+    footBtn.y = 5
+    local pw = setmetatable({ body = { height = 300 }, contentH = 700, scroll = 0, placed = { first, field, last },
+        footPlaced = { footBtn }, focusList = {}, focusPool = {} }, rev11)
+    pw:setScroll(9999)
+    local bottomView = pw.scroll == 400 and not first.visible and last.visible and last.y == 200 and field.x == 20
+        and field.y == 0
+    pw:setScroll(0)
+    check(bottomView and first.visible and not last.visible and field.visible and field.x < -1000 and field.focused == false
+        and footBtn.y == 5,
+        "設定視窗捲動：捲到底夾在內容高－可視高；捲出的按鈕隱藏、輸入框停到畫面外仍可見並放掉鍵盤；頁尾不跟著捲")
+    pw:buildFocus()
+    local d = pw.focusList
+    field.scrollTo = function(f) pw:scrollTo(f) end
+    local owner = d[2].scrollOwner
+    if owner and owner.scrollTo then owner:scrollTo(d[2].control) end
+    check(#d == 4 and d[1].kind == "group" and d[1].scrollOwner == pw.body and d[2].kind == "entry"
+        and d[2].control == field._entry and d[2].frame == field and owner == field and d[2].control.parent == owner
+        and d[4].controls[1] == footBtn and d[4].scrollOwner == nil and pw.scroll == 130 and field.x == 20 and field.y == 270,
+        "設定視窗焦點：輸入框描述的 scrollOwner 是它的 TextField（entry 的 parent），落點前捲進可視範圍；頁尾描述不捲動")
+end
+do -- 手把開窗：GET 回來第一次排出表單後落到第一個目標，只落一次；不是手把就不落
+    local focused
+    local v1 = MinidoracatUI.v1
+    v1.API_REVISION, v1.CAPABILITIES.focus = 11, true
+    v1.Focus = { holdsJoypad = function(win) return win.joy end,
+        focusControl = function(c, ring) focused = { c = c, ring = ring } end,
+        onFocus = function(root) focused = { root = root } end }
+    isClient = function() return true end
+    assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua"))()
+    isClient = function() return false end
+    local P2, first = MVM.PaidSlotsWindow, {}
+    local early = setmetatable({ landPending = true, win = { joy = true }, focusList = {} }, P2)
+    early:landJoypad()
+    local lw = setmetatable({ landPending = true, win = { joy = true }, focusList = { { control = first } } }, P2)
+    lw:landJoypad()
+    local once = focused ~= nil and focused.c == first and focused.ring == true and lw.landPending == nil
+    focused = nil
+    lw:landJoypad()
+    local mouse = setmetatable({ landPending = true, win = { joy = false }, focusList = { { control = first } } }, P2)
+    mouse:landJoypad()
+    check(early.landPending == true and once and focused == nil and mouse.landPending == nil,
+        "設定視窗手把開窗：表單排出後落到第一個目標（畫框），只落一次；還沒有目標時等下一次；滑鼠開窗不落")
+    -- 關閉設定視窗：前景與鍵盤交回開它的視窗（Focus.onFocus 會 bringToTop 並成為作用中 root）；
+    -- 開啟者已關、或不是從視窗開的就不動
+    local function fakeWin(shown)
+        local o = { javaObject = {}, shown = shown }
+        function o:getIsVisible() return self.shown end
+        function o:setVisible(v) self.shown = v end
+        return o
+    end
+    local billingWin, cw = fakeWin(true), setmetatable({ win = fakeWin(true) }, P2)
+    cw:watchClose()
+    cw.opener = billingWin
+    focused = nil
+    cw.win:setVisible(true)
+    local stillOpen = focused == nil
+    cw.win:setVisible(false)
+    local back = focused and focused.root == billingWin and cw.opener == nil
+    focused = nil
+    cw.win:setVisible(true)
+    cw.opener = fakeWin(false)
+    cw.win:setVisible(false)
+    local hiddenOpener = focused == nil
+    cw.win:setVisible(true)
+    cw.win:setVisible(false)
+    check(stillOpen and back and hiddenOpener and focused == nil,
+        "關閉設定視窗：前景與鍵盤交回開它的視窗；開啟者已關或沒有開啟者時不動")
+    v1.CAPABILITIES.focus, v1.Focus = nil, nil
+end
+MVM.PaidSlotsWindow = savedPaid
+MinidoracatUI.v1.API_REVISION = 7
 local w = setmetatable({ live = true, env = { ok = true, entitlement = {}, plan = {} } }, MVM.BillingWindow)
+do -- 租用確認頁在窄視窗（長語言、大字級）不超出內容寬：開關標籤只放短句，每期金額另起一行換行
+    local savedTM = getTextManager
+    getTextManager = function()
+        return { MeasureStringX = function(_, _, s) return #s * 7 end, getFontHeight = function() return 10 end }
+    end
+    local function fake(width)
+        local c = { width = width, height = 20 }
+        function c:setEnabled() end
+        function c:setChecked() end
+        function c:setTitle(t) self.title = t end
+        function c:setLabel(l) self.label = l end
+        function c:setWidth(v) self.width = v end
+        function c:setX(v) self.x = v end
+        return c
+    end
+    local box = fake(0)
+    box.extraW = 44
+    local sw = setmetatable({ live = true, lines = {}, placed = {}, y = 12, innerW = 260,
+        env = { ok = true, plan = PLAN, entitlement = { rentalCommitted = 3, rentals = {} },
+            balances = { survivor = { available = 99999 } } },
+        sheet = { kind = "rental", qty = 1, auto = true },
+        less = fake(20), more = fake(20), sheetAuto = box, btnPay = fake(60), btnCancel = fake(60) }, MVM.BillingWindow)
+    sw:layoutSheet(ENT, sw.env, { total = 5 })
+    local right, over = 12 + 260, {}
+    for _, l in ipairs(sw.lines) do
+        if l.x + #l.text * 7 > right then over[#over + 1] = l.text end
+    end
+    for _, c in ipairs(sw.placed) do
+        if c.x + c.width > right then over[#over + 1] = tostring(c.label or c.title) end
+    end
+    getTextManager = savedTM
+    check(#over == 0 and box.label == "IGUI_MVM_Slots_SheetAutoBox",
+        "租用確認頁：每行文字與控制項都在內容寬內；到期自動續租開關只放短句，每期金額另起一行")
+end
 local purchaseReply, orderReply, requestedOrder, lastQuote
 local purchaseCount, quoteCount = 0, 0
-ENT.purchase = function(_, _, cb) purchaseCount = purchaseCount + 1; purchaseReply = cb; return "purchase" end
+ENT.purchase = function(_, quoteId, cb) purchaseCount = purchaseCount + 1; purchaseReply = cb; lastQuote.paid = quoteId; return "purchase" end
 ENT.quote = function(_, _, kind, qty, cb, rental)
     quoteCount = quoteCount + 1
     lastQuote = { kind = kind, qty = qty, rental = rental, cb = cb }
     return "quote"
 end
 ENT.getOrder = function(_, _, id, cb) requestedOrder, orderReply = id, cb; return "order" end
+-- instant 商品：paid／refunded 直接是最終結果（Economy orderOutcome）
 ENT.orderOutcome = function(reply)
     local order = reply.order
     if not reply.ok or reply.known ~= true or not order then return "unknown" end
     if order.paid == false and order.final == true then return "not_paid" end
-    if (order.status == "paid" or order.status == "refunded") and order.durable.status == "confirmed" then return order.status end
+    if order.status == "paid" or order.status == "refunded" then return order.status end
     return "processing"
 end
+lastQuote = {}
 local quote = { id = "quote-1", orderId = "order-1" }
 w:purchase(quote)
 purchaseReply({ ok = false, error = "timeout", unknown = true })
-w:startQuote("permanent")
+w:startQuote("permanent", 1)
 w:purchase(quote)
 check(not w:canPurchase() and w.order.quoteId == "quote-1" and w.order.orderId == "order-1"
-    and purchaseCount == 1 and quoteCount == 0, "付款逾時保留原識別，按鈕與直接操作都不能重購")
-w.env.entitlement.lastOrderId = "unrelated-renewal"
+    and purchaseCount == 1 and quoteCount == 0 and w.message == "IGUI_MVM_Slots_NoAnswer" and w.messageToken == "accent",
+    "付款逾時保留原識別，按鈕與直接操作都不能重購；狀態列（金色）請玩家查詢購買結果")
 w:onCheckOrder()
 orderReply({ ok = true, known = false, quoteState = "gone" })
 check(not w:canPurchase() and requestedOrder == "order-1" and w.order.orderId == "order-1",
-    "查無訂單或 gone 不是未付款證明，不能拿別筆續費解鎖")
+    "查無訂單或 gone 不是未付款證明，付款鎖不解除")
 w:onCheckOrder()
 orderReply({ ok = false, unknown = true, error = "timeout" })
 check(not w:canPurchase() and w.order.orderId == "order-1", "查詢再次逾時仍保留原付款鎖")
 w:onCheckOrder()
-orderReply({ ok = true, known = true, order = { orderId = "unrelated-renewal", status = "paid", durable = { status = "confirmed" } } })
-check(not w:canPurchase(), "另一筆已保存訂單不能解除本筆未知付款")
+orderReply({ ok = true, known = true, order = { orderId = "unrelated-renewal", status = "paid" } })
+check(not w:canPurchase(), "另一筆已付款訂單不能解除本筆未知付款")
 w:onCheckOrder()
-orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "paid", durable = { status = "pending" } } })
-check(not w:canPurchase(), "找到同筆付款但尚待保存，仍禁止再買同商品")
+orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "processing" } })
+check(not w:canPurchase(), "同筆訂單還沒有最終結果，仍禁止再買")
 w:onCheckOrder()
-orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "rolledback",
-    paid = false, final = true, durable = { status = "rolledback" } } })
-check(w:canPurchase() and w.order == nil, "server 確認同筆付款回滾才解除付款鎖")
+orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "paid" } })
+check(w:canPurchase() and w.order == nil and w.message == "IGUI_MVM_Slots_PaidDone" and w.messageToken == "text",
+    "查回同筆 paid：解除付款鎖，狀態列白字說付款完成")
 w:purchase(quote)
-purchaseReply({ ok = true, orderId = "order-1", snapshot = { entitlement = { durable = { status = "pending" } } } })
-check(not w:canPurchase(), "購買受理但 pending 不能再次購買")
-w:onCheckOrder()
-orderReply({ ok = true, known = true, order = { orderId = "order-1", status = "paid", durable = { status = "confirmed" } } })
-check(w:canPurchase(), "查回同筆 paid 且 confirmed 後才開放下一次購買")
-w.env.entitlement.pendingOrderId = "server-pending"
-w:startQuote("permanent")
-check(not w:canPurchase() and quoteCount == 0, "沒有本機訂單但快照仍有 pending，一樣不能重新報價")
-w.env.entitlement.pendingOrderId = nil
+purchaseReply({ ok = true, orderId = "order-1" })
+check(w:canPurchase() and w.order == nil and w.message == "IGUI_MVM_Slots_PaidDone",
+    "付款受理就完成（付款當下生效），可以馬上再買")
 w:purchase(quote)
 purchaseReply({ ok = false, error = "insufficient_funds" })
-check(w:canPurchase(), "server 明確拒絕購買且未動款時解除付款鎖")
-w.env.entitlement = { pendingQuantity = 2 }
-check(w:canPurchase(), "只有自動續費的待確認付款（pendingQuantity，沒有玩家的 pendingOrderId）不擋購買")
+check(w:canPurchase() and w.messageToken == "errorText", "server 明確拒絕購買時解除付款鎖並以紅字顯示原因")
+w:say("old")
+w:syncMessage("1/3")
+w:syncMessage("1/3")
+local kept = w.message
+w:syncMessage("2/3")
+check(kept == "old" and w.message == nil, "新狀態到達（權益或方案版本變了）就清掉舊的狀態列訊息")
 
--- 報價參數：買斷 k 個、新租約 n 個、續租只送租約 id
-w.env = { ok = true, plan = PLAN, entitlement = { permanent = 2, rentalCommitted = 3, revision = 4, rentals = {
-    { id = "r1", quantity = 2, state = "active", paidUntil = 1, terms = { price = 200, amount = 400, currency = "survivor", days = 7 } },
-    { id = "r2", quantity = 1, state = "active", paidUntil = 1, pendingOrderId = "auto-1", autoPending = true } } } }
-w.buyQty = 50
+-- 確認頁：數量、報價金額相符才付款，不同就不付並提示；續租只送租約 id
+local renewed = { id = "r1", quantity = 2, state = "active", paidUntil = 1,
+    terms = { price = 200, amount = 400, currency = "survivor", days = 7 } }
+w.env = { ok = true, plan = PLAN, entitlement = { permanent = 2, rentalCommitted = 3, revision = 4, rentals = { renewed } } }
 w:onBuyPermanent()
-check(lastQuote.kind == "permanent" and lastQuote.qty == 8 and lastQuote.rental == nil, "買斷送出步進器數量，超過可買數夾回上限")
-lastQuote.cb({ unknown = true })
-w.rentQty = 2
-w:onRent()
-check(lastQuote.kind == "rental" and lastQuote.qty == 2 and lastQuote.rental == nil, "新租約送出數量、不帶租約 id")
-lastQuote.cb({ unknown = true })
-local before = quoteCount
-w:onRenew({ internal = "r2" })
-check(quoteCount == before, "自動續費付款待存檔的那張租約不能再續租（其他購買不受影響）")
+w.sheet.qty = 50
+w:onPay()
+check(w.sheet.kind == "permanent" and lastQuote.kind == "permanent" and lastQuote.qty == 8 and lastQuote.rental == nil
+    and w.sheet.expect.amount == 8000, "買斷確認頁：送出數量夾回可買上限，記下畫面上的金額")
+local before = purchaseCount
+lastQuote.cb({ ok = true, quote = { id = "q-p1", orderId = "o-p1", kind = "permanent", quantity = 8, amount = 9600, currency = "survivor" } })
+check(purchaseCount == before and w.sheet ~= nil and w.sheet.notice == true and w.order == nil,
+    "報價金額和確認頁不同（方案剛改）：不付款，留在確認頁提示價格已變更")
+w:onPay()
+lastQuote.cb({ ok = true, quote = { id = "q-p2", orderId = "o-p2", kind = "permanent", quantity = 8, amount = 8000, currency = "survivor" } })
+check(purchaseCount == before + 1 and lastQuote.paid == "q-p2" and w.sheet.notice == nil,
+    "報價金額相符：立刻以同一張報價付款")
+purchaseReply({ ok = true, orderId = "o-p2" })
+check(w.sheet == nil and w.message == "IGUI_MVM_Slots_PaidDone", "付款成功回總覽")
 w:onRenew({ internal = "r1" })
-check(lastQuote.kind == "rental" and lastQuote.qty == nil and lastQuote.rental == "r1", "續租只送租約 id，數量由 server 依該張決定")
-lastQuote.cb({ ok = true, quote = { kind = "rental", quantity = 2, amount = 500, currency = "survivor", id = "q-r1" } })
-local text = shown and shown.text or ""
-local change = text:find("IGUI_MVM_Slots_QuoteTermsChange(400,survivor,7,500,survivor,7)", 1, true)
-local price = text:find("IGUI_MVM_Slots_QuotePrice(500,survivor)", 1, true)
-check(change ~= nil and price ~= nil and change < price, "續租摘要：租約原本的條款和目前方案不同時，價格前先寫原條款→新條款")
-w.env.entitlement.rentals[1].terms = { price = 250, amount = 500, currency = "survivor", days = 7 }
+w:onPay()
+check(w.sheet.kind == "renew" and lastQuote.kind == "rental" and lastQuote.qty == nil and lastQuote.rental == "r1"
+    and w.sheet.expect.amount == 500, "續租只送租約 id，金額＝該張名額×目前租金")
+w.busy = "quote"
+w:closeSheet()
+local heldWhileQuoting = w.sheet ~= nil
+w.busy = nil
+w:closeSheet()
+check(heldWhileQuoting and w.sheet == nil, "確認頁：報價／付款進行中不能關，否則 Esc／取消回總覽")
+w.env.entitlement.rentalCommitted = 6
 w:onRenew({ internal = "r1" })
-lastQuote.cb({ ok = true, quote = { kind = "rental", quantity = 2, amount = 500, currency = "survivor", id = "q-r1b" } })
-check(not shown.text:find("QuoteTermsChange", 1, true), "條款沒變的續租摘要不寫條款變更")
+check(w.sheet == nil, "租用合計超過上限：續租按鈕不開確認頁")
 
-local consent, consentRental
-ENT.setAutoRenew = function(_, _, enabled, _, _, cb, rental) consent, consentRental = enabled, rental; cb({ ok = true }); return "consent" end
+-- 新租約勾了到期自動續租：付款成功後替這張新租約（id＝訂單 id）送同意，條款＝報價的方案版本
+local consent
+ENT.setAutoRenew = function(_, _, enabled, revision, terms, cb, rental)
+    consent = { enabled = enabled, revision = revision, terms = terms, rental = rental, cb = cb }
+    return "consent"
+end
+w.env.entitlement.rentalCommitted = 3
+w:onRent()
+w.sheet.qty, w.sheet.auto = 2, true
+w:onPay()
+lastQuote.cb({ ok = true, quote = { id = "q-r", orderId = "o-r", kind = "rental", quantity = 2, amount = 500,
+    currency = "survivor", termsRevision = 3 } })
+purchaseReply({ ok = true, orderId = "o-r", snapshot = { entitlement = { revision = 9 }, plan = { revision = 3 } } })
+check(consent and consent.enabled == true and consent.rental == "o-r" and consent.revision == 9 and consent.terms == 3
+    and w.busy == "autoRenew", "新租約勾自動續租：付款後用新權益版本與報價的條款版本替新租約送同意")
+consent.cb({ ok = false, error = "terms_changed" })
+check(w.busy == nil and w.messageToken == "errorText" and w.message:find("IGUI_MVM_Slots_PaidAutoFailed", 1, true) == 1,
+    "付款後同意失敗：說明付款已完成、自動續租沒開與原因")
+consent = nil
+w:onRent()
+w:onPay()
+lastQuote.cb({ ok = true, quote = { id = "q-r2", orderId = "o-r2", kind = "rental", quantity = 1, amount = 250, currency = "survivor" } })
+purchaseReply({ ok = true, orderId = "o-r2" })
+check(consent == nil and w.message == "IGUI_MVM_Slots_PaidDone", "沒勾自動續租就不送同意")
+
+-- 勾了自動續租但付款逾時：意圖跟著訂單，查回同一筆 paid 才補送同意；查回未付款就不送
+local function rentTimedOut(orderId)
+    w:onRent()
+    w.sheet.qty, w.sheet.auto = 1, true
+    w:onPay()
+    lastQuote.cb({ ok = true, quote = { id = "q-" .. orderId, orderId = orderId, kind = "rental", quantity = 1, amount = 250,
+        currency = "survivor", termsRevision = 3 } })
+    purchaseReply({ ok = false, error = "timeout", unknown = true })
+end
+rentTimedOut("o-r3")
+local heldIntent = consent == nil and w.order and w.order.auto ~= nil
+w:onCheckOrder()
+orderReply({ ok = true, known = true, order = { orderId = "o-r3", status = "paid" }, snapshot = { entitlement = { revision = 11 } } })
+check(heldIntent and consent and consent.enabled == true and consent.rental == "o-r3" and consent.revision == 11
+    and consent.terms == 3 and w.order == nil and w.busy == "autoRenew",
+    "付款逾時後查回同筆 paid：用查詢回覆的權益版本與報價的條款版本替新租約送同意")
+consent.cb({ ok = true })
+check(w.busy == nil and w.message == "IGUI_MVM_Slots_PaidDone", "補送同意成功：狀態列說付款完成")
+consent = nil
+rentTimedOut("o-r4")
+w:onCheckOrder()
+orderReply({ ok = true, known = true, order = { orderId = "o-r4", status = "unsubmitted", paid = false, final = true } })
+check(consent == nil and w.order == nil and w.message == "IGUI_MVM_Slots_NoOrder",
+    "付款逾時後查回未付款：解除付款鎖、不送自動續租同意")
+
+-- 自動續租開關：關閉直接送；開啟先到確認頁，同意才送
 local box = { internal = "r1", setChecked = function() end }
 w.env = { ok = true, plan = { autoRenewAllowed = false, revision = 2 }, entitlement = { revision = 1, rentals = {
     { id = "r1", quantity = 2, autoRenewState = "paused_terms", autoRenew = true } } } }
 w:onAutoRenew(false, box)
-check(consent == false and consentRental == "r1" and w.busy == nil, "不准新開自動續費時，暫停中的原授權仍可逐張取消")
+check(consent and consent.enabled == false and consent.rental == "r1" and w.sheet == nil,
+    "不准新開自動續租時，暫停中的原授權仍可逐張取消（不經確認頁）")
+consent.cb({ ok = true })
+consent = nil
 w.env = { ok = true, plan = PLAN, entitlement = { revision = 1, rentals = { { id = "r1", quantity = 2, autoRenewState = "off" } } } }
 w:onAutoRenew(true, box)
-check(shown.text == "IGUI_MVM_Slots_ConfirmAutoRenew(500,survivor,2,7,250)", "開啟自動續費前顯示要同意的條款：名額、單價×名額、天數")
-shown.onResult(true)
-check(consent == true and consentRental == "r1", "同意後才送出該張租約的自動續費")
+check(consent == nil and w.sheet and w.sheet.kind == "auto" and w.sheet.rental == "r1",
+    "開啟自動續租先到確認頁，不直接送出")
+w:onPay()
+check(consent and consent.enabled == true and consent.rental == "r1" and consent.terms == 3, "同意後才送出該張租約的自動續租")
+consent.cb({ ok = true })
+check(w.sheet == nil and w.message == nil, "同意成功回總覽，狀態以開關顯示（不另留訊息）")
 local stateReply
 ENT.requestState = function() return nil, "queue_full" end
 w:requestState()
@@ -2390,11 +2677,241 @@ stateReply({ ok = true })
 check(w.stateError == nil and w.dirty, "玩家明示重新整理成功，清除先前讀取錯誤")
 MinidoracatUI, ISPanel, UIFont, getCore = savedUI, savedPanel, savedFont, savedCore
 MVM.BillingWindow, MVM.BillingUI = savedWindow, savedBillingUI
+end
 
 MinidoracatEconomy = nil
 E.init()
 SB.ClaimsPerPlayer = 3
 end)(); -- 分號：下一個情境也是 IIFE
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 E2：付費名額設定檔、狀態檔與 adminPaidSlots（方案歸 VM，經 setPlan 送 Economy）")
+local E, PS, X = MVM.Econ, MVM.PaidSlots, MVM.Export
+local KEYS = {}
+for k in pairs(E.DEFAULTS) do KEYS[#KEYS + 1] = k end
+table.sort(KEYS)
+local function copy(t) local c = {}; for k, v in pairs(t) do c[k] = v end; return c end
+-- 假 Economy：只存一份方案；驗證只模擬兩條（租金 ≥1、幣別已註冊），判斷順序照契約（not_ready → 驗證 → 相同 → 版本）
+local F = { rev = 0, calls = 0 }
+local CAPS = { entitlements = true, rentals = true, setPlan = true }
+MinidoracatEconomy = { CURRENCIES = { survivor = {}, cat = {} }, v1 = { API_MAJOR = 1, API_REVISION = 2, CAPABILITIES = CAPS,
+    registerSource = function()
+        return { registerProduct = function(p) F.product, F.plan = p, copy(p.defaults); return { ok = true } end,
+            getEntitlement = function() return { ok = true, entitlement = { usable = 0 } } end,
+            getPlan = function()
+                local p = copy(F.plan)
+                p.revision = F.rev
+                return { ok = true, plan = p, lastChange = F.last }
+            end,
+            setPlan = function(_, values, opts)
+                F.calls, F.opts = F.calls + 1, opts
+                if F.notReady then return { ok = false, error = "not_ready" } end
+                if values.rentalPrice < 1 then return { ok = false, error = "invalid_plan", field = "rentalPrice" } end
+                if values.permanentCurrency ~= "survivor" and values.permanentCurrency ~= "cat" then
+                    return { ok = false, error = "invalid_plan", field = "permanentCurrency" }
+                end
+                local changed = {}
+                for _, k in ipairs(KEYS) do if F.plan[k] ~= values[k] then changed[#changed + 1] = k end end
+                if #changed == 0 then return { ok = true, updated = false, revision = F.rev } end
+                if opts.expectedRevision ~= nil and opts.expectedRevision ~= F.rev then return { ok = false, error = "stale_revision" } end
+                F.plan, F.rev = copy(values), F.rev + 1
+                F.last = { actor = opts.actor, origin = opts.origin, at = nowMs, reason = opts.reason, revision = F.rev }
+                return { ok = true, updated = true, revision = F.rev, changed = changed }
+            end,
+            setPlanSource = function(_, src) F.source = src; return { ok = true } end }
+    end } }
+boot()
+for k in pairs(files) do files[k] = nil end
+serverMode = true
+E.init()
+PS.start()
+local CFG = X.folder() .. "paid-slots.json"
+local STATUS = X.folder() .. "paid-slots.status.json"
+local function text(path) return files[path] and table.concat(files[path]) or nil end
+local function put(s) files[CFG] = { s .. "\n" } end
+local function poll() nowMs = nowMs + PS.POLL_MS; fire("OnTickEvenPaused") end
+check(E.status == "READY" and text(STATUS) == nil and text(CFG) == nil, "Economy READY：開機不寫 economy_unavailable")
+local onTick = false
+for _, fn in ipairs(handlers.OnTick or {}) do if fn == PS.tick then onTick = true end end
+check(not onTick, "輪詢掛 OnTickEvenPaused（PauseEmpty 空服暫停時照常讀檔），不掛 OnTick")
+
+poll()
+local created = PS.parse(text(CFG):sub(1, -2))
+local same = created ~= nil
+for _, k in ipairs(KEYS) do if created == nil or created[k] ~= E.DEFAULTS[k] then same = false end end
+check(same and F.calls == 0 and PS.status.state == "ok" and PS.status.source == "created" and PS.status.revision == 0,
+    "設定檔不存在：用目前生效的方案（預設、兩種販售關閉）建一份，不呼叫 setPlan")
+check(text(STATUS):find('"state": "ok"', 1, true) and text(STATUS):find('"source": "created"', 1, true)
+    and text(STATUS):find('"error": null', 1, true) and text(STATUS):find('"field": null', 1, true)
+    and text(STATUS):find('"at": "', 1, true) and text(STATUS):find('"economy": "READY"', 1, true),
+    "狀態檔：state／source／revision／error／field／at／economy，空欄位明確寫 null")
+poll()
+check(F.calls == 0, "自己建的檔不當成新內容重送")
+
+local BASE = '{"buy": {"enabled": false, "price": 1000, "currency": "survivor", "limit": 10}, "rent": {"enabled": true, '
+    .. '"price": %s, "currency": "survivor", "limit": 5, "days": 7, "graceHours": 24, "reminderHours": 24, "autoRenew": true}%s}'
+local function cfg(price, tail) return BASE:format(price, tail or "") end
+put(cfg("300", ', "reason": "spring \\"sale\\" \\u0041\\u590f"'))
+nowMs = nowMs + 1000; PS.tick()
+check(F.calls == 0, "改檔後未滿 5 秒不讀")
+poll()
+check(F.plan.rentalPrice == 300 and F.plan.rentalEnabled == true and F.opts.origin == "file" and F.opts.actor == "file"
+    and F.opts.reason == 'spring "sale" A' .. utf8.char(0x590F) and PS.status.state == "ok" and PS.status.source == "file"
+    and PS.status.revision == 1,
+    "改檔：5 秒輪詢讀到 → setPlan(origin=file、actor=file、reason=檔內 reason，含跳脫字元與 Python 預設的非 ASCII \\u 跳脫）")
+check(F.source.file == "Zomboid/Lua/" .. CFG and F.source.problem == nil, "setPlanSource：設定檔路徑、沒有錯誤")
+poll()
+check(F.calls == 1, "內容沒變：不重送")
+
+local function bad(s, err, field, label)
+    put(s)
+    local n = F.calls
+    poll()
+    check(F.calls == n and PS.status.state == "error" and PS.status.error == err and PS.status.field == field
+        and F.source.problem == err .. (field and (" " .. field) or "") and F.plan.rentalPrice == 300, label)
+end
+bad('{"buy": ', "invalid_json", nil, "壞 JSON：invalid_json，不送 Economy，方案維持")
+local st0 = PS.status
+poll()
+check(PS.status == st0, "同一份壞內容不每 5 秒重報")
+bad((cfg("300"):gsub('"days": 7, ', "")), "missing_field", "rent.days", "缺鍵：missing_field rent.days")
+bad((cfg("300"):gsub('"limit": 10', '"limit": 10, "discount": 5')), "unknown_field", "buy.discount", "多鍵：unknown_field buy.discount")
+bad(cfg("300", ', "note": 1'), "unknown_field", "note", "頂層多鍵：unknown_field note")
+bad(cfg('"300"'), "invalid_type", "rent.price", "型別錯（字串價格）：invalid_type rent.price")
+bad(cfg("2.5"), "invalid_type", "rent.price", "型別錯（小數）：invalid_type rent.price")
+bad(cfg("300", ', "reason": 5'), "invalid_type", "reason", "reason 不是字串：invalid_type reason")
+bad(cfg("300", ', "note": null'), "unknown_field", "note", "頂層多鍵即使值是 null：unknown_field note")
+bad((cfg("300"):gsub('"limit": 10', '"limit": 10, "discount": null')), "unknown_field", "buy.discount",
+    "群組多鍵即使值是 null：unknown_field buy.discount")
+bad(cfg("null"), "invalid_type", "rent.price", "已知欄位是 null：invalid_type rent.price")
+bad(cfg("0250"), "invalid_json", nil, "數字多餘前導零（0250）：invalid_json")
+bad(cfg("250."), "invalid_json", nil, "小數點後沒有數字（250.）：invalid_json")
+bad(cfg("25e"), "invalid_json", nil, "指數沒有數字（25e）：invalid_json")
+bad(cfg("-"), "invalid_json", nil, "只有負號：invalid_json")
+bad(cfg("300x"), "invalid_json", nil, "數字後面黏著字元：invalid_json")
+put(cfg("3.0e2", ', "reason": null'))
+poll()
+check(PS.status.state == "ok" and F.opts.reason == nil and F.plan.rentalPrice == 300, "合法的 3.0e2 照收（型別檢查判整數）、reason: null 當作沒給")
+put(cfg("0"))
+poll()
+check(PS.status.error == "invalid_plan" and PS.status.field == "rent.price" and F.source.problem == "invalid_plan rent.price"
+    and text(STATUS):find('"field": "rent.price"', 1, true) and F.plan.rentalPrice == 300,
+    "Economy 回 invalid_plan：field 從 rentalPrice 轉回檔案鍵名 rent.price")
+F.notReady = true
+put(cfg("280"))
+poll()
+local n0 = F.calls
+check(F.plan.rentalPrice == 300 and PS.status.error == "invalid_plan", "not_ready：不寫狀態")
+F.notReady = nil
+poll()
+check(F.calls == n0 + 1 and F.plan.rentalPrice == 280 and PS.status.state == "ok" and F.source.problem == nil,
+    "not_ready 不記為已處理：下輪重試成功、清掉錯誤")
+local realR = getFileReader
+getFileReader = function(path, ...) if path == CFG then return nil end return realR(path, ...) end
+local before, n3 = text(CFG), F.calls
+poll()
+check(PS.status.state == "error" and PS.status.error == "unreadable" and F.calls == n3 and text(CFG) == before
+    and F.plan.rentalPrice == 280 and F.source.problem == "unreadable", "設定檔存在但讀不到：unreadable，方案不動、不用目前方案覆寫")
+local st1 = PS.status
+poll()
+check(PS.status == st1, "讀不到：同一狀態不重複報")
+getFileReader = realR
+poll()
+check(PS.status.state == "ok" and PS.status.error == nil and F.calls == n3 + 1, "恢復可讀：重新處理同一份內容，清掉錯誤")
+
+-- adminPaidSlots
+local AD, PL = player("admin", 1, 1, { admin = true }), player("pleb", 1, 1)
+check(cmd(PL, "adminPaidSlots", { op = "GET" }).reason == "NOT_ADMIN", "非管理員 GET：NOT_ADMIN")
+local g = cmd(AD, "adminPaidSlots", { op = "GET" })
+local nk = 0
+for _ in pairs(g.plan) do nk = nk + 1 end
+check(g.ok and g.economy == "READY" and nk == 12 and g.plan.rentalPrice == 280 and g.revision == F.rev and #g.currencies == 2
+    and g.file == "Zomboid/Lua/" .. CFG and g.status.state == "ok" and g.lastChange.origin == "file" and g.lastChange.actor == "file",
+    "GET：12 欄方案、revision、幣別、設定檔路徑、狀態、最後修改")
+local function vals(over) local v = copy(g.plan); for k, x in pairs(over or {}) do v[k] = x end; return v end
+local n1 = F.calls
+check(cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true }), expectedRevision = g.revision }).reason
+    == "NEED_REASON" and cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true }),
+    expectedRevision = g.revision, reason = "   " }).reason == "NEED_REASON" and F.calls == n1, "SET 缺原因或只有空白：NEED_REASON，不送")
+check(cmd(PL, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true }), expectedRevision = g.revision,
+    reason = "x" }).reason == "NOT_ADMIN" and F.calls == n1, "非管理員 SET：NOT_ADMIN")
+local schemaOk = true
+local extra = vals()
+extra.discount = 5
+local wrongType = vals({ rentalPrice = "300" })
+local missing = vals()
+missing.graceHours = nil
+for _, args in ipairs({ { op = "SET", values = extra, expectedRevision = g.revision, reason = "x" },
+    { op = "SET", values = wrongType, expectedRevision = g.revision, reason = "x" },
+    { op = "SET", values = missing, expectedRevision = g.revision, reason = "x" },
+    { op = "SET", values = vals({ rentalCurrency = "bad-id" }), expectedRevision = g.revision, reason = "x" },
+    { op = "SET", values = vals(), expectedRevision = -1, reason = "x" },
+    { op = "DELETE" }, { op = "GET", owner = "x" } }) do
+    if cmd(AD, "adminPaidSlots", args).reason ~= "BAD_ARGS" then schemaOk = false end
+end
+check(schemaOk and F.calls == n1, "SCHEMA：多欄位、錯型別、缺欄位、壞幣別字串、負版本、未知 op、夾帶欄位一律 BAD_ARGS")
+check(cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true }), expectedRevision = g.revision - 1,
+    reason = "x" }).reason == "STALE_REVISION" and F.plan.permanentEnabled == false, "SET 版本過期：STALE_REVISION，不套用")
+local inv = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ rentalPrice = 0 }), expectedRevision = g.revision, reason = "x" })
+check(inv.reason == "INVALID_PLAN" and inv.field == "rent.price", "SET 範圍錯：INVALID_PLAN，field 用檔案鍵名")
+local l0 = #logLines
+local s = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true }), expectedRevision = g.revision,
+    reason = "  open sales  " })
+local back, backReason = PS.parse(text(CFG):sub(1, -2))
+local audited = false
+for i = l0 + 1, #logLines do
+    if logLines[i]:find("ADMIN_PAID_SLOTS", 1, true) and logLines[i]:find("permanentEnabled open sales", 1, true)
+        and logLines[i]:find("admin", 1, true) then audited = true end
+end
+check(s.ok and s.revision == g.revision + 1 and #s.changed == 1 and s.changed[1] == "permanentEnabled" and s.fileError == nil
+    and F.last.origin == "admin" and F.last.actor == "admin" and F.last.reason == "open sales",
+    "SET 成功：setPlan(origin=admin、actor=principal、去空白的 reason、expectedRevision)，回 revision 與 changed")
+check(back and back.permanentEnabled == true and back.rentalPrice == 280 and backReason == "open sales"
+    and PS.status.source == "admin" and PS.status.state == "ok" and audited, "SET 成功：寫回設定檔（含 reason）、狀態檔 source=admin、稽核 ADMIN_PAID_SLOTS")
+local n2 = F.calls
+poll()
+check(F.calls == n2, "寫回的設定檔記為已處理：輪詢不重送")
+-- 外部 5 秒內改檔、還沒輪詢到時管理員套用：先處理檔案，外部修改不被蓋掉
+local extText = PS.encode(vals({ permanentEnabled = true, rentalPrice = 260 }), "external")
+files[CFG] = { extText .. "\n" }
+local stale = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true, permanentPrice = 950 }),
+    expectedRevision = s.revision, reason = "admin edit" })
+check(stale.reason == "STALE_REVISION" and F.plan.rentalPrice == 260 and F.plan.permanentPrice == 1000
+    and text(CFG) == extText .. "\n" and PS.status.source == "file" and F.last.reason == "external",
+    "外部剛改檔就 SET：先套用外部內容，管理員舊版本 STALE_REVISION，檔案沒被覆寫")
+put('{"buy": ')
+local ov = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true, rentalPrice = 265 }),
+    expectedRevision = F.rev, reason = "fix file" })
+check(ov.ok and F.plan.rentalPrice == 265 and PS.parse(text(CFG):sub(1, -2)) ~= nil and PS.status.source == "admin",
+    "外部剛改成壞檔就 SET：壞檔照常記錯，管理員的方案套用並覆寫壞檔")
+local realW = getFileWriter
+-- PrintWriter 吞 I/O 錯誤：寫入「成功」但檔案內容沒變，要讀回比對才知道
+getFileWriter = function(path, ...)
+    if path == CFG then return { write = function() end, close = function() end } end
+    return realW(path, ...)
+end
+local fe = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true, permanentPrice = 900 }),
+    expectedRevision = F.rev, reason = "cheaper" })
+getFileWriter = realW
+poll()
+check(fe.ok and fe.fileError == "write_failed" and F.plan.permanentPrice == 900 and PS.status.state == "error"
+    and PS.status.error == "write_failed" and text(STATUS):find('"error": "write_failed"', 1, true),
+    "寫回失敗：方案已生效、回 fileError、狀態檔顯示，舊檔不會在下次輪詢蓋回")
+
+-- 舊版 Economy（沒有 setPlan）：UNSUPPORTED，開機寫一次 economy_unavailable，不建也不讀設定檔
+CAPS.setPlan = nil
+for k in pairs(files) do files[k] = nil end
+E.init()
+PS.start()
+poll()
+check(E.status == "UNSUPPORTED" and text(CFG) == nil and text(STATUS):find('"state": "economy_unavailable"', 1, true)
+    and text(STATUS):find('"economy": "UNSUPPORTED"', 1, true), "舊版 Economy：UNSUPPORTED，狀態檔 economy_unavailable，不建設定檔")
+local ug = cmd(AD, "adminPaidSlots", { op = "GET" })
+check(ug.ok and ug.economy == "UNSUPPORTED" and ug.plan == nil and cmd(AD, "adminPaidSlots", { op = "SET", values = vals(),
+    expectedRevision = 0, reason = "x" }).reason == "ECONOMY_UNAVAILABLE", "Economy 不可用：GET 只回狀態、SET 回 ECONOMY_UNAVAILABLE")
+MinidoracatEconomy = nil
+E.init()
+end)();
 
 (function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
 -- from 起有一行同時含全部字串

@@ -134,7 +134,7 @@ local function change(rec, fn)
     if O.syncClaimTags then O.syncClaimTags(rec, nil) end
 end
 
--- quota：used／base（基本）／permanent／rental／paid（Economy 已確認可用）／pending（付款未確認，不計入）／total，
+-- quota：used／base（基本）／permanent／rental／paid（Economy 可用名額）／total，
 -- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client
 function S.snapshot(player, who)
     local st = { streamId = getRandomUUID(), seq = 0 }
@@ -148,7 +148,7 @@ function S.snapshot(player, who)
             if row then rows[#rows + 1] = row end
         end
         for _, row in ipairs(S.extraRows and S.extraRows(who) or {}) do rows[#rows + 1] = row end
-        quota = MVM.Econ and MVM.Econ.summary(who) or { economy = "OFF", permanent = 0, rental = 0, paid = 0, pending = 0 }
+        quota = MVM.Econ and MVM.Econ.summary(who) or { economy = "OFF", permanent = 0, rental = 0, paid = 0 }
         quota.used, quota.base = O.quotaUsed(who), O.quotaBase(who)
         quota.total = quota.base + quota.paid
     end
@@ -267,6 +267,9 @@ local TYPES = {
     migrationOp = function(v) return v == "IMPORT" end,
     identityOp = function(v) return v == "IMPORT" or v == "REBIND" end,
     name = function(v) return type(v) == "string" and #v >= 1 and #v <= 64 and v:match("^[%w_]+$") ~= nil end,
+    paidOp = function(v) return v == "GET" or v == "SET" end,
+    revision = function(v) return MVM.isInt(v) and v >= 0 and v <= 2147483647 end,
+    paidPlan = function(v) return MVM.PaidSlots ~= nil and MVM.PaidSlots.validPlan(v) end,
 }
 -- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
 S.BATCH_MAX = 500
@@ -328,6 +331,7 @@ local SCHEMA = {
     adminMigration = { op = "migrationOp" },
     adminIdentity = { op = "identityOp", ["rows?"] = "identityRows" },
     setAdminOverride = { enabled = "bool" },
+    adminPaidSlots = { op = "paidOp", ["values?"] = "paidPlan", ["expectedRevision?"] = "revision", ["reason?"] = "text" },
 }
 -- 不帶 requestId、不回 ACK 的命令
 local QUERIES = { fleetSubscribe = true, fleetResync = true, prepareAction = true, adminList = true }
@@ -720,6 +724,12 @@ H.adminMigration = function(player, who, a)
     if not ok then return fail(res) end
     return { ok = true, imported = res.imported, already = res.already, skipped = res.skipped, rebound = res.rebound,
         pending = res.pending }
+end
+
+-- 付費名額方案（Economy 選用整合）：讀取、套用與寫回設定檔都在 PaidSlots.lua
+H.adminPaidSlots = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    return MVM.PaidSlots.admin(who, a)
 end
 
 -- 身分匯入（whitelist → 綁定表）與確認改綁衝突；no-steam 沒有 SteamID，不收

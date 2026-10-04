@@ -287,11 +287,11 @@ function C.claim(player, vehicle)
     end)
 end
 
--- 目前已用／上限（車隊視窗頁尾與綁定確認視窗共用）：有付費或待確認名額時用 Economy 的 quota，否則快照的 quotaUsed／quotaLimit；
+-- 目前已用／上限（車隊視窗頁尾與綁定確認視窗共用）：有付費名額時用 Economy 的 quota，否則快照的 quotaUsed／quotaLimit；
 -- 還沒收到快照回 nil
 function MVM.quotaNumbers(b)
     local q = b and b.quota
-    if q and ((q.paid or 0) > 0 or (q.pending or 0) > 0) then return q.used or 0, q.total or 0 end
+    if q and (q.paid or 0) > 0 then return q.used or 0, q.total or 0 end
     if b and b.quotaLimit then return b.quotaUsed or 0, b.quotaLimit end
     return nil
 end
