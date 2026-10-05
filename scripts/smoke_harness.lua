@@ -667,6 +667,11 @@ do
     cmd(B, "adminList", {}, false)
     check(lastOf(ADM, "adminSnapshot").override == true and lastOf(B, "adminSnapshot").override == false,
         "adminSnapshot 回報自己的越權狀態")
+    rec(ack.oid).lastKnownZ = 2
+    cmd(ADM, "adminList", {}, false)
+    local arow = nil
+    for _, r in ipairs(lastOf(ADM, "adminSnapshot").rows or {}) do if r.oid == ack.oid then arow = r end end
+    check(arow and arow.lastKnownZ == 2, "管理頁的車輛列帶樓層（傳送過去要用）")
     n0 = #logLines
     ok, why = O.canUse(ADM, car, "DRIVE")
     check(ok and why == "ADMIN" and logged("ADMIN_BYPASS", n0), "越權中：放行並寫 ADMIN_BYPASS")
@@ -1331,6 +1336,15 @@ do -- 保留期限：天數 0 不顯示；日期照語系排列、月日補零
     local empty = FU.cardLines(nil, "OWNED", b, "", at)
     check(empty[1].text == "IGUI_MVM_Empty" and empty[2].text == "IGUI_MVM_EmptyHint" and FU.cardLines(nil, "SHARED", b, "", at)[1].text == "IGUI_MVM_EmptyShared",
         "空清單：我的車指出怎麼綁定，分享給我另一句")
+    local loc = FU.cardLines({ role = "OWNER", state = "ACTIVE", name = "", script = "Base.CarNormal", lastKnownX = 8184.7,
+        lastKnownY = 11279.2, lastKnownZ = 1, lastKnownAtMs = at - 60000 }, "OWNED", b, "", at)
+    local copied = nil
+    for _, l in ipairs(loc) do if l.copy then copied = l end end
+    check(copied and copied.text:find("IGUI_MVM_Location_LastKnown", 1, true) and copied.copy == "8184,11279,1",
+        "詳情卡的位置列可以點擊複製：x,y,z 取整")
+    check(FU.coordsText({ state = "PENDING_REBIND", lastKnownX = 11871, lastKnownY = 7044 }) == "11871,7044,0"
+        and FU.coordsText({ state = "ACTIVE", lastKnownX = 1, lastKnownY = 2 }) == nil and FU.coordsText({ state = "ACTIVE" }) == nil,
+        "待轉入複製匯入時的位置（樓層記 0）；卡片寫「位置不明」時沒有複製")
 end
 local many, names = {}, { "g", "c", "e", "a", "f", "b", "d" }
 for i, nm in ipairs(names) do many["o" .. i] = { oid = "o" .. i, role = "OWNER", name = nm, state = "ACTIVE", grants = {} } end
@@ -1415,7 +1429,8 @@ check(tracks(AO) == 4 and rec(tack.oid).lastKnownX == 40, "下車：最後一次
 
 out("情境 P4-2：MiniMap provider 只畫自己的車與 TRACK 分享車")
 local registered = nil
-MinidoracatMiniMapAPI = { markerApiVersion = 1, registerMarkerProvider = function(owner, fn) registered = { owner = owner, fn = fn } end }
+MinidoracatMiniMapAPI = { markerApiVersion = 1, registerMarkerProvider = function(owner, fn) registered = { owner = owner, fn = fn } end,
+    settingsApiVersion = 2, registerSettingsSection = function(owner, spec) registered.settings = { owner = owner, spec = spec } end }
 function getTexture(path) return path end
 isClient = function() return true end
 online = {}
@@ -1476,6 +1491,27 @@ local _, ci2, custom2 = AP.get({ oid = "own", role = "OWNER", script = "Base.Car
 check(not custom2 and ci2 == "carSedan", "恢復預設後回到依車型的圖示")
 check(MVM.FleetUI.renamed({ name = "Mine" }) and not MVM.FleetUI.renamed({ name = "" })
     and MVM.FleetUI.modelName({ script = "Base.CarNormal" }) == "CarNormal", "改名判定與原始車名（無譯名時用 script 名）")
+end
+do -- 小地圖車名：MiniMap 設定視窗「車輛管理」分類的勾選框；關掉時小地圖的車標不帶車名、世界地圖照常，偏好存本機檔
+    local AP = MVM.Appearance
+    local settingsSpec = registered.settings
+    local tick = settingsSpec and settingsSpec.spec.ticks and settingsSpec.spec.ticks[1]
+    check(settingsSpec and settingsSpec.owner == "MinidoracatVehicleManagerFor42" and settingsSpec.spec.label == "IGUI_MVM_SourceName"
+        and tick and tick.label == "IGUI_MVM_MiniMapNames" and tick.default == true and tick.get() == true,
+        "在 MiniMap 設定視窗註冊「車輛管理」分類，車名預設開")
+    local function labels(surface)
+        local n, ms = 0, registered.fn(0, surface).markers
+        for _, m in ipairs(ms) do if m.label then n = n + 1 end end
+        return n, #ms
+    end
+    tick.set(false)
+    local mn, mt = labels("mini")
+    local wn, wt = labels("world")
+    check(mt > 0 and mn == 0 and wt == mt and wn == wt, "關掉後小地圖的車標不帶車名，世界地圖照常帶")
+    AP._resetForTests()
+    check(tick.get() == false and labels("mini") == 0, "偏好存在本機檔，重新讀回仍是關")
+    tick.set(true)
+    check(labels("mini") == mt, "打開後小地圖恢復車名")
 end
 MVM.MiniMapBridge.registered = nil
 MinidoracatMiniMapAPI = nil

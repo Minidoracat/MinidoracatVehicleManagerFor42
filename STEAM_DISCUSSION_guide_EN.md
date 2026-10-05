@@ -34,14 +34,14 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [h2]🗂️ Fleet window[/h2]
 [list]
 [*] Open it with the steering wheel icon in the family toolbar; press "." to expand the toolbar when it is collapsed
-[*] See your cars, cars shared with you and where they were last seen
+[*] See your cars, cars shared with you and where they were last seen; click the coordinates in vehicle details to copy them and paste them to others
 [*] Rename, share, transfer or unclaim
 [*] [b]Report lost[/b]: the claim is released after a waiting period; the car stays protected meanwhile, and if the server sees it again soon the release is cancelled
 [*] [b]Kept until[/b]: if the owner does not log in for the number of days the server sets (30 by default), their cars are unclaimed automatically. Vehicle details show the date, which moves forward every time you play; time the server is down does not count
 [/list]
 
 [h2]🗺️ Minimap tracking (optional)[/h2]
-With Minidoracat MiniMap installed, your cars and shared cars you may "see location" of show on the minimap and world map. Nobody else can see them. Each car can have its own map icon, color and size; these settings are stored only on your computer.
+With Minidoracat MiniMap installed, your cars and shared cars you may "see location" of show on the minimap and world map. Nobody else can see them. Each car can have its own map icon, color and size; these settings are stored only on your computer. If car names clutter the minimap, untick "Show car names on the minimap" under Vehicle Manager in the MiniMap settings (the minimap's gear) to keep only the icons; the world map still shows names.
 
 [h2]💰 Paid slots (optional)[/h2]
 [list]
@@ -55,7 +55,7 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 
 [h2]🛠️ Admin tools[/h2]
 [list]
-[*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin. Player details show when they were last online
+[*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin. Player details show when they were last online, and vehicle details have "Teleport to vehicle" to go to where the car was last seen
 [*] The Admin tab also edits the default slots for all players and the auto-unclaim days (0 = never); both are the same settings as the sandbox options
 [*] By default admins are blocked like any other player. To use someone else's car, turn on "Override: use any vehicle" in the Admin tab: every use is logged, the steering wheel icon in the family toolbar gets a red frame while it is on, and it turns off automatically when you log in again or the server restarts
 [*] In vanilla, split-screen players type their own name and the server does not verify it, while vanilla safehouses and factions trust names, so other players can be impersonated. If your server does not need split-screen, set AllowCoop to false in the server settings (this mod already gives split-screen players no vehicle access)

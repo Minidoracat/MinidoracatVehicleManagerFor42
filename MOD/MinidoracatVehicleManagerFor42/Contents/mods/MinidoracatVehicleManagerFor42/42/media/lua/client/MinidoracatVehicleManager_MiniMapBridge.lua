@@ -36,8 +36,8 @@ local function badgeTexture()
     return dotTex or nil
 end
 
--- 依投影建一份標記表；只在投影、外觀或 live 判定換時段時重建（provider 契約：回快取表）
-function B.build(bucket, now)
+-- 依投影建一份標記表；只在投影、外觀或 live 判定換時段時重建（provider 契約：回快取表）。labels＝false 時不帶車名
+function B.build(bucket, now, labels)
     local markers = {}
     local API = MinidoracatMiniMapAPI
     local v2 = API and type(API.markerApiVersion) == "number" and API.markerApiVersion >= 2
@@ -54,7 +54,7 @@ function B.build(bucket, now)
                 -- 停好的車最後位置就是準的，不該變淡；只有狀態異常（待重新核發、待釋放、隔離、暫時不在世界上）才淡化
                 local shown = (row.state == "ACTIVE" and not row.removedAtMs) and "live" or state
                 local m = { id = oid, x = x, y = y, texture = iconTexture(icon), r = c.r, g = c.g, b = c.b,
-                    label = MVM.FleetUI.displayName(row), state = shown }
+                    label = labels ~= false and MVM.FleetUI.displayName(row) or nil, state = shown }
                 if badge then
                     m.scale = A.scale(size) -- 預設中（1.75）：車型側視圖 20px 以上才分得清
                     m.badge = { texture = badge, r = BADGE.r, g = BADGE.g, b = BADGE.b, a = BADGE.a }
@@ -69,8 +69,10 @@ function B.build(bucket, now)
 end
 
 local cache = { key = nil, out = { revision = 0, markers = {} } }
+cache.mini = cache.out
 
-function B.provider(playerNum)
+-- surface＝"mini"／"world"：玩家在 MiniMap 設定關掉「小地圖顯示車名」時，小地圖拿不帶車名的那份，世界地圖照常
+function B.provider(playerNum, surface)
     if playerNum ~= 0 then return nil end -- v1 不支援分割畫面第二位玩家（計畫 §21 gate 16）
     local p = getSpecificPlayer(0)
     if p == nil then return nil end
@@ -80,9 +82,11 @@ function B.provider(playerNum)
     local key = tostring(b.rev) .. ":" .. tostring(A.rev) .. ":" .. tostring(math.floor(now / 2000))
     if key ~= cache.key then
         cache.key = key
-        cache.out = { revision = cache.out.revision + 1, markers = B.build(b, now) }
+        local rev = cache.out.revision + 1
+        cache.out = { revision = rev, markers = B.build(b, now, true) }
+        cache.mini = A.showMiniLabels() and cache.out or { revision = rev, markers = B.build(b, now, false) }
     end
-    return cache.out
+    return surface == "mini" and cache.mini or cache.out
 end
 
 function B.register()
@@ -95,6 +99,12 @@ function B.register()
     end
     API.registerMarkerProvider("MinidoracatVehicleManagerFor42", B.provider)
     B.registered = true
+    -- MiniMap 設定視窗（齒輪）的「車輛管理」分類：值存在本 MOD 的本機檔（Appearance），MiniMap 只呼叫 get／set
+    if type(API.settingsApiVersion) == "number" and API.settingsApiVersion >= 1 and type(API.registerSettingsSection) == "function" then
+        API.registerSettingsSection("MinidoracatVehicleManagerFor42", { label = "IGUI_MVM_SourceName", ticks = {
+            { label = "IGUI_MVM_MiniMapNames", tooltip = "IGUI_MVM_MiniMapNames_tooltip", default = true,
+                get = A.showMiniLabels, set = A.setMiniLabels } } })
+    end
 end
 
 -- MiniMap 不在 require 內，載入序不保證：等所有 client Lua 載完再偵測

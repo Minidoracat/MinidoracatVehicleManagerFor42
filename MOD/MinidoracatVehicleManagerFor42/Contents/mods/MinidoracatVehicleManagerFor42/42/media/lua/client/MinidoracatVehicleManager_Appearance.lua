@@ -1,9 +1,10 @@
 -- 每台車的地圖外觀（圖示＋顏色），只存在本機客戶端：純外觀、不影響權限，所以不進伺服器帳本與協定。
--- 存在 Zomboid/Lua/MinidoracatVehicleManager/appearance.txt，一列一台：oid<TAB>r<TAB>g<TAB>b<TAB>icon<TAB>size（色 0-255、大小為百分比）。
+-- 存在 Zomboid/Lua/MinidoracatVehicleManager/appearance.txt，一列一台：oid<TAB>r<TAB>g<TAB>b<TAB>icon<TAB>size（色 0-255、大小為百分比）；
+-- 另有一列 @miniLabels<TAB>0｜1（小地圖畫不畫車名，MiniMap 設定視窗的「車輛管理」分類；舊版讀不懂這列會略過）。
 require "MinidoracatVehicleManager_API"
 
 local MVM = MinidoracatVehicleManager
-local A = { prefs = nil }
+local A = { prefs = nil, miniLabels = true }
 MVM.Appearance = A
 
 local FILE = "MinidoracatVehicleManager/appearance.txt"
@@ -48,9 +49,12 @@ local function load()
         local line = r:readLine()
         if line == nil then break end
         local oid, cr, cg, cb, icon, size = line:match("^([%w%-]+)\t(%d+)\t(%d+)\t(%d+)\t(%w*)\t?(%d*)$")
+        local labels = line:match("^@miniLabels\t([01])$")
         if oid then
             A.prefs[oid] = { r = math.min(255, tonumber(cr)) / 255, g = math.min(255, tonumber(cg)) / 255,
                 b = math.min(255, tonumber(cb)) / 255, icon = VALID[icon] and icon or nil, size = clampSize(size) }
+        elseif labels then
+            A.miniLabels = labels == "1"
         end
     end
     r:close()
@@ -59,6 +63,7 @@ end
 local function save()
     local w = getFileWriter(FILE, true, false)
     if w == nil then return end
+    w:write("@miniLabels\t" .. (A.miniLabels and "1" or "0") .. "\n")
     for oid, p in pairs(A.prefs) do
         w:write(oid .. "\t" .. math.floor(p.r * 255 + 0.5) .. "\t" .. math.floor(p.g * 255 + 0.5) .. "\t"
             .. math.floor(p.b * 255 + 0.5) .. "\t" .. (p.icon or "") .. "\t" .. (p.size or A.DEFAULT_SIZE) .. "\n")
@@ -90,4 +95,17 @@ function A.reset(oid)
     A.rev = (A.rev or 0) + 1
 end
 
-function A._resetForTests() A.prefs = nil; A.rev = nil end
+-- 小地圖上的車名（世界地圖照常畫）：MiniMap 設定視窗的勾選框讀寫這兩個；改了就換 A.rev，provider 下一幀重建
+function A.showMiniLabels()
+    if A.prefs == nil then load() end
+    return A.miniLabels
+end
+
+function A.setMiniLabels(on)
+    if A.prefs == nil then load() end
+    A.miniLabels = on == true
+    save()
+    A.rev = (A.rev or 0) + 1
+end
+
+function A._resetForTests() A.prefs = nil; A.rev = nil; A.miniLabels = true end

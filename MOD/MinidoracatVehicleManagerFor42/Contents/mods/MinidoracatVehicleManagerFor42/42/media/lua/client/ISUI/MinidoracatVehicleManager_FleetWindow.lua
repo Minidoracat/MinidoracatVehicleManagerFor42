@@ -109,6 +109,13 @@ function F.locationText(row, now)
     return getText("IGUI_MVM_Location_LastKnown", x, y, F.agoText(row.lastKnownAtMs, now))
 end
 
+-- 詳情卡上的座標點一下複製：x,y,z（同 MiniMap 的「複製座標」，原版 /teleportto 吃得下）；卡片沒寫座標時回 nil
+function F.coordsText(row)
+    if row == nil or row.lastKnownX == nil or row.lastKnownY == nil then return nil end
+    if row.state ~= "PENDING_REBIND" and (row.lastKnownAtMs == nil or row.lastKnownAtMs <= 0) then return nil end
+    return math.floor(row.lastKnownX) .. "," .. math.floor(row.lastKnownY) .. "," .. math.floor(row.lastKnownZ or 0)
+end
+
 -- 年月日（玩家電腦的時區）：PZCalendar＝Java Calendar.getInstance()（PZCalendar.java:14-15，LuaManager 有 expose）；
 -- Kahlua 的 os.date 固定 UTC（OsLib.java:331），只在沒有 PZCalendar 的離線環境退回
 local function ymd(ms)
@@ -167,6 +174,7 @@ function F.cardLines(row, tab, b, query, now)
             and F.keptText(b.releaseDays, now)
         add(kept and (state .. getText("IGUI_MVM_Sep") .. kept) or state, F.stateToken(row))
         add(F.locationText(row, now))
+        lines[#lines].copy = F.coordsText(row)
         if tab == "ADMIN" then
             add(getText("IGUI_MVM_AdminOwner", row.owner or getText("IGUI_MVM_Admin_NoOwner")))
         elseif row.role == "MEMBER" or row.role == "FACTION" then
@@ -380,6 +388,15 @@ function Body:prerender()
     theme:fill(self, PAD, f.listTop, f.listW, f.listH, "well")
 end
 function Body:render() self.fleet:draw(self) end
+-- 詳情卡的座標列（draw 記下 copyHit）：點一下複製座標
+function Body:onMouseDown(x, y)
+    local hit = self.fleet.copyHit
+    if hit and x >= hit.x and x < hit.x + hit.w and y >= hit.y and y < hit.y + hit.h then
+        self.fleet:copyCoords(hit.value)
+        return true
+    end
+    return ISPanel.onMouseDown(self, x, y)
+end
 -- 詳情放不下時（layoutDetail 算出的 scrollMax）：滑鼠在詳情區上滾輪捲動
 function Body:onMouseWheel(del)
     local f = self.fleet
@@ -550,6 +567,7 @@ function FleetWindow:build()
     self.btnReissue = self:button(getText("IGUI_MVM_Btn_Reissue"), FleetWindow.onReissue, "primary")
     self.btnDismiss = self:button(getText("IGUI_MVM_Btn_Dismiss"), FleetWindow.onDismiss)
     self.btnMap = self:button(getText("IGUI_MVM_Btn_Map"), FleetWindow.onMap, "normal", "locate")
+    self.btnTeleport = self:button(getText("IGUI_MVM_Btn_Teleport"), FleetWindow.onTeleport, "normal", "pin")
     self.btnLook = self:button(getText("IGUI_MVM_Btn_Appearance"), FleetWindow.onAppearance, "normal", "sliders")
     self.btnLeave = self:button(getText("IGUI_MVM_Btn_Leave"), FleetWindow.onLeave, "danger")
     self.btnAdminRelease = self:button(getText("IGUI_MVM_Btn_AdminRelease"), FleetWindow.onAdminRelease, "danger")
@@ -582,7 +600,7 @@ function FleetWindow:build()
         self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnReleaseDays, self.btnMigrate,
         self.btnIdentity, self.btnRebind, self.overrideBox, self.btnPublicOff, self.btnFactionOff }
     self.detailControls = { self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction, self.btnPublic,
-        self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap,
+        self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap, self.btnTeleport,
         self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
         self.btnPickShown, self.btnPickClear, self.batchEntry, self.btnBatch, self.btnBatchDefault, self.defaultEntry,
         self.btnDefaultQuota, self.releaseEntry, self.btnReleaseDays, self.btnMigrate, self.btnIdentity, self.btnRebind,
@@ -772,7 +790,10 @@ function FleetWindow:layoutAdmin(row, b, y)
     elseif row ~= nil then
         local r = { title = getText("IGUI_MVM_Section_Vehicle"), buttons = {} }
         if not F.isHistory(row) and row.state ~= "PENDING_REBIND" then r.buttons[#r.buttons + 1] = self.btnAdminRelease end
-        if row.lastKnownX then r.buttons[#r.buttons + 1] = self.btnMap end
+        if row.lastKnownX then
+            r.buttons[#r.buttons + 1] = self.btnMap
+            r.buttons[#r.buttons + 1] = self.btnTeleport
+        end
         if #r.buttons > 0 then rows[#rows + 1] = r end
     end
     -- 伺服器工具：批次設定名額（全選目前清單常駐；有選取才多一排名額欄與送出按鈕）、身分驗證（只有 Steam
@@ -1025,9 +1046,21 @@ function FleetWindow:draw(el)
     theme:fill(el, x, y, self.detailW, self.infoH, "well")
     theme:border(el, x, y, self.detailW, self.infoH, "border")
     x, y = x + 12, y + 10
+    self.copyHit = nil
     for _, l in ipairs(self.card or {}) do
-        text(el, l.text, x, y, l.token, l.big and FM or FS)
-        y = y + (l.big and fontH(FM) + 4 or fh + 2)
+        local lh = l.big and fontH(FM) + 4 or fh + 2
+        if l.copy then -- 座標列：滑鼠移上去反白，後面畫複製圖示，點一下複製（Body:onMouseDown）
+            local w = getTextManager():MeasureStringX(FS, l.text) + 4 + fh
+            local mx, my = el:getMouseX(), el:getMouseY()
+            local over = el:isMouseOver() and mx >= x - 4 and mx < x + w + 4 and my >= y - 1 and my < y + lh
+            if over then el:drawRect(x - 4, y - 1, w + 8, lh, COL.hover.a, COL.hover.r, COL.hover.g, COL.hover.b) end
+            text(el, l.text, x, y, over and "text" or l.token, FS)
+            UI.Icons.draw(el, "copy", x + w - fh, y + 1, fh - 2, over and COL.text or COL.textMuted, 1)
+            self.copyHit = { x = x - 4, y = y - 1, w = w + 8, h = lh, value = l.copy }
+        else
+            text(el, l.text, x, y, l.token, l.big and FM or FS)
+        end
+        y = y + lh
     end
     for _, h in ipairs(self.headings) do text(el, h.text, self.detailX, h.y, "text") end
     if (self.scrollMax or 0) > 0 then -- 捲軸：提示詳情區下面還有內容（滾輪捲動）
@@ -1221,6 +1254,19 @@ end
 function FleetWindow:onMap()
     local row = self.current; if not row or not row.lastKnownX then return end
     if ISWorldMap.IsAllowed() then ISWorldMap.ShowWorldMap(0, row.lastKnownX, row.lastKnownY, 20) end
+end
+
+-- 管理員：傳送到這台車最後出現（或 MVCK 匯入時）的位置；原版管理員傳送指令，權限由伺服器判定
+function FleetWindow:onTeleport()
+    local row = self.current; if not (row and row.lastKnownX) then return end
+    SendCommandToServer("/teleportto " .. math.floor(row.lastKnownX) .. "," .. math.floor(row.lastKnownY) .. ","
+        .. math.floor(row.lastKnownZ or 0))
+end
+
+function FleetWindow:copyCoords(value)
+    if Clipboard and Clipboard.setClipboard and pcall(Clipboard.setClipboard, value) then
+        self.message, self.messageBad = getText("IGUI_MVM_CoordsCopied", value), false
+    end
 end
 
 -- 越權開關：送出後以 server ACK／adminSnapshot 為準（layoutDetail 依 bucket 重設勾選狀態）

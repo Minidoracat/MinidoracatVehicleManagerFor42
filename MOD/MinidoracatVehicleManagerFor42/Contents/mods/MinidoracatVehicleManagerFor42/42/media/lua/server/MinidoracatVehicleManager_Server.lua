@@ -283,7 +283,7 @@ function S.adminSnapshot(player)
     for _, rec in pairs(st.recordsByOid) do
         rows[#rows + 1] = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
             name = rec.customName or "", reason = rec.quarantineReason, lastKnownX = rec.lastKnownX, lastKnownY = rec.lastKnownY,
-            lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs }
+            lastKnownZ = rec.lastKnownZ, lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs }
         local owner = rec.ownerUser
         if owner then used[owner] = (used[owner] or 0) + (O.countsForQuota(rec) and 1 or 0) end
     end
