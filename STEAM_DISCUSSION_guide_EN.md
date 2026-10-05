@@ -8,9 +8,9 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 
 [h2]🚀 Quick start[/h2]
 [olist]
-[*] The server enables this mod and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]; add [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] if you want to see your cars on the map
+[*] The server enables this mod and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]; add [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] to see your cars on the map, and [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url] to let players buy claim slots
 [*] Right-click next to a car, choose "Vehicle Manager → Claim vehicle", and confirm what the protection covers
-[*] Open the fleet window with the steering wheel button on the right side of the screen to view, rename or share your cars
+[*] Open the fleet window with the steering wheel icon in the family toolbar to view, rename or share your cars
 [/olist]
 
 [h2]🔒 Claiming and protection[/h2]
@@ -33,7 +33,7 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 
 [h2]🗂️ Fleet window[/h2]
 [list]
-[*] Open it with the steering wheel button on the right side of the screen
+[*] Open it with the steering wheel icon in the family toolbar; press "." to expand the toolbar when it is collapsed
 [*] See your cars, cars shared with you and where they were last seen
 [*] Rename, share, transfer or unclaim
 [*] [b]Report lost[/b]: the claim is released after a waiting period; the car stays protected meanwhile, and if the server sees it again soon the release is cancelled
@@ -43,11 +43,21 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [h2]🗺️ Minimap tracking (optional)[/h2]
 With Minidoracat MiniMap installed, your cars and shared cars you may "see location" of show on the minimap and world map. Nobody else can see them. Each car can have its own map icon, color and size; these settings are stored only on your computer.
 
+[h2]💰 Paid slots (optional)[/h2]
+[list]
+[*] On dedicated multiplayer servers that also run [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url], the owner can sell extra claim slots for in-game money, to buy outright or to rent; nothing is sold by default
+[*] Press "Claim slots" in the fleet window: buy several slots at once, or rent them. Each rental is separate, with its own slot count and end date, and is renewed or set to auto-renew on its own
+[*] Before you pay you see the quantity, price, your balance before and after, and how many cars you can claim afterwards; the slots work the moment you pay
+[*] If the rent, currency or period changes, auto-renew pauses until you accept the new terms
+[*] When a rental ends or is refunded you can claim fewer new cars, but cars you already claimed stay protected
+[*] Server owners can edit the settings file on the server, or admins can open "Paid slot settings" from the Admin tab or the slots window to change prices, currencies, limits and periods; each change needs a reason and is logged
+[/list]
+
 [h2]🛠️ Admin tools[/h2]
 [list]
 [*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin. Player details show when they were last online
 [*] The Admin tab also edits the default slots for all players and the auto-unclaim days (0 = never); both are the same settings as the sandbox options
-[*] By default admins are blocked like any other player. To use someone else's car, turn on "Override: use any vehicle" in the Admin tab: every use is logged, the steering wheel button gets a red frame while it is on, and it turns off automatically when you log in again or the server restarts
+[*] By default admins are blocked like any other player. To use someone else's car, turn on "Override: use any vehicle" in the Admin tab: every use is logged, the steering wheel icon in the family toolbar gets a red frame while it is on, and it turns off automatically when you log in again or the server restarts
 [*] In vanilla, split-screen players type their own name and the server does not verify it, while vanilla safehouses and factions trust names, so other players can be impersonated. If your server does not need split-screen, set AllowCoop to false in the server settings (this mod already gives split-screen players no vehicle access)
 [/list]
 
@@ -90,6 +100,9 @@ A: Check where it was last seen in the fleet window. If it is really gone, press
 
 [b]Q: What happens to my cars if I stop playing for a while?[/b]
 A: After the number of days the server sets (30 by default) without logging in, your cars are unclaimed and others can claim them. Vehicle details in the fleet window show the "kept until" date; time the server is down does not count.
+
+[b]Q: I need more claim slots. What can I do?[/b]
+A: Ask the server admins to raise your limit. If the server runs Economy and sells slots, you can also buy or rent them from "Claim slots" in the fleet window.
 
 [b]Q: Does it work in singleplayer?[/b]
 A: Yes, but it is made for multiplayer; the second split-screen player is not supported.

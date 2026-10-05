@@ -9,13 +9,14 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [list]
 [*] [b]Required:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
 [*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] (track your cars on the map)
-[*] Build 42.20.4+; made for multiplayer (singleplayer works, but the second split-screen player is not supported)
+[*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url] (buy or rent extra claim slots with in-game money, if the server sells them)
+[*] Made for multiplayer (singleplayer works, but the second split-screen player is not supported)
 [/list]
 
 [h2]🚀 Quick start[/h2]
 [olist]
 [*] Right-click next to a car, open the Vehicle Manager menu and claim it
-[*] Open the fleet window with the steering wheel button on the right side of the screen
+[*] Open the fleet window with the steering wheel icon in the family toolbar
 [*] Share the car with friends or your faction from the fleet window, picking each allowed action
 [/olist]
 

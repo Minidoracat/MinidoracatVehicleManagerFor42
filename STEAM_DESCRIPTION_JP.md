@@ -9,13 +9,14 @@
 [list]
 [*] [b]必須：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
 [*] [b]任意：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url]（地図で車両を追跡）
-[*] Build 42.20.4+ 対応。マルチ向けです（シングルでも使えますが、画面分割の2人目は非対応）
+[*] [b]任意：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url]（サーバーが販売していれば、ゲーム内通貨で登録枠を購入・レンタル）
+[*] マルチ向けです（シングルでも使えますが、画面分割の2人目は非対応）
 [/list]
 
 [h2]🚀 はじめかた[/h2]
 [olist]
 [*] 車のそばで右クリックし、車両管理メニューから登録します
-[*] 画面右側のハンドルボタンで車両一覧ウィンドウを開きます
+[*] ファミリーツールバーのハンドルアイコンで車両一覧ウィンドウを開きます
 [*] 車両一覧ウィンドウから友人や派閥と共有し、許可する操作を個別に選びます
 [/olist]
 

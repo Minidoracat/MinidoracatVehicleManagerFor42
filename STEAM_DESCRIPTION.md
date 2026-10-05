@@ -9,13 +9,14 @@
 [list]
 [*] [b]必裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
 [*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url]（在地圖上追蹤車輛）
-[*] 支援 Build 42.20.4+；以多人為主要用途（單人也能用，但不支援分割畫面第二位玩家）
+[*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url]（伺服器開放時，用遊戲幣購買或租用更多綁定名額）
+[*] 以多人為主要用途（單人也能用，但不支援分割畫面第二位玩家）
 [/list]
 
 [h2]🚀 快速上手[/h2]
 [olist]
 [*] 在車旁右鍵開啟車輛管理選單，綁定這台車
-[*] 按畫面右側的方向盤按鈕開啟車隊視窗
+[*] 點家族工具列裡的方向盤圖示，開啟車隊視窗
 [*] 在車隊視窗把車分享給朋友或陣營，逐項勾選允許的動作
 [/olist]
 

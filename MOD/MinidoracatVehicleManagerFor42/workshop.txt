@@ -11,13 +11,14 @@ description=[h2]📦 Requirements[/h2]
 description=[list]
 description=[*] [b]Required:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
 description=[*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] (track your cars on the map)
-description=[*] Build 42.20.4+; made for multiplayer (singleplayer works, but the second split-screen player is not supported)
+description=[*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url] (buy or rent extra claim slots with in-game money, if the server sells them)
+description=[*] Made for multiplayer (singleplayer works, but the second split-screen player is not supported)
 description=[/list]
 description=
 description=[h2]🚀 Quick start[/h2]
 description=[olist]
 description=[*] Right-click next to a car, open the Vehicle Manager menu and claim it
-description=[*] Open the fleet window with the steering wheel button on the right side of the screen
+description=[*] Open the fleet window with the steering wheel icon in the family toolbar
 description=[*] Share the car with friends or your faction from the fleet window, picking each allowed action
 description=[/olist]
 description=
@@ -25,8 +26,9 @@ description=[h2]✨ Features[/h2]
 description=[list]
 description=[*] [b]Account-bound claims[/b]: you keep your cars even when your character dies
 description=[*] [b]Protection[/b]: players without permission cannot drive, siphon fuel, strip parts or tow
+description=[*] [b]Claim the trailer too[/b]: claimed vehicles can only be loaded onto a claimed trailer or tow truck, which also uses a claim slot
 description=[*] [b]Virtual key[/b]: owners can unlock, open doors and start the car without a physical key (servers can turn this off)
-description=[*] [b]Per-action sharing[/b]: share with specific players or your faction; private by default
+description=[*] [b]Per-action sharing[/b]: share with specific players, your faction or everyone; private by default
 description=[*] [b]Fleet window[/b]: view your own and shared cars, then rename, transfer or report them lost
 description=[*] [b]Minimap tracking[/b] (optional): your cars and shared cars you may locate show on the map
 description=[*] [b]Move from MVCK[/b]: admins import existing MVCK claims in one click
