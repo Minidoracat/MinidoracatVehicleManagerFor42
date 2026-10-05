@@ -1,5 +1,6 @@
 -- 付費名額設定視窗（管理員；入口：車隊視窗管理頁、名額視窗頁尾）。方案（價格、幣別、上限、天數、開關）歸本 MOD，
--- 伺服器存在 paid-slots.json 並交給 Economy setPlan；這裡只透過 adminPaidSlots 指令讀（GET）與套用（SET）。
+-- 伺服器存在設定檔（綁定名額 paid-slots.json、保全名額 guard-slots.json）並交給 Economy setPlan；這裡只透過
+-- adminPaidSlots 指令讀（GET）與套用（SET），都帶商品。一個商品一個視窗實例，開另一個商品不動這個視窗的草稿。
 -- 版面照管理端設計稿：買斷／租用兩組，改過的欄位標「原 X」，寬限、提醒、允許自動續租收在「進階設定」；
 -- 套用前列出變更前後與這次會影響的事，原因必填（寫入稽核）。
 -- 伺服器方案版本變了（SET 回 STALE_REVISION，或 Economy 推播的方案版本與草稿基準不同）就重新 GET：
@@ -12,7 +13,7 @@ require "ISUI/MinidoracatVehicleManager_BillingWindow"
 
 local MVM = MinidoracatVehicleManager
 local C = MVM.Client
-local SRC, PROD = MVM.ECON_SOURCE, MVM.ECON_PRODUCT
+local SRC = MVM.ECON_SOURCE
 local PS = {}
 MVM.PaidSlotsUI = PS
 
@@ -205,7 +206,11 @@ local PAD, GAP, SCROLL_W = 12, 6, 6
 -- 捲出可視範圍的輸入框停到這裡（仍可見）：Focus 只在描述的 scrollOwner 可用時才先請它捲動（Focus.lua land），
 -- 輸入框描述的 control 是內層原生 entry，它的 parent 是 TextField，所以 scrollOwner 只能是 TextField 本身
 local PARK_X = -100000
-local LAYOUT = "MinidoracatVehicleManagerPaidSlots"
+-- 各商品的寬限時數說明（進階設定裡、寬限時數下方）與視窗位置記錄名；標題＝名額視窗的設定入口（BU.TEXTS admin）
+local PRODUCT = {
+    [MVM.ECON_PRODUCT] = { grace = "IGUI_MVM_Paid_GraceHint", layout = "MinidoracatVehicleManagerPaidSlots" },
+    [MVM.GUARD_PRODUCT] = { grace = "IGUI_MVM_Paid_GuardGraceHint", layout = "MinidoracatVehicleManagerPaidGuardSlots" },
+}
 local ADVANCED = { "graceHours", "reminderHours", "autoRenewAllowed" }
 
 local function fontH(font) return getTextManager():getFontHeight(font) end
@@ -214,6 +219,8 @@ local function currencyName(id) return BU.currencyName(BU.api(), id) end
 
 local P = {}
 P.__index = P
+P.product = MVM.ECON_PRODUCT -- 實例沒指定（harness 的假視窗）＝綁定名額
+P.instances = {}
 MVM.PaidSlotsWindow = P
 
 function P:inView(c)
@@ -312,14 +319,15 @@ function Foot:render()
     end
 end
 
-function P.new()
-    local self = setmetatable({ lines = {}, fills = {}, controls = {}, chipPool = {}, placed = {}, footLines = {},
-        footPlaced = {}, footControls = {}, focusList = {}, focusPool = {}, dirty = true, scroll = 0, contentH = 0 }, P)
+function P.new(product)
+    local self = setmetatable({ product = product, lines = {}, fills = {}, controls = {}, chipPool = {}, placed = {},
+        footLines = {}, footPlaced = {}, footControls = {}, focusList = {}, focusPool = {}, dirty = true, scroll = 0,
+        contentH = 0 }, P)
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
     local w = math.min(600, sw - 40)
     self.autoY = math.floor((sh - 400) / 2)
     self.win = UI.Window.new({ x = math.floor((sw - w) / 2), y = self.autoY, width = w, height = 200,
-        title = getText("IGUI_MVM_Btn_PaidSettings"), icon = "settings", theme = theme })
+        title = getText(BU.TEXTS[product].admin), icon = "settings", theme = theme })
     -- 鍵盤／手把目標＝排版記下的全部控制項（含捲出可視範圍的），描述帶 scrollOwner，落點前先捲過去
     self.win.keyboardTargets = function() return self.focusList end
     local body = Body:new(0, self.win:contentTop(), w, 100)
@@ -618,6 +626,9 @@ function P:layoutForm(d)
     self.y = rowY + rowH + GAP
     if self.advanced then
         self:fieldRow("graceHours")
+        -- 寬限結束後超出名額的車會怎樣（綁定：鎖住、再解除綁定；保全：失去保全）
+        self:addText(getText(PRODUCT[self.product].grace), "textMuted", PAD + 8, self.innerW - 8)
+        self.y = self.y + GAP
         self:fieldRow("reminderHours")
         self:boxRow("autoRenewAllowed")
     end
@@ -759,7 +770,7 @@ function P:load()
     local p = getSpecificPlayer(0)
     if p == nil or self.busy then return end
     self.busy, self.dirty = "get", true
-    C.request(p, "adminPaidSlots", { op = "GET" }, function(ack) self:onGet(ack) end)
+    C.request(p, "adminPaidSlots", { op = "GET", product = self.product }, function(ack) self:onGet(ack) end)
 end
 
 function P:onGet(ack)
@@ -830,8 +841,8 @@ function P:send(values, revision, reason)
     if p == nil or self.busy then return end
     self.busy = "set"
     self:say(nil)
-    C.request(p, "adminPaidSlots", { op = "SET", values = values, expectedRevision = revision, reason = reason },
-        function(ack) self:onSet(ack) end)
+    C.request(p, "adminPaidSlots", { op = "SET", product = self.product, values = values, expectedRevision = revision,
+        reason = reason }, function(ack) self:onSet(ack) end)
 end
 
 function P:onSet(ack)
@@ -850,11 +861,11 @@ function P:onSet(ack)
     if ack.reason == "STALE_REVISION" then self:load() end
 end
 
--- Economy 推播的方案版本和草稿基準不同：重新讀（別的管理員或設定檔剛改了）
+-- Economy 推播的方案版本和草稿基準不同：重新讀（別的管理員或設定檔剛改了）；只看同一個商品的視窗
 function P.onEconomyChanged(env)
-    local w = P.instance
+    if type(env) ~= "table" or env.sourceMod ~= SRC or type(env.plan) ~= "table" then return end
+    local w = P.instances[env.productId]
     if w == nil or w.busy or w.base == nil or not w.win:getIsVisible() then return end
-    if type(env) ~= "table" or env.sourceMod ~= SRC or env.productId ~= PROD or type(env.plan) ~= "table" then return end
     if env.plan.revision ~= nil and env.plan.revision ~= w.base.revision then w:load() end
 end
 
@@ -877,16 +888,19 @@ function P:returnToOpener()
     if Focus then Focus.onFocus(o) else o:bringToTop() end
 end
 
--- opener＝開它的視窗（名額視窗或車隊視窗的框架 Window）；關閉時前景與鍵盤交回它
-function P.open(opener)
-    local w = P.instance
+-- opener＝開它的視窗（名額視窗或車隊視窗的框架 Window）；關閉時前景與鍵盤交回它。product 省略＝綁定名額。
+-- 每個商品各一個視窗：開另一個商品不會清掉這個視窗未套用的修改。instance＝最後開的視窗
+function P.open(opener, product)
+    product = product or MVM.ECON_PRODUCT
+    local w = P.instances[product]
     if w == nil then
-        w = P.new()
+        w = P.new(product)
         w.win:addToUIManager()
-        ISLayoutManager.RegisterWindow(LAYOUT, w.win, w.win)
+        ISLayoutManager.RegisterWindow(PRODUCT[product].layout, w.win, w.win)
         w:watchClose()
-        P.instance = w
+        P.instances[product] = w
     end
+    P.instance = w
     w.opener = opener
     w.win:setVisible(true)
     w.win:bringToTop()
@@ -897,7 +911,7 @@ function P.open(opener)
     local E = BU.api()
     if E then
         if not P.listening then E.onChanged(P.onEconomyChanged); P.listening = true end
-        E.requestState(SRC, PROD)
+        E.requestState(SRC, product)
     end
     w:load()
     return w

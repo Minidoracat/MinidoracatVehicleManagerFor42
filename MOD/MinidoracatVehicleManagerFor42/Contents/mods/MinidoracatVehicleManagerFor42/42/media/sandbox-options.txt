@@ -15,6 +15,12 @@ option MinidoracatVehicleManager.AllowFactionShare
 option MinidoracatVehicleManager.InactivityReleaseDays
 {type = integer, min = 0, max = 365, default = 30, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerInactivityReleaseDays,}
 
+option MinidoracatVehicleManager.ParkedGuard
+{type = enum, numValues = 3, default = 2, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerParkedGuard, valueTranslation = MinidoracatVehicleManagerParkedGuard,}
+
+option MinidoracatVehicleManager.GuardSlotsPerPlayer
+{type = integer, min = 0, max = 20, default = 1, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerGuardSlotsPerPlayer,}
+
 option MinidoracatVehicleManager.ReleaseFinalizeHours
 {type = integer, min = 1, max = 168, default = 24, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerReleaseFinalizeHours,}
 

@@ -4,6 +4,7 @@
 --   3. 虛擬鑰匙三個 adapter（發動／解鎖／開門免警報，Phase 0 gate 15 實證）
 --   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）
 --   5. 佔座 watchdog 與拖掛對帳（事後偵測，D 級）
+--   6. 放行的 complete／裝置槽變更之後通知停車保全重記基準（MVM.Parked.touch）
 -- 未受保護的車（無紀錄）一律照原版走，不要求 intent。
 if isClient() then return end
 require "MinidoracatVehicleManager_API"
@@ -20,6 +21,7 @@ require "TimedActions/ISFixVehiclePartAction"
 require "TimedActions/ISSmashWindow"
 require "TimedActions/Animals/ISAddAnimalInTrailer"
 require "TimedActions/Animals/ISRemoveAnimalFromTrailer"
+require "RadioCom/ISRadioAction"
 
 local MVM = MinidoracatVehicleManager
 local O, S = MVM.Own, MVM.Srv
@@ -185,6 +187,15 @@ local SPECIAL = {
     end },
 }
 
+-- complete 放行後通知停車保全這台車（與 also 的車）是授權改的：下次檢查重記基準，不當成被破壞而復原。
+-- 目標在原函式之前取（原函式可能把車移出世界）
+local function touchAll(spec, a)
+    if MVM.Parked == nil then return nil end
+    local list = { spec.vehicleOf(a) }
+    for _, extra in ipairs(spec.also or {}) do list[#list + 1] = extra.vehicleOf(a) end
+    return list
+end
+
 local function makeWrapper(spec, stage, orig)
     local special = SPECIAL[spec.class] and SPECIAL[spec.class][stage]
     return function(a, ...)
@@ -193,8 +204,11 @@ local function makeWrapper(spec, stage, orig)
             return
         end
         if spec.onAllow then spec.onAllow(a) end
-        if special then return special(a, orig) end
-        return orig(a, ...)
+        local touched = stage == "complete" and touchAll(spec, a) or nil
+        local r
+        if special then r = special(a, orig) else r = orig(a, ...) end
+        for _, v in ipairs(touched or {}) do MVM.Parked.touch(v) end
+        return r
     end
 end
 
@@ -247,7 +261,9 @@ function G.wrapAutoDrive()
                 return false, MDAD.FAIL_GENERIC or "UI_MinidoracatAutoDrive_InstallFailed"
             end
         end
-        return orig(player, vehicle, kind, install, itemId)
+        local r1, r2 = orig(player, vehicle, kind, install, itemId)
+        if MVM.Parked then MVM.Parked.touch(vehicle) end -- 授權換裝置：停車保全重記基準
+        return r1, r2
     end
     R.marks[w] = true
     if R.wrapped["MDAD.applyDeviceChange"] then O.audit("WARN", "ADAPTER_REWRAPPED", { reason = "MDAD.applyDeviceChange" }) end

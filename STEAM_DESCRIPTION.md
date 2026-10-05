@@ -9,7 +9,7 @@
 [list]
 [*] [b]必裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
 [*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url]（在地圖上追蹤車輛）
-[*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url]（伺服器開放時，用遊戲幣購買或租用更多綁定名額）
+[*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url]（伺服器開放時，用遊戲幣購買或租用更多綁定名額與停車保全名額）
 [*] 以多人為主要用途（單人也能用，但不支援分割畫面第二位玩家）
 [/list]
 
@@ -24,6 +24,7 @@
 [list]
 [*] [b]綁在帳號上[/b]：角色死亡也不會失去車輛
 [*] [b]車輛保護[/b]：沒有權限的人不能開車、抽油、拆零件或拖車
+[*] [b]停車保全[/b]：車上沒人時武器打不壞綁定的車，損傷與破窗自動補回；有人打你的車會通知你（伺服器可設定模式）
 [*] [b]拖車也要綁定[/b]：已綁定的車只能裝上已綁定的拖車或拖吊車，拖車也佔一個綁定名額
 [*] [b]虛擬鑰匙[/b]：車主不需要實體鑰匙就能解鎖、開門與發動（伺服器可關閉）
 [*] [b]逐項分享[/b]：分享給指定玩家、陣營或所有人，預設私人

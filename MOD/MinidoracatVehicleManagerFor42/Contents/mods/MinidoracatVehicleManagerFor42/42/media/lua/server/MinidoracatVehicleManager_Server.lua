@@ -1,5 +1,6 @@
 -- 命令層（計畫 §6）：驗證 → 冪等 ACK → 限流 → 重解析車輛 → 距離 → 身分 → 權限 → quota → 白名單突變 → audit／ACK。
 -- 投影只以 per-recipient stream 送出（§6.2），絕不全服廣播；SP 以直接 Lua 呼叫投遞（§4.4）。
+-- 停車保全（ParkedGuard.lua）的車主開關、模式與名額管理命令也在這裡；車主通知走 S.notify（notice）。
 if isClient() then return end
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_OwnershipSystem"
@@ -47,6 +48,12 @@ function S.online()
     return out
 end
 
+-- 給車主的通知（notice：{ key, oid?, who?, n?, atMs?, bad }）；不在線就不送
+function S.notify(who, payload)
+    local p = S.online()[who]
+    if p then S.send(p, "notice", payload) end
+end
+
 -- -------------------------------------------------------------- projection ---
 local function copyGrants(rec)
     local out = {}
@@ -55,10 +62,13 @@ local function copyGrants(rec)
 end
 
 -- 收件者可見的一列；不可見回 nil。非 owner 不給 epoch、grants、陣營設定；沒有 TRACK 不給位置。
--- removedAtMs：車暫時不在世界上（拖車裝走或被移除，OwnershipSystem O.onPermanentlyRemove）
+-- removedAtMs：車暫時不在世界上（拖車裝走或被移除，OwnershipSystem O.onPermanentlyRemove）。
+-- guard：停車保全狀態（車主看 ON／OVER，其他人只看 ON）；lock／lockUntilMs：租用名額到期鎖定（RentLock.lua）
 function S.row(rec, who)
     local base = { oid = rec.oid, state = rec.recordState, name = rec.customName or "", script = rec.vehicleScript,
-        witnessPartId = rec.witnessPartId, removedAtMs = rec.removedAtMs }
+        witnessPartId = rec.witnessPartId, removedAtMs = rec.removedAtMs, lock = rec.lock, lockUntilMs = rec.lockUntilMs,
+        endReason = rec.endReason }
+    local guard = MVM.Parked and MVM.Parked.state(rec) or nil
     if who == rec.ownerUser then
         base.role = "OWNER"
         base.epoch = rec.epoch
@@ -69,6 +79,7 @@ function S.row(rec, who)
             rec.lastKnownX, rec.lastKnownY, rec.lastKnownZ, rec.lastKnownAtMs
         base.releaseDueAtMs = rec.releaseDueAtMs
         base.publicBits = rec.publicBits or 0
+        base.guard = guard
         return base
     end
     if not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED" then return nil end
@@ -80,6 +91,7 @@ function S.row(rec, who)
     local bits = MVM.bitsOr(named or 0, viaFaction and (rec.factionActionBits or 0) or 0)
     base.role = named ~= nil and "MEMBER" or "FACTION"
     base.myBits = bits
+    base.guard = guard == "ON" and guard or nil
     base.owner = rec.ownerUser
     if MVM.bitsAllow(bits, "TRACK") then
         base.lastKnownX, base.lastKnownY, base.lastKnownZ, base.lastKnownAtMs =
@@ -126,9 +138,10 @@ function S.push(recipients, rec, removed)
 end
 
 -- 公開分享表（oid → 動作位元）：陌生人的客戶端靠它判斷能不能用，所以給所有線上玩家（快照帶整張、變動時送 publicDelta）。
--- 只有隨機 oid 與位元，不含車主、位置、車名；授權仍只看 O.allowsRecord。R.pub 是已送出的內容，開機時從帳本建一次
+-- 只有隨機 oid 與位元，不含車主、位置、車名；授權仍只看 O.allowsRecord。R.pub 是已送出的內容，開機時從帳本建一次。
+-- 租用到期鎖定（rec.lock）的車一律 0（O.allowsRecord 也拒絕）
 local function publicOf(rec)
-    if not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED" then return 0 end
+    if not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED" or rec.lock ~= nil then return 0 end
     return rec.publicBits or 0
 end
 
@@ -167,7 +180,8 @@ end
 
 -- quota：used／base（基本）／permanent／rental／paid（Economy 可用名額）／total，
 -- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client。
--- pub＝公開分享表；releaseDays＝閒置釋放天數（0＝關閉；玩家在線時期限是「現在＋天數」，客戶端自己換算日期）
+-- pub＝公開分享表；releaseDays＝閒置釋放天數（0＝關閉；玩家在線時期限是「現在＋天數」，客戶端自己換算日期）；
+-- guard＝停車保全名額分項（MVM.Parked.counts）
 function S.snapshot(player, who)
     local st = { streamId = getRandomUUID(), seq = 0 }
     R.streams[who] = st
@@ -188,7 +202,8 @@ function S.snapshot(player, who)
     -- 約 1000 列（每列 0.4–1 KB）會碰到 1 MB 封包上限（見 S.sendAdminParts 的註解）。真有大陣營時照 sendAdminParts 分段
     S.send(player, "fleetSnapshot", { streamId = st.streamId, seq = 0, rows = rows,
         quotaUsed = quota and quota.used or 0, quotaLimit = quota and quota.total or 0, quota = quota,
-        status = O.R.status, pub = ledger and S.publicTable() or nil, releaseDays = S.releaseDays() })
+        status = O.R.status, pub = ledger and S.publicTable() or nil, releaseDays = S.releaseDays(),
+        guard = ledger and MVM.Parked and MVM.Parked.counts(who) or nil })
 end
 
 -- 名額規則變了：重送這些線上玩家的快照（名額顯示即時更新）；users＝nil 表示全部線上玩家
@@ -201,24 +216,39 @@ function S.resnapshot(users)
     for _, who in ipairs(users) do if online[who] then S.snapshot(online[who], who) end end
 end
 
--- 全服預設名額＝沙盒 ClaimsPerPlayer、閒置釋放天數＝沙盒 InactivityReleaseDays（唯一真相，帳本不另存）。
+-- 全服預設名額＝沙盒 ClaimsPerPlayer、閒置釋放天數＝沙盒 InactivityReleaseDays、停車保全模式＝ParkedGuard、
+-- 免費保全名額＝GuardSlotsPerPlayer（唯一真相，帳本不另存）。
 -- R.sandboxSeen 是上次看到的值：原版沙盒 UI 送回整份選項（GameServer.java:1694-1708）會直接改掉它們，
--- 每分鐘比對一次，變了就重送快照（名額與期限顯示即時更新）
+-- 每分鐘比對一次，變了就重送快照（名額、期限與保全顯示即時更新）
 local DEFAULT_QUOTA_OPTION = "MinidoracatVehicleManager.ClaimsPerPlayer"
 local RELEASE_DAYS_OPTION = "MinidoracatVehicleManager.InactivityReleaseDays"
+local GUARD_MODE_OPTION = "MinidoracatVehicleManager.ParkedGuard"
+local GUARD_SLOTS_OPTION = "MinidoracatVehicleManager.GuardSlotsPerPlayer"
 function S.defaultQuota() return MVM.sandbox("ClaimsPerPlayer", 3) end
 function S.releaseDays() return MVM.sandbox("InactivityReleaseDays", 30) end
 
+local function sandboxNow()
+    return { quota = S.defaultQuota(), days = S.releaseDays(), guard = MVM.guardMode(), slots = MVM.guardSlotsDefault() }
+end
+
 function S.watchSandbox()
-    local now2 = { quota = S.defaultQuota(), days = S.releaseDays() }
+    local now2 = sandboxNow()
     local old = R.sandboxSeen
     R.sandboxSeen = now2
-    if old == nil or (old.quota == now2.quota and old.days == now2.days) then return end
+    if old == nil or (old.quota == now2.quota and old.days == now2.days and old.guard == now2.guard and old.slots == now2.slots) then
+        return
+    end
     if old.quota ~= now2.quota then
         O.audit("WARN", "ADMIN_QUOTA", { actor = "SANDBOX", role = "ADMIN", reason = "DEFAULT " .. tostring(old.quota) .. "->" .. now2.quota })
     end
     if old.days ~= now2.days then
         O.audit("WARN", "ADMIN_RELEASE_DAYS", { actor = "SANDBOX", role = "ADMIN", reason = tostring(old.days) .. "->" .. now2.days })
+    end
+    if old.guard ~= now2.guard then
+        O.audit("WARN", "ADMIN_GUARD", { actor = "SANDBOX", role = "ADMIN", reason = "MODE " .. tostring(old.guard) .. "->" .. now2.guard })
+    end
+    if old.slots ~= now2.slots then
+        O.audit("WARN", "ADMIN_GUARD", { actor = "SANDBOX", role = "ADMIN", reason = "SLOTS " .. tostring(old.slots) .. "->" .. now2.slots })
     end
     S.resnapshot(nil)
 end
@@ -237,8 +267,9 @@ local function saveSandbox(option, value, old)
     local opts = getSandboxOptions()
     local ok, saved = pcall(writeSandbox, opts, option, value)
     if ok and saved == true then
-        R.sandboxSeen = { quota = S.defaultQuota(), days = S.releaseDays() }
-        local sync = { claimsPerPlayer = R.sandboxSeen.quota, releaseDays = R.sandboxSeen.days }
+        R.sandboxSeen = sandboxNow()
+        local seen = R.sandboxSeen
+        local sync = { claimsPerPlayer = seen.quota, releaseDays = seen.days, parkedGuard = seen.guard, guardSlots = seen.slots }
         for _, p in pairs(S.online()) do S.send(p, "sandboxSync", sync) end
         S.resnapshot(nil)
         return true
@@ -272,8 +303,9 @@ function S.sendAdminParts(player, meta, rows, players)
 end
 
 -- 管理員總表：只給 ManipulateVehicle；位置只給 owner 資訊與最後已知點（即時追蹤屬 Phase 4 的另一權限）。
--- players：每位車主、MVCK 待轉項或個人名額設定的人，以及登入過但還沒有車的玩家（knownUsers），管理頁依此分組。
--- 已用名額在同一趟掃描裡累計（結果同 O.quotaUsed：計入 quota 的紀錄＋待轉項），不逐人重掃待轉項
+-- players：每位車主、MVCK 待轉項或個人名額（含保全名額）設定的人，以及登入過但還沒有車的玩家（knownUsers），管理頁依此分組。
+-- 已用名額在同一趟掃描裡累計（結果同 O.quotaUsed：計入 quota 的紀錄＋待轉項），不逐人重掃待轉項。
+-- 保全名額欄位（guardBase／guardCustom／guardPaid／guardUsed／guardLimit）只在 SLOTS 模式填
 function S.adminSnapshot(player)
     local st = O.state()
     if not O.isAdmin(player) or st == nil then
@@ -293,20 +325,28 @@ function S.adminSnapshot(player)
         if row.owner then used[row.owner] = (used[row.owner] or 0) + 1 end
     end
     for user in pairs(st.quotaOverrides) do used[user] = used[user] or 0 end
+    for user in pairs(st.guardOverrides) do used[user] = used[user] or 0 end
+    local slots = MVM.Parked and MVM.guardMode() == MVM.GUARD.SLOTS
     for user in pairs(st.knownUsers) do used[user] = used[user] or 0 end
     local players = {}
     for user, n in pairs(used) do
         local base = O.quotaBase(user)
         local act = st.ownerActivity[user]
-        players[#players + 1] = { user = user, used = n, base = base, limit = base + (O.paidSlots and O.paidSlots(user) or 0),
+        local p = { user = user, used = n, base = base, limit = base + (O.paidSlots and O.paidSlots(user) or 0),
             custom = MVM.isInt(st.quotaOverrides[user]), lastSeenAtMs = act and act.lastSuccessfulLoginAtMs or nil }
+        if slots then
+            p.guardBase, p.guardPaid, p.guardCustom, p.guardUsed = MVM.Parked.slots(user)
+            p.guardLimit = p.guardBase + p.guardPaid
+        end
+        players[#players + 1] = p
     end
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
     local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
     local conflicts = O.R.identityConflicts
     S.sendAdminParts(player, { ok = true, status = O.R.status, migrationAvailable = migrationAvailable,
         override = O.overrideActive(player), defaultQuota = S.defaultQuota(), releaseDays = S.releaseDays(), identitySteam = O.steamMode(),
-        identityImported = st.identityImportedAtMs ~= nil, identityConflicts = conflicts and conflicts.names or nil }, rows, players)
+        identityImported = st.identityImportedAtMs ~= nil, identityConflicts = conflicts and conflicts.names or nil,
+        guardMode = MVM.guardMode(), guardSlots = MVM.guardSlotsDefault() }, rows, players)
 end
 
 -- -------------------------------------------------------------- validation ---
@@ -331,6 +371,8 @@ local TYPES = {
     paidOp = function(v) return v == "GET" or v == "SET" end,
     revision = function(v) return MVM.isInt(v) and v >= 0 and v <= 2147483647 end,
     paidPlan = function(v) return MVM.PaidSlots ~= nil and MVM.PaidSlots.validPlan(v) end,
+    product = function(v) return v == MVM.ECON_PRODUCT or v == MVM.GUARD_PRODUCT end,
+    guardMode = function(v) return MVM.isInt(v) and v >= MVM.GUARD.OFF and v <= MVM.GUARD.SLOTS end, -- 同沙盒 ParkedGuard
 }
 -- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
 S.BATCH_MAX = 500
@@ -395,7 +437,12 @@ local SCHEMA = {
     adminMigration = { op = "migrationOp" },
     adminIdentity = { op = "identityOp", ["rows?"] = "identityRows" },
     setAdminOverride = { enabled = "bool" },
-    adminPaidSlots = { op = "paidOp", ["values?"] = "paidPlan", ["expectedRevision?"] = "revision", ["reason?"] = "text" },
+    adminPaidSlots = { op = "paidOp", ["values?"] = "paidPlan", ["expectedRevision?"] = "revision", ["reason?"] = "text",
+        ["product?"] = "product" },
+    setGuard = { expectedOid = "uuid", enabled = "bool" },
+    adminSetGuardMode = { mode = "guardMode" },
+    adminSetGuardSlots = { amount = "defaultAmount" }, -- 同沙盒 GuardSlotsPerPlayer 範圍 0..20
+    adminSetGuardQuota = { usernames = "users", amount = "amount" },
 }
 -- 不帶 requestId、不回 ACK 的命令
 local QUERIES = { fleetSubscribe = true, fleetResync = true, prepareAction = true, adminList = true }
@@ -570,6 +617,7 @@ H.claim = function(player, who, a)
     O.audit("INFO", "CLAIM", { actor = who, role = "OWNER", oid = rec.oid, epoch = rec.epoch, owner = who,
         vehicle = rec.sqlIdHint, x = v:getX(), y = v:getY(), z = v:getZ() })
     S.push(S.audience(rec), rec, false)
+    if MVM.Parked then MVM.Parked.discover(v) end
     return { ok = true, oid = rec.oid }
 end
 
@@ -581,6 +629,7 @@ H.unclaim = function(player, who, a)
     O.stripWitness(v, O.hostPart(v, rec.witnessPartId))
     O.setState(rec, "RELEASED", "UNCLAIM", { actor = who })
     O.audit("INFO", "UNCLAIM", { actor = who, oid = rec.oid, owner = who, vehicle = rec.sqlIdHint })
+    if MVM.RentLock then MVM.RentLock.evaluate(who) end
     return { ok = true }
 end
 
@@ -656,6 +705,26 @@ H.setPublicShare = function(player, who, a)
     return { ok = true }
 end
 
+-- 停車保全開關（只在 SLOTS 模式，車主逐台開）：開啟時已用滿上限 → GUARD_FULL。排名依 guardAtMs，關掉再開會排到最後；
+-- 一台關掉時原本 OVER 的車可能轉 ON，所以重送車主整份快照
+H.setGuard = function(player, who, a)
+    if MVM.Parked == nil or MVM.guardMode() ~= MVM.GUARD.SLOTS then return fail("GUARD_NOT_SLOTS") end
+    local rec, reason = ownRecord(who, a.expectedOid)
+    if rec == nil then return fail(reason) end
+    if not MVM.Parked.GUARDABLE[rec.recordState] then return fail("INVALID_STATE") end
+    if a.enabled == (rec.guard == true) then return { ok = true, enabled = a.enabled } end
+    if a.enabled then
+        local base, paid, _, used = MVM.Parked.slots(who)
+        if used >= base + paid then return fail("GUARD_FULL") end
+    end
+    rec.guard, rec.guardAtMs = a.enabled or nil, a.enabled and now() or nil
+    O.bump(rec)
+    O.audit("INFO", "GUARD_SET", { actor = who, oid = rec.oid, owner = who, reason = a.enabled and "ON" or "OFF" })
+    S.push(S.audience(rec), rec, false)
+    S.resnapshot({ who })
+    return { ok = true, enabled = a.enabled }
+end
+
 H.addMember = function(player, who, a)
     local rec, reason = ownManageable(who, a)
     if rec == nil then return fail(reason) end
@@ -717,6 +786,11 @@ H.transfer = function(player, who, a)
     O.audit("INFO", "TRANSFER", { actor = who, oid = fresh.oid, epoch = fresh.epoch, owner = a.recipient,
         vehicle = fresh.sqlIdHint, reason = "from " .. who .. " old " .. rec.oid })
     S.push(S.audience(fresh), fresh, false)
+    if MVM.Parked then MVM.Parked.discover(v) end
+    if MVM.RentLock then
+        MVM.RentLock.evaluate(who)
+        MVM.RentLock.evaluate(a.recipient)
+    end
     return { ok = true, oid = fresh.oid }
 end
 
@@ -764,6 +838,40 @@ H.adminSetReleaseDays = function(player, who, a)
     return { ok = true, amount = a.amount }
 end
 
+-- 停車保全模式（沙盒 ParkedGuard 1..3）：存檔成功才回 ok；保全每秒依新模式重算
+H.adminSetGuardMode = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    local old = MVM.guardMode()
+    if not saveSandbox(GUARD_MODE_OPTION, a.mode, old) then return fail("SAVE_FAILED") end
+    O.audit("WARN", "ADMIN_GUARD", { actor = who, role = "ADMIN", reason = "MODE " .. tostring(old) .. "->" .. a.mode })
+    return { ok = true, mode = a.mode }
+end
+
+-- 每位玩家的免費保全名額（沙盒 GuardSlotsPerPlayer）：存檔成功才回 ok
+H.adminSetGuardSlots = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    local old = MVM.guardSlotsDefault()
+    if not saveSandbox(GUARD_SLOTS_OPTION, a.amount, old) then return fail("SAVE_FAILED") end
+    O.audit("WARN", "ADMIN_GUARD", { actor = who, role = "ADMIN", reason = "SLOTS " .. tostring(old) .. "->" .. a.amount })
+    return { ok = true, amount = a.amount }
+end
+
+-- 個人保全名額（絕對值；-1＝恢復全服預設），同 adminSetQuota：逐人稽核、重送受影響的線上玩家快照
+H.adminSetGuardQuota = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    local overrides = O.state().guardOverrides
+    local value = a.amount >= 0 and a.amount or nil
+    for _, user in ipairs(a.usernames) do
+        local old = overrides[user]
+        O.mapSet("guardOverrides", user, value)
+        O.audit("WARN", "ADMIN_GUARD", { actor = who, role = "ADMIN", owner = user,
+            reason = "USER " .. tostring(old or "DEFAULT") .. "->" .. tostring(value or "DEFAULT") })
+    end
+    O.bump(nil)
+    S.resnapshot(a.usernames)
+    return { ok = true, count = #a.usernames }
+end
+
 -- RELEASE：任一非終態 → RELEASED。ACTIVATE：QUARANTINED 且車已載入、三欄位相符、同 sqlId 無其他可授權紀錄 → 重寫見證 ACTIVE
 H.adminRecover = function(player, who, a)
     if not O.isAdmin(player) then return fail("NOT_ADMIN") end
@@ -774,6 +882,7 @@ H.adminRecover = function(player, who, a)
         -- 載著受保護的車：管理員開越權卸下後再釋出（不留下沒綁定、載著受保護車的拖車）
         if O.hasCargo(rec) then return fail("CARRIER_HAS_CARGO") end
         O.setState(rec, "RELEASED", "ADMIN_RELEASE", { actor = who, role = "ADMIN" })
+        if MVM.RentLock then MVM.RentLock.evaluate(rec.ownerUser) end
     else
         if rec.recordState ~= "QUARANTINED" or rec.ownerUser == nil then return fail("INVALID_STATE") end
         local v = a.vehicleId and liveVehicle(a.vehicleId)
@@ -787,6 +896,7 @@ H.adminRecover = function(player, who, a)
         if not O.rewriteWitness(rec, v) then return fail("NOT_CLAIMABLE") end
         rec.quarantineReason = nil
         O.setState(rec, "ACTIVE", "ADMIN_ACTIVATE", { actor = who, role = "ADMIN" })
+        if MVM.Parked then MVM.Parked.discover(v) end
     end
     O.audit("WARN", "ADMIN_BYPASS", { actor = who, role = "ADMIN", oid = rec.oid, owner = rec.ownerUser, reason = a.op })
     return { ok = true }
@@ -927,11 +1037,13 @@ Events.EveryOneMinute.Add(S.minute)
 -- 拖車 MOD 卸車用 addVehicleDebug，本事件在它呼叫 addToWorld 時就觸發（42.21 LuaManager.java:10821 → BaseVehicle.java:7964
 -- createPhysics → :904），此時還沒配 sqlId（:10822 才 VehiclesDB2.addVehicle），車身與零件 modData 也是之後才還原
 -- （MSW_Common_Commands.lua launchVehicle 先 addVehicleDebug、再 restoreSlotDataToVehicle；ATAISLaunchVehicle.lua:66 生車、
--- :88-93 還原零件）：有「已移出世界」的紀錄（接回帶見證的車）或 MVCK 待轉項（車身 SQLID 是還原後才有）時，下一個 tick 再看一次
+-- :88-93 還原零件）：有「已移出世界」的紀錄（接回帶見證的車）或 MVCK 待轉項（車身 SQLID 是還原後才有）時，下一個 tick 再看一次。
+-- 停車保全在這兩處開始追蹤（還沒有 sqlId 的車由 ParkedGuard 每分鐘掃描補上）
 R.recheck = {}
 Events.OnSpawnVehicleEnd.Add(function(vehicle)
     if O.state() == nil then return end
     O.observeVehicle(vehicle)
+    if MVM.Parked then MVM.Parked.discover(vehicle) end
     if O.hasOutOfWorld() or (MVM.Migration and MVM.Migration.hasPending()) then R.recheck[#R.recheck + 1] = vehicle end
 end)
 
@@ -943,7 +1055,10 @@ Events.OnTick.Add(function()
     local list = R.recheck
     R.recheck = {}
     for _, v in ipairs(list) do
-        if not v:isRemovedFromWorld() then O.observeVehicle(v) end
+        if not v:isRemovedFromWorld() then
+            O.observeVehicle(v)
+            if MVM.Parked then MVM.Parked.discover(v) end
+        end
     end
 end)
 

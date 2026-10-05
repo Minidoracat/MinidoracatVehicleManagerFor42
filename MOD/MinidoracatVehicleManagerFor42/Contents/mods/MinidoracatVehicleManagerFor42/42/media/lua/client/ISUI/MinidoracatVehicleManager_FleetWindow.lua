@@ -71,7 +71,8 @@ function F.onMap(row)
 end
 
 -- 狀態只照 server 的 recordState；釋放倒數以 server 給的到期時間換算。
--- removedAtMs：車暫時不在世界上（拖車裝走或被移除），紀錄仍受保護；待釋放與隔離照原狀態顯示
+-- removedAtMs：車暫時不在世界上（拖車裝走或被移除），紀錄仍受保護；待釋放與隔離照原狀態顯示。
+-- 租用名額到期鎖住的（lock）在清單與詳情都寫「已鎖定」；寬限期結束被解除的（endReason＝RENT_EXPIRED）寫出原因
 function F.stateText(row, now)
     local s = row.state
     if s == "PENDING_RELEASE" then
@@ -79,14 +80,17 @@ function F.stateText(row, now)
         return getText("IGUI_MVM_State_PENDING_RELEASE", hours)
     end
     if row.removedAtMs and (s == "ACTIVE" or s == "WITNESS_STALE") then return getText("IGUI_MVM_State_OUT_OF_WORLD") end
+    if row.lock and (s == "ACTIVE" or s == "WITNESS_STALE") then return getText("IGUI_MVM_State_LOCKED") end
+    if s == "RELEASED" and row.endReason == "RENT_EXPIRED" then return getText("IGUI_MVM_State_RELEASED_RENT_EXPIRED") end
     return getText("IGUI_MVM_State_" .. tostring(s))
 end
 
--- 狀態字色：要玩家處理的用強調色、隔離用錯誤色；暫時不在世界上是正常的受保護狀態，不用警示色
+-- 狀態字色：要玩家處理的用強調色、隔離與租用鎖定用錯誤色；暫時不在世界上是正常的受保護狀態，不用警示色
 local STATE_TOKEN = { ACTIVE = "text", WITNESS_STALE = "accent", PENDING_RELEASE = "accent", PENDING_REBIND = "accent",
     QUARANTINED = "errorText" }
 function F.stateToken(row)
     if row.removedAtMs and (row.state == "ACTIVE" or row.state == "WITNESS_STALE") then return "textMuted" end
+    if row.lock and (row.state == "ACTIVE" or row.state == "WITNESS_STALE") then return "errorText" end
     return STATE_TOKEN[row.state] or "textFaint"
 end
 
@@ -116,25 +120,13 @@ function F.coordsText(row)
     return math.floor(row.lastKnownX) .. "," .. math.floor(row.lastKnownY) .. "," .. math.floor(row.lastKnownZ or 0)
 end
 
--- 年月日（玩家電腦的時區）：PZCalendar＝Java Calendar.getInstance()（PZCalendar.java:14-15，LuaManager 有 expose）；
--- Kahlua 的 os.date 固定 UTC（OsLib.java:331），只在沒有 PZCalendar 的離線環境退回
-local function ymd(ms)
-    if PZCalendar then
-        local cal = PZCalendar.getInstance()
-        cal:setTimeInMillis(ms)
-        return cal:get(1), cal:get(2) + 1, cal:get(5)
-    end
-    local t = os.date("*t", math.floor(ms / 1000))
-    return t.year, t.month, t.day
-end
-
 local function two(n) return (n < 10 and "0" or "") .. n end
 
 -- 閒置釋放的保留期限：伺服器每分鐘刷新在線玩家的最後在線，所以看得到視窗的人期限就是「現在＋天數」。
--- 日期排列跟著語系（IGUI_MVM_Date：%1 年、%2 月、%3 日，月日補零）；天數 0＝關閉回 nil
+-- 日期排列跟著語系（IGUI_MVM_Date：%1 年、%2 月、%3 日，月日補零；本機時區，MVM.localTime）；天數 0＝關閉回 nil
 function F.keptText(days, now)
     if type(days) ~= "number" or days <= 0 then return nil end
-    local y, m, d = ymd(now + days * DAY_MS)
+    local y, m, d = MVM.localTime(now + days * DAY_MS)
     return getText("IGUI_MVM_KeptUntil", getText("IGUI_MVM_Date", y, two(m), two(d)))
 end
 
@@ -142,6 +134,26 @@ end
 function F.shareText(row)
     local key = row.role == "FACTION" and "IGUI_MVM_Share_ViaFaction" or "IGUI_MVM_Share_ViaMember"
     return getText(key, tostring(row.owner or "?"))
+end
+
+-- 停車保全（伺服器 MVM.Parked.state 給的列 guard：ON／OVER／nil）。車主：ALL 模式受保全的車一句；SLOTS 模式
+-- 每台可保全的車寫開／暫停（名額不夠）／關，附保全名額已用／總數（g＝快照的 guard）；OFF 不寫。被分享的車只有 ON 才寫
+local GUARDABLE = { ACTIVE = true, WITNESS_STALE = true, PENDING_RELEASE = true }
+function F.guardText(row, g)
+    local mode = g and g.mode or MVM.guardMode()
+    if row.role ~= "OWNER" or mode ~= MVM.GUARD.SLOTS then
+        return row.guard == "ON" and getText("IGUI_MVM_Guard_All") or nil
+    end
+    if not GUARDABLE[row.state] then return nil end
+    local key = row.guard == "ON" and "IGUI_MVM_Guard_On" or row.guard == "OVER" and "IGUI_MVM_Guard_Over" or "IGUI_MVM_Guard_Off"
+    return getText(key, g and g.used or 0, g and g.total or 0), row.guard == "OVER" and "accent" or nil
+end
+
+-- 租用名額到期鎖住（寬限期到 lockUntilMs；nil＝寬限期已過、即將解除）
+function F.lockText(row)
+    if row.lock == nil then return nil end
+    if row.lockUntilMs then return getText("IGUI_MVM_Lock_Rent", MVM.dateTimeText(row.lockUntilMs)) end
+    return getText("IGUI_MVM_Lock_RentEnded")
 end
 
 -- 詳情卡的行（第一行是大字標題）。layoutDetail 算好存在 self.card，draw 只畫；b＝自己的資料桶
@@ -163,16 +175,33 @@ function F.cardLines(row, tab, b, query, now)
             local base = getText(info.custom and "IGUI_MVM_Admin_BaseCustom" or "IGUI_MVM_Admin_BaseDefault", info.base)
             if info.limit > info.base then base = base .. getText("IGUI_MVM_Sep") .. getText("IGUI_MVM_Admin_Paid", info.limit - info.base) end
             add(base)
+            -- 保全名額：伺服器只在 SLOTS 模式填這幾個欄位
+            if info.guardBase ~= nil then
+                add(getText("IGUI_MVM_Admin_GuardUsed", info.guardUsed or 0, info.guardLimit or info.guardBase), "text")
+                local guard = getText(info.guardCustom and "IGUI_MVM_Admin_GuardCustom" or "IGUI_MVM_Admin_GuardDefault", info.guardBase)
+                if (info.guardPaid or 0) > 0 then
+                    guard = guard .. getText("IGUI_MVM_Sep") .. getText("IGUI_MVM_Admin_GuardPaid", info.guardPaid)
+                end
+                add(guard)
+            end
             if info.lastSeenAtMs then add(getText("IGUI_MVM_Admin_LastSeen", F.agoText(info.lastSeenAtMs, now))) end
         end
-        add(row.summary)
     else
         add(F.displayName(row), "text", true)
         if F.renamed(row) then add(getText("IGUI_MVM_ModelName", F.modelName(row))) end
         local state = F.stateText(row, now)
-        local kept = tab ~= "ADMIN" and row.role == "OWNER" and (row.state == "ACTIVE" or row.state == "WITNESS_STALE")
+        local kept = tab ~= "ADMIN" and row.role == "OWNER" and not row.lock and (row.state == "ACTIVE" or row.state == "WITNESS_STALE")
             and F.keptText(b.releaseDays, now)
         add(kept and (state .. getText("IGUI_MVM_Sep") .. kept) or state, F.stateToken(row))
+        local lock = F.lockText(row)
+        if lock then
+            add(lock, "errorText")
+            if tab ~= "ADMIN" and row.role == "OWNER" then add(getText("IGUI_MVM_Lock_RentHint")) end
+        end
+        if tab ~= "ADMIN" then
+            local guard, token = F.guardText(row, b.guard)
+            if guard then add(guard, token) end
+        end
         add(F.locationText(row, now))
         lines[#lines].copy = F.coordsText(row)
         if tab == "ADMIN" then
@@ -538,8 +567,9 @@ function FleetWindow:build()
     self.detailTop = self.listTop
     self.detailW = W - self.detailX - PAD
     self.infoH = 0 -- 詳情卡高度依內容行數（layoutDetail）
-    -- 頁尾：保護範圍一句話（完整說明在綁定確認框）、越權中的提醒；兩句都寫得夠短，不截字
-    self.disclosure, self.overrideActive = getText("IGUI_MVM_Disclosure"), getText("IGUI_MVM_Override_Active")
+    -- 頁尾：保護範圍一句話（依停車保全模式，layoutDetail 模式變了才換；完整說明在綁定確認框）、越權中的提醒；
+    -- 兩句都寫得夠短，不截字
+    self.overrideActive = getText("IGUI_MVM_Override_Active")
 
     self.btnRename = self:button(getText("IGUI_MVM_Btn_Rename"), FleetWindow.onRename)
     self.userEntry = self:field(180, getText("IGUI_MVM_UserHint"))
@@ -591,20 +621,52 @@ function FleetWindow:build()
     self.btnIdentity = self:button(getText("IGUI_MVM_Btn_ImportIdentity"), FleetWindow.onImportIdentity)
     self.btnRebind = self:button("", FleetWindow.onRebindIdentity, "danger")
     self.btnPaidSlots = self:button(getText("IGUI_MVM_Btn_PaidSettings"), FleetWindow.onPaidSlots, "normal", "settings")
+    self.btnPaidGuard = self:button(getText("IGUI_MVM_Btn_PaidGuardSettings"), FleetWindow.onPaidGuard, "normal", "settings")
     self.overrideBox = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Override_Toggle"), theme = theme, target = self,
         onChange = FleetWindow.onOverride })
     self.overrideBox:setVisible(false)
     body:addChild(self.overrideBox)
+    -- 停車保全模式（管理頁）：三顆 chip（框架 rev 11），亮起的是伺服器現在的值；按別顆先確認
+    self.guardChips = {}
+    for n = 1, 3 do
+        local c = self:button(getText("IGUI_MVM_GuardMode_" .. n), FleetWindow.onGuardMode, "chip")
+        c.internal, c._focusGroup = n, "guardMode"
+        c:setTooltip(getText("IGUI_MVM_GuardMode_Tip"))
+        self.guardChips[n] = c
+    end
+    self.guardSlotsEntry = self:field(80, "0-20", true)
+    self.btnGuardSlotsDefault = self:button(getText("IGUI_MVM_Btn_Apply"), FleetWindow.onGuardSlotsDefault)
+    self.btnGuardSlotsDefault:setTooltip(getText("IGUI_MVM_GuardSlots_Tip"))
+    self.guardQuotaEntry = self:field(80, nil, true)
+    self.btnGuardQuota = self:button(getText("IGUI_MVM_Btn_GuardQuota"), FleetWindow.onGuardQuota)
+    self.btnGuardQuotaDefault = self:button(getText("IGUI_MVM_Btn_QuotaDefault"), FleetWindow.onGuardQuotaDefault)
+    -- 車主的停車保全開關（SLOTS 模式）：Checkbox 沒有 tooltip，借原版按鈕的畫法（ISButton.lua:316-346；
+    -- 開關隱藏時 ISToolTip 自己收掉：ISToolTip.lua:58-61）
+    self.guardBox = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_Guard_Toggle"), theme = theme,
+        target = self, onChange = FleetWindow.onGuard })
+    self.guardBox.tooltip = getText("IGUI_MVM_Guard_Toggle_Tip")
+    local boxPrerender = self.guardBox.prerender
+    self.guardBox.prerender = function(cb) boxPrerender(cb); ISButton.updateTooltip(cb) end
+    self.guardBox:setVisible(false)
+    body:addChild(self.guardBox)
+    self.btnGuardSlots = self:button(getText("IGUI_MVM_Btn_GuardSlots"), FleetWindow.onGuardSlots, "normal", "coins")
     self.actionButtons = { self.btnRename, self.btnAddMember, self.btnFaction, self.btnPublic, self.btnTransfer, self.btnUnclaim,
         self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnLeave, self.btnAdminRelease, self.btnQuota,
         self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnReleaseDays, self.btnMigrate,
-        self.btnIdentity, self.btnRebind, self.overrideBox, self.btnPublicOff, self.btnFactionOff }
+        self.btnIdentity, self.btnRebind, self.overrideBox, self.btnPublicOff, self.btnFactionOff, self.guardBox,
+        self.btnGuardSlotsDefault, self.btnGuardQuota, self.btnGuardQuotaDefault }
     self.detailControls = { self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction, self.btnPublic,
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap, self.btnTeleport,
         self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
         self.btnPickShown, self.btnPickClear, self.batchEntry, self.btnBatch, self.btnBatchDefault, self.defaultEntry,
         self.btnDefaultQuota, self.releaseEntry, self.btnReleaseDays, self.btnMigrate, self.btnIdentity, self.btnRebind,
-        self.btnLook, self.overrideBox, self.btnPaidSlots, self.btnPublicOff, self.btnFactionOff }
+        self.btnLook, self.overrideBox, self.btnPaidSlots, self.btnPublicOff, self.btnFactionOff, self.btnPaidGuard,
+        self.guardSlotsEntry, self.btnGuardSlotsDefault, self.guardQuotaEntry, self.btnGuardQuota, self.btnGuardQuotaDefault,
+        self.guardBox, self.btnGuardSlots }
+    for _, c in ipairs(self.guardChips) do
+        self.actionButtons[#self.actionButtons + 1] = c
+        self.detailControls[#self.detailControls + 1] = c
+    end
     for _, cb in ipairs(self.checks) do self.detailControls[#self.detailControls + 1] = cb end
     for _, b in ipairs(self.memberButtons) do
         self.actionButtons[#self.actionButtons + 1] = b
@@ -769,8 +831,8 @@ function FleetWindow:toolRows(rows, y)
     return y
 end
 
--- 管理頁詳情（資訊卡以下），全部一列一項、說明收進提示文字：選到的玩家或車 → 批次 → 身分驗證（Steam 伺服器）
--- → MVCK → 付費名額 → 全服預設名額 → 閒置解除天數 → 越權。回傳內容底端 y
+-- 管理頁詳情（資訊卡以下），全部一列一項、說明收進提示文字：選到的玩家（基本名額、保全名額）或車 → 批次 → 身分驗證
+-- （Steam 伺服器）→ MVCK → 付費名額 → 全服預設名額 → 閒置解除天數 → 停車保全模式（＋全服保全名額）→ 越權。回傳內容底端 y
 function FleetWindow:layoutAdmin(row, b, y)
     local rows = {}
     if row ~= nil and row.kind == "PLAYER" then
@@ -786,6 +848,17 @@ function FleetWindow:layoutAdmin(row, b, y)
                 r.buttons[#r.buttons + 1] = self.btnPick
             end
             rows[#rows + 1] = r
+            -- 保全名額（伺服器只在 SLOTS 模式給 guardBase）：同基本名額，-1＝恢復伺服器預設
+            if info.guardBase ~= nil then
+                local gfill = row.user .. ":" .. info.guardBase
+                if self.guardQuotaEntry.forKey ~= gfill then
+                    self.guardQuotaEntry.forKey = gfill
+                    self.guardQuotaEntry:setText(tostring(info.guardBase))
+                end
+                local g = { title = getText("IGUI_MVM_Section_GuardQuota"), buttons = { self.guardQuotaEntry, self.btnGuardQuota } }
+                if info.guardCustom then g.buttons[3] = self.btnGuardQuotaDefault end
+                rows[#rows + 1] = g
+            end
         end
     elseif row ~= nil then
         local r = { title = getText("IGUI_MVM_Section_Vehicle"), buttons = {} }
@@ -818,13 +891,26 @@ function FleetWindow:layoutAdmin(row, b, y)
     if b ~= nil and b.migrationAvailable then
         rows[#rows + 1] = { title = getText("IGUI_MVM_Section_MVCK"), buttons = { self.btnMigrate } }
     end
-    rows[#rows + 1] = { title = getText("IGUI_MVM_Section_PaidSlots"), buttons = { self.btnPaidSlots } }
+    local mode = b and b.adminGuardMode or MVM.guardModeFor(b)
+    local paid = { title = getText("IGUI_MVM_Section_PaidSlots"), buttons = { self.btnPaidSlots } }
+    if mode == MVM.GUARD.SLOTS then paid.buttons[2] = self.btnPaidGuard end
+    rows[#rows + 1] = paid
     -- 全服設定：預填伺服器值，值變了才重填（不蓋掉正在輸入的值）
     local def, days = b and b.adminDefaultQuota, b and b.adminReleaseDays
     if def ~= nil and self.defaultEntry.forValue ~= def then self.defaultEntry.forValue = def; self.defaultEntry:setText(tostring(def)) end
     if days ~= nil and self.releaseEntry.forValue ~= days then self.releaseEntry.forValue = days; self.releaseEntry:setText(tostring(days)) end
     rows[#rows + 1] = { title = getText("IGUI_MVM_Section_DefaultQuota"), buttons = { self.defaultEntry, self.btnDefaultQuota }, gap = true }
     rows[#rows + 1] = { title = getText("IGUI_MVM_Section_ReleaseDays"), buttons = { self.releaseEntry, self.btnReleaseDays } }
+    for n, c in ipairs(self.guardChips) do if c.setActive then c:setActive(n == mode) end end
+    rows[#rows + 1] = { title = getText("IGUI_MVM_Section_Guard"), buttons = self.guardChips }
+    if mode == MVM.GUARD.SLOTS then
+        local slots = b and b.adminGuardSlots
+        if slots ~= nil and self.guardSlotsEntry.forValue ~= slots then
+            self.guardSlotsEntry.forValue = slots
+            self.guardSlotsEntry:setText(tostring(slots))
+        end
+        rows[#rows + 1] = { title = getText("IGUI_MVM_Section_GuardSlots"), buttons = { self.guardSlotsEntry, self.btnGuardSlotsDefault } }
+    end
     self.overrideBox:setChecked(b ~= nil and b.adminOverride == true, true)
     rows[#rows + 1] = { title = getText("IGUI_MVM_Section_Override"), buttons = { self.overrideBox } }
     return self:toolRows(rows, y)
@@ -845,9 +931,9 @@ function FleetWindow:checkGrid(y)
     return y
 end
 
--- 車主的車：動作列在最上面（最常用，也最不該被擠出視窗）→ 目前分享給（所有人、陣營、成員各一顆停止鈕）→
--- 新增分享（先勾權限、再選對象）。回傳內容底端 y
-function FleetWindow:layoutOwner(row, y)
+-- 車主的車：動作列在最上面（最常用，也最不該被擠出視窗）→ 停車保全開關（SLOTS 模式）→ 目前分享給（所有人、陣營、
+-- 成員各一顆停止鈕）→ 新增分享（先勾權限、再選對象）。回傳內容底端 y
+function FleetWindow:layoutOwner(row, b, y)
     local near = F.findLoaded(row)
     self.nearVehicle = near
     local pending = row.state == "PENDING_RELEASE"
@@ -862,6 +948,13 @@ function FleetWindow:layoutOwner(row, y)
         acts[#acts + 1] = near and self.btnUnclaim or self.btnReport
     end
     y = self:flow(acts, y) + PAD
+    -- 停車保全：開＝這台車占一個保全名額（伺服器的列 guard 有值＝已開，含名額不夠暫停的）；保全名額視窗在 Economy 可用時才給
+    if MVM.guardModeFor(b) == MVM.GUARD.SLOTS and GUARDABLE[row.state] then
+        self.guardBox:setChecked(row.guard ~= nil, true)
+        local g = { self.guardBox }
+        if b.guard and b.guard.economy == "READY" then g[2] = self.btnGuardSlots end
+        y = self:flow(g, y) + PAD
+    end
     local shares = {}
     local function share(btn, who, bits, tip)
         btn:setTitle(getText("IGUI_MVM_ShareRow", who, F.actionsText(bits)))
@@ -914,7 +1007,7 @@ function FleetWindow:layoutBody(row, b, y)
     elseif F.isHistory(row) then
         return self:flow({ self.btnDismiss }, y)
     end
-    return self:layoutOwner(row, y)
+    return self:layoutOwner(row, b, y)
 end
 
 -- 依選取列與角色排詳情卡與控制項（選取變更、資料變更與每 2 秒走近／離開車輛時重排）。放不下時整段可用滑鼠滾輪捲動
@@ -924,6 +1017,8 @@ function FleetWindow:layoutDetail()
     local row, b = self.current, self:bucket()
     local recovery = b ~= nil and b.status == "RECOVERY_REQUIRED"
     self.card = F.cardLines(row, self.tab, b, self.query, getTimestampMs())
+    local mode = MVM.guardModeFor(b)
+    if mode ~= self.disclosureMode then self.disclosureMode, self.disclosure = mode, getText("IGUI_MVM_Disclosure_" .. mode) end
     local h = 20
     for _, l in ipairs(self.card) do h = h + (l.big and fontH(FM) + 4 or self.fh + 2) end
     self.infoH = h
@@ -1120,13 +1215,13 @@ function FleetWindow:send(command, args, okText)
 end
 
 -- 確認框：框架 Dialog（模態、只回呼一次）；self.modal 留給 E2E 以 UI.Dialog.close 按確認。arg 可以是兩個參數的 table。
--- opts.ok＝確認鈕的文字鍵（寫出會發生什麼）；opts.danger＝破壞性動作（紅色）；opts.input＝輸入框 { text, placeholder }，
--- 確認時 fn(self, 輸入文字)
+-- opts.ok＝確認鈕的文字鍵（寫出會發生什麼，opts.okArg＝它的參數）；opts.danger＝破壞性動作（紅色）；
+-- opts.input＝輸入框 { text, placeholder }，確認時 fn(self, 輸入文字)
 function FleetWindow:confirm(textKey, arg, fn, opts)
     opts = opts or {}
     local body = type(arg) == "table" and getText(textKey, arg[1], arg[2]) or getText(textKey, arg)
     self.modal = UI.Dialog.show({ title = getText("IGUI_MVM_FleetTitle"), text = body, theme = theme, input = opts.input,
-        confirmText = getText(opts.ok or "UI_Ok"), cancelText = getText("UI_Cancel"), danger = opts.danger == true,
+        confirmText = getText(opts.ok or "UI_Ok", opts.okArg), cancelText = getText("UI_Cancel"), danger = opts.danger == true,
         onResult = function(ok, input) self.modal = nil; if ok then fn(self, input) end end })
 end
 
@@ -1357,6 +1452,48 @@ function FleetWindow:onReleaseDays()
     self:adminSend("adminSetReleaseDays", { amount = n }, function(ack) return getText("IGUI_MVM_ReleaseDaysSaved", ack.amount) end)
 end
 
+-- 停車保全模式＝沙盒 ParkedGuard（1 關、2 全部綁定的車、3 依保全名額）：按亮著的那顆不動；換模式先確認，
+-- 關閉是破壞性的（所有車又會被武器打壞）。伺服器存檔成功才回 ok
+function FleetWindow:onGuardMode(button)
+    local b = self:bucket()
+    local n, cur = button.internal, b and b.adminGuardMode or MVM.guardModeFor(b)
+    if n == cur then return end
+    local slots = n == MVM.GUARD.SLOTS and (b and b.adminGuardSlots or MVM.guardSlotsDefault()) or nil
+    self:confirm("IGUI_MVM_ConfirmGuardMode_" .. n, slots, function(w)
+        w:adminSend("adminSetGuardMode", { mode = n }, function(ack)
+            return getText("IGUI_MVM_GuardModeSaved", getText("IGUI_MVM_GuardMode_" .. tostring(ack.mode or n)))
+        end)
+    end, { ok = "IGUI_MVM_Btn_SetGuardMode", okArg = getText("IGUI_MVM_GuardMode_" .. n), danger = n == MVM.GUARD.OFF })
+end
+
+-- 每位玩家的免費保全名額＝沙盒 GuardSlotsPerPlayer（0–20）；伺服器存檔成功才回 ok
+function FleetWindow:onGuardSlotsDefault()
+    local n = wholeIn(self.guardSlotsEntry, 0, 20)
+    if n == nil then return self:say("IGUI_MVM_NeedDefaultRange") end
+    self:adminSend("adminSetGuardSlots", { amount = n }, function(ack) return getText("IGUI_MVM_GuardSlotsSaved", ack.amount) end)
+end
+
+-- 單一玩家的保全名額（0–100），-1＝恢復伺服器預設
+function FleetWindow:onGuardQuota()
+    local row = self.current; if not (row and row.kind == "PLAYER" and row.info) then return end
+    local n = wholeIn(self.guardQuotaEntry, 0, 100)
+    if n == nil then return self:say("IGUI_MVM_NeedQuotaRange") end
+    self:adminSend("adminSetGuardQuota", { usernames = { row.user }, amount = n })
+end
+
+function FleetWindow:onGuardQuotaDefault()
+    local row = self.current; if not (row and row.kind == "PLAYER" and row.info) then return end
+    self:adminSend("adminSetGuardQuota", { usernames = { row.user }, amount = -1 })
+end
+
+-- 車主的停車保全開關：送出後以 ACK 與重送的快照為準（layoutOwner 依列的 guard 重設勾選；名額滿等失敗時跳回）
+function FleetWindow:onGuard(checked)
+    local row = self.current; if not row then return end
+    self:send("setGuard", { expectedOid = row.oid, enabled = checked == true }, function(ack)
+        return getText(ack.enabled and "IGUI_MVM_Guard_Enabled" or "IGUI_MVM_Guard_Disabled")
+    end)
+end
+
 function FleetWindow:onImportMVCK()
     self:confirm("IGUI_MVM_ConfirmImportMVCK", nil, function(w)
         w:adminSend("adminMigration", { op = "IMPORT" }, function(ack)
@@ -1418,8 +1555,16 @@ function FleetWindow:onSlots()
     if MVM.BillingWindow then MVM.BillingWindow.open() else self:say("IGUI_MVM_NeedFramework") end
 end
 
+function FleetWindow:onGuardSlots()
+    if MVM.BillingWindow then MVM.BillingWindow.open(MVM.GUARD_PRODUCT) else self:say("IGUI_MVM_NeedFramework") end
+end
+
 function FleetWindow:onPaidSlots()
-    if MVM.PaidSlotsWindow then MVM.PaidSlotsWindow.open(self.win) else self:say("IGUI_MVM_NeedFramework") end
+    if MVM.PaidSlotsWindow then MVM.PaidSlotsWindow.open(self.win, MVM.ECON_PRODUCT) else self:say("IGUI_MVM_NeedFramework") end
+end
+
+function FleetWindow:onPaidGuard()
+    if MVM.PaidSlotsWindow then MVM.PaidSlotsWindow.open(self.win, MVM.GUARD_PRODUCT) else self:say("IGUI_MVM_NeedFramework") end
 end
 
 -- -------------------------------------------------------------- 外觀視窗 ---

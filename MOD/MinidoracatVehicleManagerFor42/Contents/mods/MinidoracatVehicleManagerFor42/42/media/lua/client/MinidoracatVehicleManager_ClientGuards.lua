@@ -46,9 +46,13 @@ if queueAddAfter then
 end
 
 -- ------------------------------------------------------------ UX guards ---
+-- 被拒的原因記在 lastReason：租用名額到期鎖住的車（RENT_LOCKED）提示要怎麼解鎖，不是「受保護」
+local lastReason = nil
 local function allowed(chr, vehicle, act)
     if vehicle == nil then return true end
-    return (MVM.clientCanUse(chr, vehicle, act))
+    local ok, reason = MVM.clientCanUse(chr, vehicle, act)
+    if not ok then lastReason = reason end
+    return ok
 end
 
 -- 預設提示「受保護」；check 可在 action._mvmText 放別的文字（例：MSW 拖車沒綁定）
@@ -64,7 +68,13 @@ end
 local function guardValid(cls, check)
     local orig = cls.isValid
     cls.isValid = function(self)
-        if self._mvmOk == nil then self._mvmOk = check(self) end
+        if self._mvmOk == nil then
+            lastReason = nil
+            self._mvmOk = check(self)
+            if not self._mvmOk and lastReason == "RENT_LOCKED" and self._mvmText == nil then
+                self._mvmText = MVM.reasonText(lastReason)
+            end
+        end
         if not self._mvmOk then return refuse(self) end
         return orig(self)
     end
@@ -162,7 +172,11 @@ MVM.clientHandlers.enforcement = function(payload)
     local p = getSpecificPlayer(0)
     if p == nil or payload.to ~= (isClient() and p:getUsername() or "local:0") then return end
     local text = getText("IGUI_MVM_Refused")
-    if payload.reason == "NOT_AUTHORIZED" then text = MVM.protectedText(p)
+    if payload.reason == "RENT_LOCKED" then text = MVM.reasonText(payload.reason)
+    -- 武器打車窗被擋：停車保全中說「打不壞」，否則說「已被綁定、車主在線會收到通知」（車窗可能照樣破，見 guards.md）
+    elseif payload.action == "CMD:vehicle.damageWindow" then
+        text = getText(payload.guard == true and "IGUI_MVM_Guard_Hit" or "IGUI_MVM_Attack_Owned")
+    elseif payload.reason == "NOT_AUTHORIZED" then text = MVM.protectedText(p)
     elseif payload.reason == "CARRIER_UNBOUND" then text = getText("IGUI_MVM_Reason_CARRIER_UNBOUND") end
     MVM.notify(p, text, true)
     MVM.log("enforcement " .. tostring(payload.action) .. " " .. tostring(payload.reason))

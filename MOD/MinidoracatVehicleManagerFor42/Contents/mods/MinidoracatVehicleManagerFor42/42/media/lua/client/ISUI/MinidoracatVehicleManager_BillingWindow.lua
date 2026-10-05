@@ -5,13 +5,15 @@
 -- 不同（方案剛改）就不付款，確認頁換成新金額並提示。名額商品付款當下生效（Economy instant 商品）。
 -- 規則：畫面只顯示 server 回來的狀態（不樂觀更新）；付款逾時＝結果未知，不自動重送、不換新報價，
 -- 只提供「查詢購買結果」（唯讀讀同一筆 order）；自動續租預設關、開啟前先在確認頁同意該張租約的條款。
--- 伺服器整合狀態（fleetSnapshot 的 quota.economy）不是 READY 時只顯示原因、不呼叫 Economy（SP 也是）。
+-- 伺服器整合狀態（fleetSnapshot 名額數字的 economy）不是 READY 時只顯示原因、不呼叫 Economy（SP 也是）。
+-- 一個商品一個視窗實例（綁定名額 ECON_PRODUCT、停車保全名額 GUARD_PRODUCT）：名額數字、標題與商品專屬文字
+-- 依 BU.TEXTS，Economy 呼叫一律帶視窗的商品；兩個視窗各自保有報價、付款鎖與確認頁。
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Client"
 
 local MVM = MinidoracatVehicleManager
 local C = MVM.Client
-local SRC, PROD = MVM.ECON_SOURCE, MVM.ECON_PRODUCT
+local SRC = MVM.ECON_SOURCE
 local BU = {}
 MVM.BillingUI = BU
 
@@ -31,12 +33,25 @@ function BU.api()
     return nil
 end
 
-local BLOCKERS = { OFF = "IGUI_MVM_Slots_SP", ABSENT = "IGUI_MVM_Slots_Absent", UNSUPPORTED = "IGUI_MVM_Slots_Unsupported",
-    FAILED = "IGUI_MVM_Slots_Failed", UNAVAILABLE = "IGUI_MVM_Slots_Unavailable" }
+-- 各商品：名額數字在車隊快照 bucket 的哪個欄位、視窗標題、大字標題、付款後台數、讀不到權益時的說明、
+-- 付費設定入口（也是設定視窗標題）、視窗位置記錄名
+BU.TEXTS = {
+    [MVM.ECON_PRODUCT] = { counts = "quota", title = "IGUI_MVM_SlotsTitle", headline = "IGUI_MVM_Slots_Headline",
+        after = "IGUI_MVM_Slots_SheetAfter", unavailable = "IGUI_MVM_Slots_Unavailable",
+        admin = "IGUI_MVM_Btn_PaidSettings", layout = "MinidoracatVehicleManagerSlots" },
+    [MVM.GUARD_PRODUCT] = { counts = "guard", title = "IGUI_MVM_GuardSlotsTitle", headline = "IGUI_MVM_Slots_GuardHeadline",
+        after = "IGUI_MVM_Slots_GuardSheetAfter", unavailable = "IGUI_MVM_Slots_GuardUnavailable",
+        admin = "IGUI_MVM_Btn_PaidGuardSettings", layout = "MinidoracatVehicleManagerGuardSlots" },
+}
 
--- 付費區塊不能用的原因（翻譯鍵），可用回 nil。server 的整合狀態優先，其次本機 Economy client 與報價資料
-function BU.blocker(quota, hasApi, env)
+local BLOCKERS = { OFF = "IGUI_MVM_Slots_SP", ABSENT = "IGUI_MVM_Slots_Absent", UNSUPPORTED = "IGUI_MVM_Slots_Unsupported",
+    FAILED = "IGUI_MVM_Slots_Failed" }
+
+-- 付費區塊不能用的原因（翻譯鍵），可用回 nil。server 的整合狀態優先，其次本機 Economy client 與報價資料。
+-- quota＝該商品的名額數字（綁定 b.quota、保全 b.guard）；product 省略＝綁定名額
+function BU.blocker(quota, hasApi, env, product)
     if quota == nil then return "IGUI_MVM_Loading" end
+    if quota.economy == "UNAVAILABLE" then return BU.TEXTS[product or MVM.ECON_PRODUCT].unavailable end
     if BLOCKERS[quota.economy] then return BLOCKERS[quota.economy] end
     if quota.economy ~= "READY" or not hasApi then return "IGUI_MVM_Slots_Unsupported" end
     if env == nil then return "IGUI_MVM_Slots_LoadingPrices" end
@@ -454,13 +469,17 @@ function Body:onMouseUpOutside(x, y) stopDrag(self); return ISPanel.onMouseUpOut
 
 local W = {}
 W.__index = W
+W.product = MVM.ECON_PRODUCT -- 實例沒指定（harness 的假視窗）＝綁定名額
+W.instances = {}
 MVM.BillingWindow = W
 
-local function bucket()
+-- 回 車隊快照 bucket, 這個視窗商品的名額數字（bucket 的 quota 或 guard）
+local function counts(w)
     local p = getSpecificPlayer(0)
     if p == nil then return nil end
     local owner = isClient() and p:getUsername() or "local:0"
-    return owner and C.buckets[owner] or nil
+    local b = owner and C.buckets[owner] or nil
+    return b, b and b[BU.TEXTS[w.product].counts]
 end
 
 -- 勾選框寬度跟著標籤（框架只在建構時量一次）
@@ -475,15 +494,16 @@ function W:checkbox(label, onChange)
     return box
 end
 
-function W.new()
-    local self = setmetatable({ lines = {}, placed = {}, fills = {}, controls = {}, rows = {}, focusList = {}, focusPool = {},
-        dirty = true, scroll = 0, contentH = 0, innerW = 0 }, W)
+function W.new(product)
+    local self = setmetatable({ product = product, lines = {}, placed = {}, fills = {}, controls = {}, rows = {}, focusList = {},
+        focusPool = {}, dirty = true, scroll = 0, contentH = 0, innerW = 0 }, W)
+    local texts = BU.TEXTS[product]
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
     local w = math.min(520, sw - 40)
     -- autoY：視窗還在我們放的位置（玩家沒拖、沒讀回上次的位置）時，每次重排依新高度垂直置中
     self.autoY = math.floor((sh - 200) / 2)
     self.win = UI.Window.new({ x = math.floor((sw - w) / 2), y = self.autoY, width = w, height = 200,
-        title = getText("IGUI_MVM_SlotsTitle"), icon = "coins", theme = theme })
+        title = getText(texts.title), icon = "coins", theme = theme })
     -- 鍵盤／手把目標＝排版記下的控制項，含捲出可視範圍而暫時隱藏的；描述帶 scrollOwner，
     -- Focus 落點前請 body 捲過去（Body:scrollTo），所以看不到的控制項滑鼠點不到、鍵盤仍走得到
     self.win.keyboardTargets = function() return self.focusList end
@@ -506,7 +526,7 @@ function W.new()
     self.btnRent = self:button(getText("IGUI_MVM_Btn_RentSlots"), W.onRent, "primary")
     self.btnCheck = self:button(getText("IGUI_MVM_Btn_CheckOrder"), W.onCheckOrder)
     self.btnRefresh = self:button(getText("IGUI_MVM_Btn_Refresh"), W.onRefresh, "ghost", "reload")
-    self.btnAdmin = self:button(getText("IGUI_MVM_Btn_PaidSettings"), W.onAdmin, "ghost", "settings")
+    self.btnAdmin = self:button(getText(texts.admin), W.onAdmin, "ghost", "settings")
     self.less = self:stepButton("-", -1, step)
     self.more = self:stepButton("+", 1, step)
     self.sheetAuto = self:checkbox(getText("IGUI_MVM_Slots_AutoRenew"), function(t, checked)
@@ -697,10 +717,10 @@ end
 
 -- 資料換了（Economy 快取的權益、車隊快照的名額、管理員清單）才重排；剩餘時間每分鐘重算一次
 function W:tick()
-    local b = bucket()
+    local b, q = counts(self)
     local E = BU.api()
-    local env = E and self.live and E.getState(SRC, PROD) or nil
-    if self.dirty or env ~= self.env or (b and b.quota) ~= self.quota or (b and b.admin) ~= self.admin
+    local env = E and self.live and E.getState(SRC, self.product) or nil
+    if self.dirty or env ~= self.env or q ~= self.quota or (b and b.admin) ~= self.admin
         or getTimestampMs() - (self.laidOutAt or 0) > 60000 then
         self:layout()
     end
@@ -717,16 +737,15 @@ end
 
 function W:layout()
     self.dirty, self.laidOutAt = false, getTimestampMs()
-    local b = bucket()
-    local q = b and b.quota
+    local b, q = counts(self)
     local E = BU.api()
     -- 只有 server 整合 READY 才碰 Economy（SP／未安裝／失敗時不送任何 Economy 命令）
     self.live = E ~= nil and q ~= nil and q.economy == "READY"
-    local env = self.live and E.getState(SRC, PROD) or nil
+    local env = self.live and E.getState(SRC, self.product) or nil
     self.env, self.quota, self.admin = env, q, b and b.admin
     if self.live and env == nil and not self.requested then self:requestState() end
     self:syncMessage(BU.stateKey(env))
-    local blocker = BU.blocker(q, E ~= nil, env)
+    local blocker = BU.blocker(q, E ~= nil, env, self.product)
     local s = self.sheet
     if s and (blocker or env.ok == false or (s.rental and BU.findRental(tbl(env.entitlement), s.rental) == nil)
         or ((s.kind == "permanent" or s.kind == "rental") and BU.sheetMax(env, s.kind) < 1)) then
@@ -768,7 +787,7 @@ end
 -- 總覽：可綁定台數（大字）、分項、買斷／租用、我的租約、錢包、頁尾按鈕
 function W:layoutOverview(E, env, q, blocker)
     if q then
-        self:addText(getText("IGUI_MVM_Slots_Headline", q.total or 0, q.used or 0), "text", FL)
+        self:addText(getText(BU.TEXTS[self.product].headline, q.total or 0, q.used or 0), "text", FL)
         self:addText(getText("IGUI_MVM_Slots_Breakdown", q.base or 0, q.permanent or 0, q.rental or 0), "textMuted")
     end
     self.y = self.y + GAP
@@ -912,7 +931,7 @@ function W:layoutSheet(E, env, q)
     if s.kind == "permanent" or s.kind == "rental" then
         self:addText(s.kind == "rental" and getText("IGUI_MVM_Slots_SheetRentTotal", days, amount, name)
             or getText("IGUI_MVM_Slots_SheetTotal", amount, name), "text")
-        self:addText(getText("IGUI_MVM_Slots_SheetAfter", (q and q.total or 0) + n), "textMuted")
+        self:addText(getText(BU.TEXTS[self.product].after, (q and q.total or 0) + n), "textMuted")
     elseif s.kind == "renew" then
         if restarts(r) then
             self:addText(getText("IGUI_MVM_Slots_SheetRestart", n, days), "text")
@@ -1051,7 +1070,7 @@ function W:startQuote(kind, quantity, rental)
     if E == nil or not self:canPurchase() then return end
     self.busy = "quote"
     self:say(nil)
-    local rid, why = E.quote(SRC, PROD, kind, quantity, function(res) self:onQuote(res) end, rental)
+    local rid, why = E.quote(SRC, self.product, kind, quantity, function(res) self:onQuote(res) end, rental)
     if rid == nil then self:localRefusal(why) end
 end
 
@@ -1121,7 +1140,7 @@ function W:onCheckOrder()
     local id = o.orderId or o.quoteId
     self.busy = "order"
     self:say(nil)
-    local rid, why = E.getOrder(SRC, PROD, id, function(res) self:onOrder(res, id) end)
+    local rid, why = E.getOrder(SRC, self.product, id, function(res) self:onOrder(res, id) end)
     if rid == nil then self:localRefusal(why) end
 end
 
@@ -1166,10 +1185,10 @@ function W:sendAutoRenew(enabled, revision, termsRevision, rental, paidKey)
     local function failed(text)
         self:say(paidKey and getText("IGUI_MVM_Slots_PaidAutoFailed", text) or text, "errorText")
     end
-    local rid, why = E.setAutoRenew(SRC, PROD, enabled, revision, termsRevision, function(res)
+    local rid, why = E.setAutoRenew(SRC, self.product, enabled, revision, termsRevision, function(res)
         self.busy, self.dirty = nil, true
         if res.unknown then
-            E.requestState(SRC, PROD)
+            E.requestState(SRC, self.product)
             return failed(getText("IGUI_MVM_Slots_AutoRenewUnknown"))
         end
         if not res.ok then return failed(BU.reasonText(res.error, E)) end
@@ -1188,7 +1207,7 @@ function W:requestState()
     if E == nil or not self.live then return end
     self:say(nil)
     self.requested, self.stateError = true, nil
-    local rid, why = E.requestState(SRC, PROD, function(res)
+    local rid, why = E.requestState(SRC, self.product, function(res)
         if res.unknown or not res.ok then
             self.stateError = BU.reasonText(res.error or "timeout", E)
             self:say(self.stateError, "errorText")
@@ -1208,19 +1227,27 @@ function W:onRefresh()
     if p then C.request(p, "fleetResync", {}) end
 end
 
--- 付費名額設定（管理員）；伺服器也會檢查管理員資格。框架太舊（< rev 11）時設定視窗不存在，說明要更新
+-- 付費名額設定（管理員，同一個商品）；伺服器也會檢查管理員資格。框架太舊（< rev 11）時設定視窗不存在，說明要更新
 function W:onAdmin()
-    if MVM.PaidSlotsWindow then MVM.PaidSlotsWindow.open(self.win) else self:say(getText("IGUI_MVM_NeedFramework"), "errorText") end
+    if MVM.PaidSlotsWindow then
+        MVM.PaidSlotsWindow.open(self.win, self.product)
+    else
+        self:say(getText("IGUI_MVM_NeedFramework"), "errorText")
+    end
 end
 
-function W.open()
-    local w = W.instance
+-- product 省略＝綁定名額。每個商品各一個視窗，開另一個商品不動這個視窗的報價、付款鎖與確認頁；
+-- instance＝最後開的視窗
+function W.open(product)
+    product = product or MVM.ECON_PRODUCT
+    local w = W.instances[product]
     if w == nil then
-        w = W.new()
+        w = W.new(product)
         w.win:addToUIManager()
-        ISLayoutManager.RegisterWindow(LAYOUT, w.win, w.win)
-        W.instance = w
+        ISLayoutManager.RegisterWindow(BU.TEXTS[product].layout, w.win, w.win)
+        W.instances[product] = w
     end
+    W.instance = w
     stopDrag(w.body)
     w.win:setVisible(true)
     w.win:bringToTop()

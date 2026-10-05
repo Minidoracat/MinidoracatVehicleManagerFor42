@@ -122,7 +122,7 @@ function cacheFileExists(path) return files[path] ~= nil end -- 與 getFileReade
 
 SandboxVars = { MinidoracatVehicleManager = { ClaimsPerPlayer = 3, MaxMembersPerVehicle = 6,
     ClaimDistance = 2.5, AllowFactionShare = true, InactivityReleaseDays = 0,
-    ReleaseFinalizeHours = 24, TombstoneRetentionDays = 14, NameMaxBytes = 32 } }
+    ReleaseFinalizeHours = 24, TombstoneRetentionDays = 14, NameMaxBytes = 32, ParkedGuard = 2, GuardSlotsPerPlayer = 1 } }
 local SB = SandboxVars.MinidoracatVehicleManager
 -- SandboxOptions：set 只改 Java 端的值，toLua 才投影到 SandboxVars；saveServerLuaFile 回 SBOX.saveOk，成功才記下「檔案」內容
 SBOX = { values = {}, saveOk = true, saves = 0, sets = 0, file = nil }
@@ -138,7 +138,8 @@ function getSandboxOptions()
             SBOX.saves = SBOX.saves + 1
             if SBOX.saveOk then
                 local page = SandboxVars.MinidoracatVehicleManager
-                SBOX.file = { server = server, ClaimsPerPlayer = page.ClaimsPerPlayer, InactivityReleaseDays = page.InactivityReleaseDays }
+                SBOX.file = { server = server, ClaimsPerPlayer = page.ClaimsPerPlayer, InactivityReleaseDays = page.InactivityReleaseDays,
+                    ParkedGuard = page.ParkedGuard, GuardSlotsPerPlayer = page.GuardSlotsPerPlayer }
             end
             return SBOX.saveOk
         end }
@@ -210,14 +211,35 @@ local function door()
     return d
 end
 local function part(id)
-    local pt = { id = id, md = {} }
+    -- cond／dur／item／window：停車保全用（VehiclePart 的 condition、durability、原件、車窗）；預設 durability 0＝保全不碰
+    local pt = { _cls = "VehiclePart", id = id, md = {}, cond = 100, dur = 0 }
     if id:find("Door", 1, true) then pt.door = door() end
     function pt:getId() return self.id end
     function pt:getVehicle() return self.vehicle end
     function pt:getDoor() return self.door end
     function pt:hasModData() return true end
     function pt:getModData() return self.md end
+    function pt:getCondition() return self.cond end
+    function pt:setCondition(c) self.cond = c end
+    function pt:getInventoryItem() return self.item end
+    -- 換件走 doInventoryItemStats：durability 重設成新件的值（VehiclePart.java）
+    function pt:setInventoryItem(it) self.item = it; if it and it.dur then self.dur = it.dur end end
+    function pt:getDurability() return self.dur end
+    function pt:setDurability(d) if d > 0 then self.dur = d end end -- Java 不收 <= 0
+    function pt:getWindow() return self.window end
     return pt
+end
+do -- InventoryItemFactory.CreateItem 的替身：每件新 id；dur＝裝上零件時 doInventoryItemStats 給的 durability
+    local n = 90000
+    function instanceItem(full, dur)
+        n = n + 1
+        local it = { id = n, full = full, cond = 100, dur = dur or 3 }
+        function it:getID() return self.id end
+        function it:getFullType() return self.full end
+        function it:setCondition(c) self.cond = c end
+        function it:getCondition() return self.cond end
+        return it
+    end
 end
 local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     local v = { id = id, sqlId = sqlId, keyId = keyId, script = script or "Base.CarNormal", x = x or 0, y = y or 0, z = 0,
@@ -225,7 +247,14 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     for _, pid in ipairs(partIds or { "Engine", "Battery", "DoorFrontLeft" }) do
         local pt = part(pid); pt.vehicle = v; v.parts[pid] = pt; v.order[#v.order + 1] = pt
     end
-    v.seats = {}
+    v.seats, v.maxPass = {}, 4
+    -- 車下的格子：碎玻璃（IsoBrokenGlass）與移除紀錄
+    v.square = { removed = {} }
+    function v.square:getBrokenGlass() return self.glass end
+    function v.square:transmitRemoveItemFromSquare(o) self.removed[#self.removed + 1] = o; if self.glass == o then self.glass = nil end end
+    function v:getSquare() return self.square end
+    function v:getMaxPassengers() return self.maxPass end
+    function v:getCharacter(seat) return self.seats[seat] end
     local function count(kind) tx[kind] = (tx[kind] or 0) + 1 end
     function v:transmitPartItem() count("item") end
     function v:transmitPartCondition() count("condition") end
@@ -323,6 +352,8 @@ require("MinidoracatVehicleManager_Export")
 require("MinidoracatVehicleManager_Economy")
 require("MinidoracatVehicleManager_PaidSlots")
 require("MinidoracatVehicleManager_ClaimTags")
+require("MinidoracatVehicleManager_RentLock")
+require("MinidoracatVehicleManager_ParkedGuard")
 require("MinidoracatVehicleManager_CommandGate") -- shared：真遊戲排在所有 server 檔之前；本 harness 的第三方假處理器在情境內才註冊
 BaseVehicle, __classmetatables = nil, nil
 local MVM = MinidoracatVehicleManager
@@ -351,6 +382,11 @@ local function boot(diskState, keepGmd, keepGos)
     O.R.identityConflicts, steamActive = nil, false
     G.R.intents, G.R.due, G.R.lastRun = {}, {}, 0
     MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.lastRun = {}, {}, 0
+    for k in pairs(MVM.Parked.R) do
+        local v = MVM.Parked.R[k]
+        if type(v) == "table" then MVM.Parked.R[k] = {} elseif type(v) == "number" then MVM.Parked.R[k] = 0 end
+    end
+    MVM.Parked.R.memo, MVM.RentLock.watch, MVM.Econ.guardFresh = nil, {}, {}
     for k in pairs(tx) do tx[k] = nil end
     for k in pairs(vanillaCalls) do vanillaCalls[k] = nil end
     Ledger.instance = nil
@@ -744,8 +780,9 @@ do
     check(okSet.ok and okSet.amount == 5 and SB.ClaimsPerPlayer == 5 and SBOX.file.ClaimsPerPlayer == 5
         and SBOX.file.server == "servertest" and O.quotaBase("bob") == 5, "管理員改預設名額：寫入沙盒並存進伺服器沙盒檔")
     check(lastOf(BOB, "sandboxSync").claimsPerPlayer == 5 and lastOf(ALI, "sandboxSync").claimsPerPlayer == 5
-        and lastOf(ADMQ, "sandboxSync").claimsPerPlayer == 5 and lastOf(ALI, "sandboxSync").releaseDays == 0,
-        "存檔成功後通知每位線上客戶端同步沙盒值（名額與閒置天數一起帶）")
+        and lastOf(ADMQ, "sandboxSync").claimsPerPlayer == 5 and lastOf(ALI, "sandboxSync").releaseDays == 0
+        and lastOf(ALI, "sandboxSync").parkedGuard == 2 and lastOf(ALI, "sandboxSync").guardSlots == 1,
+        "存檔成功後通知每位線上客戶端同步沙盒值（名額、閒置天數、保全模式與免費保全名額一起帶）")
     check(count(ALI, "fleetSnapshot") == aliSnaps + 1 and lastOf(ALI, "fleetSnapshot").quota.base == 5
         and lastOf(ALI, "fleetSnapshot").quota.used == 1 and lastOf(BOB, "fleetSnapshot").quota.base == 5,
         "預設名額改變後重送所有線上玩家的快照，名額即時變")
@@ -973,11 +1010,13 @@ check(Cl.buckets.alice.migrationAvailable and #Cl.buckets.alice.admin == 0,
 check(Cl.buckets.alice.rows.o9 == nil, "不同 username 分桶")
 do -- 客戶端收到 sandboxSync：本機沙盒選項改值並投影到 SandboxVars；不是整數就不動
     local QN = "MinidoracatVehicleManager.ClaimsPerPlayer"
-    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = 5, releaseDays = 40 })
+    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = 5, releaseDays = 40, parkedGuard = 3, guardSlots = 4 })
     local synced = SBOX.values[QN] == 5 and SB.ClaimsPerPlayer == 5 and SB.InactivityReleaseDays == 40
-    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = "9" })
-    check(synced and SB.ClaimsPerPlayer == 5, "客戶端收到 sandboxSync：名額與閒置天數 set＋toLua 更新本機沙盒，非整數忽略")
-    SB.ClaimsPerPlayer, SB.InactivityReleaseDays, SBOX.values = 3, 0, {}
+        and SB.ParkedGuard == 3 and SB.GuardSlotsPerPlayer == 4
+    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = "9", parkedGuard = "1" })
+    check(synced and SB.ClaimsPerPlayer == 5 and SB.ParkedGuard == 3,
+        "客戶端收到 sandboxSync：名額、閒置天數、保全模式與名額 set＋toLua 更新本機沙盒，非整數忽略")
+    SB.ClaimsPerPlayer, SB.InactivityReleaseDays, SB.ParkedGuard, SB.GuardSlotsPerPlayer, SBOX.values = 3, 0, 2, 1, {}
 end
 clientSent = {}
 MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 2, upserts = { { oid = "o2" } }, removes = {} })
@@ -2961,6 +3000,7 @@ E.init()
 PS.start()
 local CFG = X.folder() .. "paid-slots.json"
 local STATUS = X.folder() .. "paid-slots.status.json"
+local C = PS.of[MVM.ECON_PRODUCT] -- 綁定名額這份檔的輪詢狀態（保全名額另一份，G6 測）
 local function text(path) return files[path] and table.concat(files[path]) or nil end
 local function put(s) files[CFG] = { s .. "\n" } end
 local function poll() nowMs = nowMs + PS.POLL_MS; fire("OnTickEvenPaused") end
@@ -2973,12 +3013,15 @@ poll()
 local created = PS.parse(text(CFG):sub(1, -2))
 local same = created ~= nil
 for _, k in ipairs(KEYS) do if created == nil or created[k] ~= E.DEFAULTS[k] then same = false end end
-check(same and F.calls == 0 and PS.status.state == "ok" and PS.status.source == "created" and PS.status.revision == 0,
+check(same and F.calls == 0 and C.status.state == "ok" and C.status.source == "created" and C.status.revision == 0,
     "設定檔不存在：用目前生效的方案（預設、兩種販售關閉）建一份，不呼叫 setPlan")
 check(text(STATUS):find('"state": "ok"', 1, true) and text(STATUS):find('"source": "created"', 1, true)
     and text(STATUS):find('"error": null', 1, true) and text(STATUS):find('"field": null', 1, true)
     and text(STATUS):find('"at": "', 1, true) and text(STATUS):find('"economy": "READY"', 1, true),
     "狀態檔：state／source／revision／error／field／at／economy，空欄位明確寫 null")
+check(PS.parse(text(X.folder() .. "guard-slots.json"):sub(1, -2)) ~= nil and PS.of[MVM.GUARD_PRODUCT].status.source == "created"
+    and text(X.folder() .. "guard-slots.status.json"):find('"source": "created"', 1, true),
+    "保全名額另一份設定檔 guard-slots.json 與狀態檔：第一次輪詢一起建")
 poll()
 check(F.calls == 0, "自己建的檔不當成新內容重送")
 
@@ -2990,8 +3033,8 @@ nowMs = nowMs + 1000; PS.tick()
 check(F.calls == 0, "改檔後未滿 5 秒不讀")
 poll()
 check(F.plan.rentalPrice == 300 and F.plan.rentalEnabled == true and F.opts.origin == "file" and F.opts.actor == "file"
-    and F.opts.reason == 'spring "sale" A' .. utf8.char(0x590F) and PS.status.state == "ok" and PS.status.source == "file"
-    and PS.status.revision == 1,
+    and F.opts.reason == 'spring "sale" A' .. utf8.char(0x590F) and C.status.state == "ok" and C.status.source == "file"
+    and C.status.revision == 1,
     "改檔：5 秒輪詢讀到 → setPlan(origin=file、actor=file、reason=檔內 reason，含跳脫字元與 Python 預設的非 ASCII \\u 跳脫）")
 check(F.source.file == "Zomboid/Lua/" .. CFG and F.source.problem == nil and not F.sourceRejected, "setPlanSource：設定檔路徑、沒有錯誤")
 local function isProblem(p, key, field, ref)
@@ -3006,15 +3049,15 @@ local function bad(s, err, field, label)
     put(s)
     local n = F.calls
     poll()
-    check(F.calls == n and PS.status.state == "error" and PS.status.error == err and PS.status.field == field
+    check(F.calls == n and C.status.state == "error" and C.status.error == err and C.status.field == field
         and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_" .. err,
             PLAN_OF[field or ""] and ("IGUI_MVM_Paid_Name_" .. PLAN_OF[field]) or nil, field)
         and not F.sourceRejected and F.plan.rentalPrice == 300, label)
 end
 bad('{"buy": ', "invalid_json", nil, "壞 JSON：invalid_json，不送 Economy，方案維持")
-local st0 = PS.status
+local st0 = C.status
 poll()
-check(PS.status == st0, "同一份壞內容不每 5 秒重報")
+check(C.status == st0, "同一份壞內容不每 5 秒重報")
 bad((cfg("300"):gsub('"days": 7, ', "")), "missing_field", "rent.days", "缺鍵：missing_field rent.days")
 bad((cfg("300"):gsub('"limit": 10', '"limit": 10, "discount": 5')), "unknown_field", "buy.discount", "多鍵：unknown_field buy.discount")
 bad(cfg("300", ', "note": 1'), "unknown_field", "note", "頂層多鍵：unknown_field note")
@@ -3032,10 +3075,10 @@ bad(cfg("-"), "invalid_json", nil, "只有負號：invalid_json")
 bad(cfg("300x"), "invalid_json", nil, "數字後面黏著字元：invalid_json")
 put(cfg("3.0e2", ', "reason": null'))
 poll()
-check(PS.status.state == "ok" and F.opts.reason == nil and F.plan.rentalPrice == 300, "合法的 3.0e2 照收（型別檢查判整數）、reason: null 當作沒給")
+check(C.status.state == "ok" and F.opts.reason == nil and F.plan.rentalPrice == 300, "合法的 3.0e2 照收（型別檢查判整數）、reason: null 當作沒給")
 put(cfg("0"))
 poll()
-check(PS.status.error == "invalid_plan" and PS.status.field == "rent.price"
+check(C.status.error == "invalid_plan" and C.status.field == "rent.price"
     and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_invalid_plan", "IGUI_MVM_Paid_Name_rentalPrice", "rent.price")
     and text(STATUS):find('"field": "rent.price"', 1, true) and F.plan.rentalPrice == 300,
     "Economy 回 invalid_plan：field 從 rentalPrice 轉回檔案鍵名 rent.price；problem 送翻譯鍵（句子與欄位名）與檔案鍵")
@@ -3080,7 +3123,7 @@ MVM.log = realServerLog
 F.weird = nil
 local codeInLog = false
 for _, l in ipairs(serverLog) do if l:find("unknown_product", 1, true) then codeInLog = true end end
-check(PS.status.error == "unknown_product" and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_other", nil, nil)
+check(C.status.error == "unknown_product" and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_other", nil, nil)
     and text(STATUS):find('"error": "unknown_product"', 1, true) and codeInLog,
     "沒有專屬句子的錯誤碼：problem 只送不帶參數的 FileErr_other（沒有 field／ref）；原碼寫進伺服器 log，狀態檔照記原碼")
 put(cfg("0"))
@@ -3089,24 +3132,24 @@ F.notReady = true
 put(cfg("280"))
 poll()
 local n0 = F.calls
-check(F.plan.rentalPrice == 300 and PS.status.error == "invalid_plan", "not_ready：不寫狀態")
+check(F.plan.rentalPrice == 300 and C.status.error == "invalid_plan", "not_ready：不寫狀態")
 F.notReady = nil
 poll()
-check(F.calls == n0 + 1 and F.plan.rentalPrice == 280 and PS.status.state == "ok" and F.source.problem == nil,
+check(F.calls == n0 + 1 and F.plan.rentalPrice == 280 and C.status.state == "ok" and F.source.problem == nil,
     "not_ready 不記為已處理：下輪重試成功、清掉錯誤")
 local realR = getFileReader
 getFileReader = function(path, ...) if path == CFG then return nil end return realR(path, ...) end
 local before, n3 = text(CFG), F.calls
 poll()
-check(PS.status.state == "error" and PS.status.error == "unreadable" and F.calls == n3 and text(CFG) == before
+check(C.status.state == "error" and C.status.error == "unreadable" and F.calls == n3 and text(CFG) == before
     and F.plan.rentalPrice == 280 and isProblem(F.source.problem, "IGUI_MVM_Paid_FileErr_unreadable", nil, nil),
     "設定檔存在但讀不到：unreadable，方案不動、不用目前方案覆寫")
-local st1 = PS.status
+local st1 = C.status
 poll()
-check(PS.status == st1, "讀不到：同一狀態不重複報")
+check(C.status == st1, "讀不到：同一狀態不重複報")
 getFileReader = realR
 poll()
-check(PS.status.state == "ok" and PS.status.error == nil and F.calls == n3 + 1, "恢復可讀：重新處理同一份內容，清掉錯誤")
+check(C.status.state == "ok" and C.status.error == nil and F.calls == n3 + 1, "恢復可讀：重新處理同一份內容，清掉錯誤")
 
 -- adminPaidSlots
 local AD, PL = player("admin", 1, 1, { admin = true }), player("pleb", 1, 1)
@@ -3156,7 +3199,7 @@ check(s.ok and s.revision == g.revision + 1 and #s.changed == 1 and s.changed[1]
     and F.last.origin == "admin" and F.last.actor == "admin" and F.last.reason == "open sales",
     "SET 成功：setPlan(origin=admin、actor=principal、去空白的 reason、expectedRevision)，回 revision 與 changed")
 check(back and back.permanentEnabled == true and back.rentalPrice == 280 and backReason == "open sales"
-    and PS.status.source == "admin" and PS.status.state == "ok" and audited, "SET 成功：寫回設定檔（含 reason）、狀態檔 source=admin、稽核 ADMIN_PAID_SLOTS")
+    and C.status.source == "admin" and C.status.state == "ok" and audited, "SET 成功：寫回設定檔（含 reason）、狀態檔 source=admin、稽核 ADMIN_PAID_SLOTS")
 local n2 = F.calls
 poll()
 check(F.calls == n2, "寫回的設定檔記為已處理：輪詢不重送")
@@ -3166,12 +3209,12 @@ files[CFG] = { extText .. "\n" }
 local stale = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true, permanentPrice = 950 }),
     expectedRevision = s.revision, reason = "admin edit" })
 check(stale.reason == "STALE_REVISION" and F.plan.rentalPrice == 260 and F.plan.permanentPrice == 1000
-    and text(CFG) == extText .. "\n" and PS.status.source == "file" and F.last.reason == "external",
+    and text(CFG) == extText .. "\n" and C.status.source == "file" and F.last.reason == "external",
     "外部剛改檔就 SET：先套用外部內容，管理員舊版本 STALE_REVISION，檔案沒被覆寫")
 put('{"buy": ')
 local ov = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true, rentalPrice = 265 }),
     expectedRevision = F.rev, reason = "fix file" })
-check(ov.ok and F.plan.rentalPrice == 265 and PS.parse(text(CFG):sub(1, -2)) ~= nil and PS.status.source == "admin",
+check(ov.ok and F.plan.rentalPrice == 265 and PS.parse(text(CFG):sub(1, -2)) ~= nil and C.status.source == "admin",
     "外部剛改成壞檔就 SET：壞檔照常記錯，管理員的方案套用並覆寫壞檔")
 local realW = getFileWriter
 -- PrintWriter 吞 I/O 錯誤：寫入「成功」但檔案內容沒變，要讀回比對才知道
@@ -3183,8 +3226,8 @@ local fe = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnab
     expectedRevision = F.rev, reason = "cheaper" })
 getFileWriter = realW
 poll()
-check(fe.ok and fe.fileError == "write_failed" and F.plan.permanentPrice == 900 and PS.status.state == "error"
-    and PS.status.error == "write_failed" and text(STATUS):find('"error": "write_failed"', 1, true),
+check(fe.ok and fe.fileError == "write_failed" and F.plan.permanentPrice == 900 and C.status.state == "error"
+    and C.status.error == "write_failed" and text(STATUS):find('"error": "write_failed"', 1, true),
     "寫回失敗：方案已生效、回 fileError、狀態檔顯示，舊檔不會在下次輪詢蓋回")
 
 -- 舊版 Economy（沒有 setPlan）：UNSUPPORTED，開機寫一次 economy_unavailable，不建也不讀設定檔
@@ -3514,19 +3557,19 @@ local function withParts(id, parts) return vehicle(id, 900 + id, 9900 + id, "Bas
 check(MVM.isCarrier(withParts(67, { "Engine", "ATAMultiSlotWrecker" })) and MVM.isCarrier(withParts(68, { "ATAVehicleWrecker" }))
     and MVM.isCarrier(withParts(69, { "ATA2VehicleWrecker" })) and not MVM.isCarrier(looseC) and not MVM.isCarrier(nil),
     "MVM.isCarrier：MSW 多槽拖車、兩種 Autotsar 拖吊零件為真；一般車、nil 為假")
-check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure", "綁定確認視窗：還沒收到名額就不加名額行；一般車不加載具行")
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2", "綁定確認視窗：還沒收到名額就不加名額行；一般車不加載具行")
 MVM.clientReceive("fleetSnapshot", { to = "kow", streamId = "kt2", seq = 0, quotaUsed = 2, quotaLimit = 3, rows = {
     { oid = "kMyCar", role = "OWNER", state = "ACTIVE" }, { oid = "kMyTr", role = "OWNER", state = "ACTIVE" } } })
 check(MVM.claimText(0, withParts(70, { "ATAMultiSlotWrecker" }))
-    == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(2,3)\nIGUI_MVM_ClaimCarrierNote", "綁定確認視窗：名額行（已用／上限）＋能裝車的載具多一行")
+    == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2\nIGUI_MVM_ClaimQuotaNote(2,3)\nIGUI_MVM_ClaimCarrierNote", "綁定確認視窗：名額行（已用／上限）＋能裝車的載具多一行")
 MVM.clientReceive("fleetDelta", { to = "kow", streamId = "kt2", seq = 1, upserts = {}, removes = {}, quotaUsed = 3 })
-check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(3,3)", "增量帶目前已用名額：綁定後名額行立即更新，不等下一次快照")
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2\nIGUI_MVM_ClaimQuotaNote(3,3)", "增量帶目前已用名額：綁定後名額行立即更新，不等下一次快照")
 MVM.clientReceive("fleetSnapshot", { to = "kow", streamId = "kt3", seq = 0, quotaUsed = 2, quotaLimit = 3,
     quota = { used = 4, total = 5, base = 3, paid = 2 }, rows = {
     { oid = "kMyCar", role = "OWNER", state = "ACTIVE" }, { oid = "kMyTr", role = "OWNER", state = "ACTIVE" } } })
-check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(4,5)", "有付費名額時用 Economy 的已用／總計")
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2\nIGUI_MVM_ClaimQuotaNote(4,5)", "有付費名額時用 Economy 的已用／總計")
 MVM.clientReceive("fleetDelta", { to = "kow", streamId = "kt3", seq = 1, upserts = {}, removes = {}, quotaUsed = 5 })
-check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimQuotaNote(5,5)", "增量的已用名額也更新付費名額分項的已用")
+check(MVM.claimText(0, looseC) == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2\nIGUI_MVM_ClaimQuotaNote(5,5)", "增量的已用名額也更新付費名額分項的已用")
 clientSent = {}
 ISTimedActionQueue.add(A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = theirCar }))
 local sentFor = {}
@@ -4247,8 +4290,695 @@ check(#regs == 1 and #floats == 1 and refused.res == 1, "Dock 拒絕登記：退
 MinidoracatUI, ISPanel, UIFont, getCore, ISLayoutManager = saved.UI, saved.panel, saved.font, saved.core, saved.layout
 MVM.clientOverride, MVM.FleetWindow, MVM.FleetUI, MVM.onFleetChanged, MVM.clientMenuHooks =
     saved.override, saved.win, saved.fui, saved.changed, saved.hooks
-end)()
+end)(); -- 分號：下一個情境也是 IIFE
 
+-- ===== 停車保全與租用到期（G1..G7）=====
+-- 共用工具放全域表 GH（主 chunk 區域變數已滿 200）
+GH = {}
+-- 受保全測試車：引擎沒有原件（durability 5）、電池 durability 0（保全不碰）、車窗原件（durability 3）、車門原件（durability 4）
+function GH.car(id, x, y)
+    local v = vehicle(id, 800 + id, 8800 + id, "Base.CarNormal", x or 1, y or 1, { "Engine", "Battery", "WindowFrontLeft", "DoorFrontLeft" })
+    local p = v.parts
+    p.Engine.cond, p.Engine.dur = 90, 5
+    p.Battery:setInventoryItem(instanceItem("Base.CarBattery1", 0))
+    p.WindowFrontLeft.window = {}
+    p.WindowFrontLeft:setInventoryItem(instanceItem("Base.FrontWindow1", 3))
+    p.DoorFrontLeft:setInventoryItem(instanceItem("Base.FrontCarDoor1", 4))
+    p.DoorFrontLeft.cond = 80
+    return v
+end
+function GH.tick(ms) nowMs = nowMs + (ms or MVM.Parked.CHECK_MS); MVM.Parked.tick() end
+function GH.armed(v) return v.parts.Engine.dur == MVM.Parked.BIG end
+function GH.count(p, command)
+    local n = 0
+    for _, m in ipairs(outbox[p.name]) do if m.command == command then n = n + 1 end end
+    return n
+end
+-- from 之後有一行同時含全部字串
+function GH.logged(from, ...)
+    local want = { ... }
+    for i = from + 1, #logLines do
+        local hit = true
+        for _, w in ipairs(want) do if not logLines[i]:find(w, 1, true) then hit = false end end
+        if hit then return true end
+    end
+    return false
+end
+
+(function()
+out("情境 G1：停車保全核心（布防、解除、復原、touch、紀錄結束）")
+boot()
+local P, BIG = MVM.Parked, MVM.Parked.BIG
+SB.ParkedGuard = MVM.GUARD.ALL
+local OW, ST, MB = player("gown", 1, 1), player("gstr", 1, 1), player("gmem", 1, 1)
+local gv, loose = GH.car(81), GH.car(82)
+local pt = gv.parts
+local r = rec(claim(OW, gv).oid)
+GH.tick()
+check(pt.Engine.dur == BIG and pt.WindowFrontLeft.dur == BIG and pt.DoorFrontLeft.dur == BIG and pt.Battery.dur == 0,
+    "ALL：沒人在車上的綁定車布防，durability > 0 的零件（含沒有原件的引擎）拉到 BIG，durability 0 的不碰")
+check(loose.parts.Engine.dur == 5 and P.R.tracked[82] == nil, "沒綁定的車：不追蹤、durability 不動")
+SB.ParkedGuard = MVM.GUARD.OFF
+GH.tick()
+check(pt.Engine.dur == 5 and pt.WindowFrontLeft.dur == 3 and pt.DoorFrontLeft.dur == 4 and pt.Battery.dur == 0,
+    "OFF：解除，durability 寫回原值")
+SB.ParkedGuard = MVM.GUARD.ALL
+GH.tick()
+gv.seats[1] = ST
+GH.tick()
+check(GH.armed(gv), "沒權限的人坐在車上：不解除（佔座由 watchdog 處理）")
+gv.seats[1], gv.seats[0] = nil, OW
+GH.tick()
+check(pt.Engine.dur == 5 and pt.DoorFrontLeft.dur == 4, "車主在駕駛座：解除")
+gv.seats[0] = nil
+GH.tick()
+check(cmd(OW, "addMember", { expectedOid = r.oid, username = "gmem", actionBits = MVM.ACTIONS.PASSENGER }).ok, "車主給成員搭乘權限")
+gv.seats[0] = MB
+GH.tick()
+check(GH.armed(gv), "只有搭乘權限的成員坐駕駛座（要 DRIVE）：不算授權者，不解除")
+gv.seats[0], gv.seats[2] = nil, MB
+GH.tick()
+check(pt.Engine.dur == 5, "有搭乘權限的成員坐乘客座：解除")
+gv.seats[2] = nil
+GH.tick()
+check(GH.armed(gv), "下車後重新布防")
+gv.towedBy = loose
+GH.tick()
+check(pt.Engine.dur == 5, "被拖著：解除")
+gv.towedBy = nil
+GH.tick()
+
+-- 布防中被打：同一原件掉耐久、沒原件的引擎掉耐久、車窗原件被打掉且格子出現碎玻璃
+local pane0, glass = pt.WindowFrontLeft.item, { kind = "IsoBrokenGlass" }
+pt.DoorFrontLeft.cond, pt.Engine.cond = 30, 40
+pt.WindowFrontLeft.item, pt.WindowFrontLeft.cond = nil, 0
+gv.square.glass = glass
+local tx0 = { item = tx.item or 0, condition = tx.condition or 0, window = tx.window or 0 }
+local l0, n0 = #logLines, GH.count(OW, "notice")
+GH.tick(P.RESTORE_MS)
+local pane = pt.WindowFrontLeft.item
+check(pt.DoorFrontLeft.cond == 80 and pt.Engine.cond == 90, "RESTORE_MS 到：同一原件與沒有原件的零件耐久補回基準")
+check(pane ~= nil and pane ~= pane0 and pane.full == "Base.FrontWindow1" and pane.cond == 100 and pt.WindowFrontLeft.cond == 100
+    and pt.WindowFrontLeft.dur == BIG, "車窗原件不見：裝一片同型新玻璃（同耐久），新件重設的 durability 再拉高")
+check(gv.square.removed[1] == glass and gv.square.glass == nil, "布防後才出現的碎玻璃：補窗時一併清掉")
+check((tx.item or 0) == tx0.item + 1 and (tx.condition or 0) >= tx0.condition + 3 and (tx.window or 0) >= tx0.window + 1,
+    "復原送出零件原件／耐久／車窗同步")
+check(GH.logged(l0, "GUARD_RESTORE", r.oid, "REINSTALL") and GH.count(OW, "notice") == n0 + 1
+    and lastOf(OW, "notice").key == "IGUI_MVM_Guard_Repaired" and lastOf(OW, "notice").oid == r.oid,
+    "復原：稽核 GUARD_RESTORE（零件清單），通知在線車主 IGUI_MVM_Guard_Repaired")
+
+-- 換件：改認目前的為基準（不重建舊件），換件重設的 durability 再拉高；解除時寫回新件的值
+local door2 = instanceItem("Base.FrontCarDoor2", 6)
+pt.DoorFrontLeft:setInventoryItem(door2)
+pt.DoorFrontLeft.cond = 60
+GH.tick(P.RESTORE_MS)
+check(pt.DoorFrontLeft.item == door2 and pt.DoorFrontLeft.cond == 60 and pt.DoorFrontLeft.dur == BIG,
+    "換件：改認目前的件為基準（不重建、不補成舊件耐久），durability 再拉高")
+pt.DoorFrontLeft.cond = 45
+l0 = #logLines
+GH.tick(P.RESTORE_MS)
+check(pt.DoorFrontLeft.cond == 60 and GH.logged(l0, "GUARD_RESTORE", "DoorFrontLeft:45->60") and GH.count(OW, "notice") == n0 + 1,
+    "換件後再被打：補回新基準；稽核照記，車主通知 60 秒內不重送")
+pt.Engine:setDurability(5) -- 車重新載入：doInventoryItemStats 把 durability 重設
+GH.tick(P.RESTORE_MS)
+check(pt.Engine.dur == BIG, "durability 被重設：下次復原再拉高")
+SB.ParkedGuard = MVM.GUARD.OFF
+GH.tick()
+check(pt.DoorFrontLeft.dur == 6 and pt.Engine.dur == 5 and pt.WindowFrontLeft.dur == 3, "解除：寫回目前件的原值（換上的門＝6）")
+
+-- 布防前就有的碎玻璃不是保全造成的：補窗不清
+local glass2 = { kind = "IsoBrokenGlass" }
+gv.square.glass, gv.square.removed = glass2, {}
+SB.ParkedGuard = MVM.GUARD.ALL
+GH.tick()
+pt.WindowFrontLeft.item = nil
+GH.tick(P.RESTORE_MS)
+check(pt.WindowFrontLeft.item ~= nil and gv.square.glass == glass2 and #gv.square.removed == 0, "布防時已有的碎玻璃：補窗但不清")
+
+-- touch：授權的改動（車主砸自己的窗）下次檢查改認為基準，不復原
+pt.WindowFrontLeft.item = nil
+P.touch(gv)
+GH.tick()
+GH.tick(P.RESTORE_MS)
+check(pt.WindowFrontLeft.item == nil and GH.armed(gv), "touch 後的改動：下次檢查重記基準，車窗保持打破的樣子，仍布防")
+P.touch(loose) -- 沒追蹤的車：無事
+check(P.R.tracked[82] == nil, "touch 沒追蹤的車：不出錯、不開始追蹤")
+
+-- 紀錄結束：一次檢查內解除並丟掉
+check(cmd(OW, "unclaim", { vehicleId = gv.id, expectedOid = r.oid, expectedEpoch = r.epoch }).ok, "車主解除綁定")
+GH.tick()
+check(pt.Engine.dur == 5 and pt.DoorFrontLeft.dur == 6 and P.R.tracked[81] == nil and P.R.byOid[r.oid] == nil,
+    "紀錄已結束：解除（durability 寫回）並停止追蹤")
+SB.ParkedGuard = MVM.GUARD.ALL
+end)();
+
+(function()
+out("情境 G2：保全名額 SLOTS（setGuard、排名 ON／OVER、管理指令、總表）")
+boot()
+local P = MVM.Parked
+SB.ParkedGuard, SB.GuardSlotsPerPlayer = MVM.GUARD.SLOTS, 1
+local ADM, OW, ST, MB = player("sadm", 1, 1, { admin = true }), player("sown", 1, 1), player("sstr", 1, 1), player("smem", 1, 1)
+cmd(OW, "fleetSubscribe", {}, false)
+local c1, c2, c3 = GH.car(91), GH.car(92), GH.car(93)
+local r1, r2, r3 = rec(claim(OW, c1).oid), rec(claim(OW, c2).oid), rec(claim(OW, c3).oid)
+GH.tick()
+check(not GH.armed(c1) and P.state(r1) == nil, "SLOTS：車主沒開保全的車不布防")
+local snaps = GH.count(OW, "fleetSnapshot")
+local on1 = cmd(OW, "setGuard", { expectedOid = r1.oid, enabled = true })
+local g = lastOf(OW, "fleetSnapshot").guard
+check(on1.ok and on1.enabled == true and r1.guard == true and r1.guardAtMs == nowMs and GH.count(OW, "fleetSnapshot") == snaps + 1
+    and g.mode == MVM.GUARD.SLOTS and g.used == 1 and g.base == 1 and g.total == 1 and g.custom == false,
+    "setGuard 開：rec.guard、guardAtMs，ACK enabled，重送車主快照帶 guard（模式、已用／總數）")
+GH.tick()
+check(GH.armed(c1) and not GH.armed(c2) and P.state(r1) == "ON", "開了保全的車布防，其他車不動")
+check(cmd(ST, "setGuard", { expectedOid = r2.oid, enabled = true }).reason == "NOT_OWNER" and r2.guard == nil, "別人的車：NOT_OWNER")
+check(cmd(OW, "setGuard", { expectedOid = r2.oid, enabled = true }).reason == "GUARD_FULL" and r2.guard == nil, "名額用滿再開：GUARD_FULL")
+local l0 = #logLines
+check(cmd(OW, "adminSetGuardQuota", { usernames = { "sown" }, amount = 2 }).reason == "NOT_ADMIN"
+    and O.state().guardOverrides.sown == nil, "非管理員不能設個人保全名額")
+local q = cmd(ADM, "adminSetGuardQuota", { usernames = { "sown" }, amount = 2 })
+check(q.ok and q.count == 1 and O.state().guardOverrides.sown == 2 and lastOf(OW, "fleetSnapshot").guard.total == 2
+    and lastOf(OW, "fleetSnapshot").guard.custom == true and GH.logged(l0, "ADMIN_GUARD", "USER DEFAULT->2", "sadm"),
+    "管理員設個人保全名額：guardOverrides、重送該玩家快照、稽核 ADMIN_GUARD")
+check(cmd(OW, "setGuard", { expectedOid = r2.oid, enabled = true }).ok and P.state(r2) == "ON", "名額變 2：第二台開啟成功")
+GH.tick()
+check(GH.armed(c1) and GH.armed(c2), "兩台都布防")
+local n0 = GH.count(OW, "notice")
+cmd(ADM, "adminSetGuardQuota", { usernames = { "sown" }, amount = 1 })
+check(P.state(r1) == "ON" and P.state(r2) == "OVER" and r2.guard == true, "名額調降：依開啟時間排序，先開的 ON、後開的 OVER（旗標保留）")
+check(GH.count(OW, "notice") == n0 + 1 and lastOf(OW, "notice").key == "IGUI_MVM_Guard_Paused" and lastOf(OW, "notice").n == 1,
+    "OVER 變多：通知車主 IGUI_MVM_Guard_Paused（台數）")
+GH.tick()
+check(GH.armed(c1) and not GH.armed(c2) and c2.parts.Engine.dur == 5, "OVER 的車解除布防、durability 寫回")
+check(cmd(OW, "addMember", { expectedOid = r1.oid, username = "smem", actionBits = MVM.ACTIONS.PASSENGER }).ok
+    and cmd(OW, "addMember", { expectedOid = r2.oid, username = "smem", actionBits = MVM.ACTIONS.PASSENGER }).ok, "分享兩台給成員")
+check(S.row(r2, "sown").guard == "OVER" and S.row(r1, "sown").guard == "ON" and S.row(r1, "smem").guard == "ON"
+    and S.row(r2, "smem").guard == nil and S.row(r3, "sown").guard == nil, "列：車主看 ON／OVER，成員只看 ON，沒開的車 nil")
+check(cmd(OW, "setGuard", { expectedOid = r1.oid, enabled = false }).ok and r1.guard == nil and r1.guardAtMs == nil
+    and P.state(r2) == "ON", "關掉先開的那台：OVER 的車轉 ON")
+GH.tick()
+check(not GH.armed(c1) and GH.armed(c2), "關掉的車解除，轉 ON 的車布防")
+check(cmd(OW, "setGuard", { expectedOid = r1.oid, enabled = true }).reason == "GUARD_FULL", "重開（排到最後）：名額不夠 GUARD_FULL")
+SB.ParkedGuard = MVM.GUARD.ALL
+check(cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = true }).reason == "GUARD_NOT_SLOTS" and r3.guard == nil,
+    "模式不是 SLOTS：GUARD_NOT_SLOTS")
+SB.ParkedGuard = MVM.GUARD.SLOTS
+cmd(ADM, "adminRecover", { expectedOid = r3.oid, op = "RELEASE" })
+check(r3.recordState == "RELEASED" and cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = true }).reason == "INVALID_STATE",
+    "已結束的紀錄：INVALID_STATE")
+check(cmd(ADM, "adminSetGuardQuota", { usernames = { "sown" }, amount = -1 }).ok and O.state().guardOverrides.sown == nil,
+    "個人保全名額 -1：恢復全服預設")
+
+-- 模式與免費名額（沙盒）
+local mode0 = SBOX.saves
+check(cmd(OW, "adminSetGuardMode", { mode = MVM.GUARD.ALL }).reason == "NOT_ADMIN" and SB.ParkedGuard == MVM.GUARD.SLOTS
+    and SBOX.saves == mode0, "非管理員不能改保全模式")
+check(cmd(ADM, "adminSetGuardMode", { mode = 4 }).reason == "BAD_ARGS" and cmd(ADM, "adminSetGuardMode", { mode = 0 }).reason == "BAD_ARGS"
+    and SBOX.saves == mode0, "保全模式只收 1..3")
+SBOX.saveOk = false
+local syncs, l1 = GH.count(ST, "sandboxSync"), #logLines
+check(cmd(ADM, "adminSetGuardMode", { mode = MVM.GUARD.ALL }).reason == "SAVE_FAILED" and SB.ParkedGuard == MVM.GUARD.SLOTS
+    and GH.count(ST, "sandboxSync") == syncs and not GH.logged(l1, "ADMIN_GUARD"), "存檔失敗：改回原值、SAVE_FAILED、不廣播不稽核")
+SBOX.saveOk = true
+local m = cmd(ADM, "adminSetGuardMode", { mode = MVM.GUARD.ALL })
+check(m.ok and m.mode == MVM.GUARD.ALL and SB.ParkedGuard == MVM.GUARD.ALL and SBOX.file.ParkedGuard == MVM.GUARD.ALL
+    and lastOf(ST, "sandboxSync").parkedGuard == MVM.GUARD.ALL and lastOf(ST, "sandboxSync").guardSlots == 1
+    and GH.logged(l1, "ADMIN_GUARD", "MODE 3->2", "sadm"), "管理員改保全模式：存沙盒檔、廣播 sandboxSync（parkedGuard／guardSlots）、稽核")
+check(cmd(ADM, "adminSetGuardSlots", { amount = 21 }).reason == "BAD_ARGS", "免費保全名額只收 0..20")
+local s = cmd(ADM, "adminSetGuardSlots", { amount = 4 })
+check(s.ok and s.amount == 4 and SB.GuardSlotsPerPlayer == 4 and SBOX.file.GuardSlotsPerPlayer == 4
+    and lastOf(ST, "sandboxSync").guardSlots == 4 and GH.logged(l1, "ADMIN_GUARD", "SLOTS 1->4"), "管理員改免費保全名額：存檔、同步、稽核")
+l1 = #logLines
+SB.ParkedGuard = MVM.GUARD.SLOTS -- 原版沙盒 UI 直接改掉
+S.watchSandbox()
+check(GH.logged(l1, "ADMIN_GUARD", "SANDBOX", "MODE 2->3"), "每分鐘比對沙盒：原版 UI 改了保全模式也稽核（actor SANDBOX）")
+cmd(ADM, "adminSetGuardQuota", { usernames = { "smem" }, amount = 0 })
+cmd(ADM, "adminList", {}, false)
+local meta = lastOf(ADM, "adminSnapshot")
+local pl = {}
+for _, p in ipairs(meta.players) do pl[p.user] = p end
+check(meta.guardMode == MVM.GUARD.SLOTS and meta.guardSlots == 4 and pl.sown.guardBase == 4 and pl.sown.guardCustom == false
+    and pl.sown.guardUsed == 1 and pl.sown.guardLimit == 4 and pl.smem.guardBase == 0 and pl.smem.guardCustom == true,
+    "管理員總表：模式、免費名額；SLOTS 時每位玩家帶保全名額（基本、個人設定、已用、上限）")
+SB.ParkedGuard = MVM.GUARD.ALL
+cmd(ADM, "adminList", {}, false)
+meta = lastOf(ADM, "adminSnapshot")
+pl = {}
+for _, p in ipairs(meta.players) do pl[p.user] = p end
+check(meta.guardMode == MVM.GUARD.ALL and pl.sown.guardBase == nil and pl.sown.guardUsed == nil, "不是 SLOTS：玩家不帶保全名額欄位")
+SB.ParkedGuard, SB.GuardSlotsPerPlayer, SBOX.values = MVM.GUARD.ALL, 1, {}
+end)();
+
+(function()
+out("情境 G3：砸窗被指令防火牆擋（保全中／沒保全的提示與車主通知、節流、車主自己的指令 touch）")
+boot()
+local CG, P = MVM.CommandGate, MVM.Parked
+for k in pairs(CG.R.notified) do CG.R.notified[k] = nil end
+SB.ParkedGuard = MVM.GUARD.ALL
+local OW, ST, ST2 = player("wown", 1, 1), player("wstr", 1, 1), player("wstr2", 1, 1)
+local v = GH.car(101)
+local r = rec(claim(OW, v).oid)
+GH.tick()
+local function hit(p)
+    nowMs = nowMs + CG.NOTIFY_MS
+    fire("OnClientCommand", "vehicle", "damageWindow", p, { vehicle = v.id, part = "WindowFrontLeft", amount = 100 })
+end
+hit(ST)
+local enf, note = lastOf(ST, "enforcement"), lastOf(OW, "notice")
+check(enf and enf.action == "CMD:vehicle.damageWindow" and enf.guard == true and enf.oid == r.oid,
+    "陌生人砸布防中的車：enforcement 帶 guard = true")
+check(note and note.key == "IGUI_MVM_Attack_Guarded" and note.oid == r.oid and note.who == "wstr" and note.bad == true,
+    "車主收到 IGUI_MVM_Attack_Guarded（哪台車、誰）")
+local n0, e0 = GH.count(OW, "notice"), GH.count(ST, "enforcement")
+hit(ST)
+check(GH.count(OW, "notice") == n0 and GH.count(ST, "enforcement") == e0 + 1 and lastOf(ST, "enforcement").guard == true,
+    "同一攻擊者 60 秒內再砸：攻擊者照樣收到提示，車主不重複通知")
+v.seats[0] = OW
+GH.tick()
+hit(ST2)
+enf, note = lastOf(ST2, "enforcement"), lastOf(OW, "notice")
+check(enf and enf.guard == false and note.key == "IGUI_MVM_Attack_Unguarded" and note.who == "wstr2" and GH.count(OW, "notice") == n0 + 1,
+    "受保護但沒布防（車主在車上）：guard = false，車主收到 IGUI_MVM_Attack_Unguarded")
+v.seats[0] = nil
+GH.tick()
+local e1 = GH.count(OW, "enforcement")
+hit(OW)
+check(GH.count(OW, "enforcement") == e1 and GH.count(OW, "notice") == n0 + 1, "車主自己砸：放行，不提示也不算被攻擊")
+v.parts.WindowFrontLeft.item = nil -- 原版處理器接著把窗打破
+GH.tick()
+GH.tick(P.RESTORE_MS)
+check(v.parts.WindowFrontLeft.item == nil and GH.armed(v), "放行的指令 touch：下次檢查改認為基準，不補窗")
+end)();
+
+(function()
+out("情境 G4：車上收音機（ISRadioAction adapter：耳機＝置物、其他＝搭乘；手持收音機不管）")
+boot()
+vclass("ISRadioAction", { "complete" })
+G.install("G4")
+local OW, ST, MB = player("rdown", 1, 1), player("rdstr", 1, 1), player("rdmem", 1, 1)
+local v = vehicle(111, 1101, 9101, "Base.CarNormal", 1, 1, { "Engine", "Radio" })
+local r = rec(claim(OW, v).oid)
+cmd(OW, "addMember", { expectedOid = r.oid, username = "rdmem", actionBits = MVM.ACTIONS.PASSENGER })
+local function radio(p, mode, device)
+    intent(p, "ISRadioAction", v, "Radio")
+    return stage(A("ISRadioAction", { character = p, mode = mode, device = device or v.parts.Radio }), "complete")
+end
+local function ran() return calls("ISRadioAction.complete") end
+local n = ran()
+check(radio(ST, "AddHeadphones") == false and radio(ST, "RemoveHeadphones") == false and radio(ST, "ToggleOnOff") == false and ran() == n
+    and lastOf(ST, "enforcement").reason == "NOT_AUTHORIZED", "陌生人：受保護車上的收音機裝／拆耳機、開關都拒絕，原版 complete 沒跑")
+check(radio(OW, "RemoveHeadphones") == true and radio(OW, "ToggleOnOff") == true and ran() == n + 2, "車主：放行")
+check(stage(A("ISRadioAction", { character = OW, mode = "AddHeadphones", device = v.parts.Radio }), "complete") == false and ran() == n + 2,
+    "車主沒有 intent（冒充）：拒絕")
+check(radio(MB, "ToggleOnOff") == true and ran() == n + 3, "只有搭乘權限的成員：可以開關、調台")
+check(radio(MB, "RemoveHeadphones") == false and radio(MB, "AddHeadphones") == false and ran() == n + 3, "只有搭乘權限的成員：不能拿走或裝上耳機（要置物）")
+local handheld = { _cls = "Radio" }
+check(stage(A("ISRadioAction", { character = ST, mode = "RemoveHeadphones", device = handheld }), "complete") == true and ran() == n + 4,
+    "手持／擺在地上的收音機（不是車輛零件）：照原版")
+ISRadioAction = nil
+end)();
+
+(function()
+out("情境 G5：租用名額到期鎖定與釋出（RentLock）")
+local E, RL = MVM.Econ, MVM.RentLock
+local ENT, H = {}, {}
+MinidoracatEconomy = { CURRENCIES = { survivor = {} }, v1 = { API_MAJOR = 1, API_REVISION = 2,
+    CAPABILITIES = { entitlements = true, rentals = true, setPlan = true },
+    registerSource = function()
+        return { registerProduct = function() return { ok = true } end,
+            getEntitlement = function(user, product)
+                if H.throw then error("economy down") end
+                if H.fail then return { ok = false, error = H.fail } end
+                local e = product == MVM.ECON_PRODUCT and ENT[user] or nil
+                return { ok = true, entitlement = e or { usable = 0, rentals = {} } }
+            end }
+    end } }
+boot()
+serverMode = true
+E.init()
+check(E.status == "READY", "假 Economy READY")
+local function rent(usable, state, qty, untilMs)
+    return { usable = usable, rentals = state and { { id = "r", quantity = qty, state = state, graceUntil = untilMs } } or {} }
+end
+local ADM, OW, MB, ST = player("radm", 1, 1, { admin = true }), player("rown", 1, 1), player("rmem", 1, 1), player("rstr", 1, 1)
+O.mapSet("quotaOverrides", "rown", 1)
+ENT.rown = rent(2, "active", 2)
+local cars, recs = {}, {}
+for i = 1, 3 do
+    cars[i] = vehicle(120 + i, 1200 + i, 9200 + i, "Base.CarNormal", 1, 1)
+    recs[i] = rec(claim(OW, cars[i]).oid)
+end
+check(recs[3] and O.quotaLimit("rown") == 3 and O.quotaUsed("rown") == 3, "基本 1＋租用 2：綁滿 3 台")
+cmd(OW, "addMember", { expectedOid = recs[3].oid, username = "rmem", actionBits = MVM.ACTIONS.DRIVE })
+cmd(OW, "setPublicShare", { expectedOid = recs[3].oid, expectedEpoch = recs[3].epoch, actionBits = MVM.ACTIONS.PASSENGER })
+check(S.publicTable()[recs[3].oid] == MVM.ACTIONS.PASSENGER and O.canUse(MB, cars[3], "DRIVE"), "鎖定前：公開與成員權限有效")
+
+local GU = nowMs + 86400000
+ENT.rown = rent(2, "grace", 2, GU)
+local l0 = #logLines
+E.onChanged("rown", MVM.ECON_PRODUCT)
+local note = lastOf(OW, "notice")
+check(recs[3].lock == "RENT" and recs[2].lock == "RENT" and recs[1].lock == nil and recs[3].lockUntilMs == GU and recs[2].lockUntilMs == GU,
+    "租約進入寬限：由新到舊鎖住超出的 2 台，lockUntilMs＝寬限截止")
+check(note.key == "IGUI_MVM_Rent_Locked" and note.n == 2 and note.atMs == GU and GH.logged(l0, "RENT_LOCK", recs[3].oid),
+    "通知車主 IGUI_MVM_Rent_Locked（台數、截止），稽核 RENT_LOCK")
+local ok, why = O.canUse(OW, cars[3], "DRIVE")
+check(not ok and why == "RENT_LOCKED" and O.canUse(OW, cars[1], "DRIVE"), "鎖定的車：車主也不能用（RENT_LOCKED）；沒鎖的照常")
+ok, why = O.canUse(MB, cars[3], "DRIVE")
+check(not ok and why == "RENT_LOCKED" and not O.canUse(ST, cars[3], "PASSENGER") and S.publicTable()[recs[3].oid] == nil,
+    "鎖定的車：成員、公開都不能用，公開表撤掉")
+check(O.canUse(OW, cars[3], "MANAGE") and cmd(OW, "rename", { expectedOid = recs[3].oid, expectedEpoch = recs[3].epoch, name = "kept" }).ok,
+    "鎖定的車：車主管理（MANAGE、改名）照常")
+cmd(ADM, "setAdminOverride", { enabled = true })
+check(O.canUse(ADM, cars[3], "DRIVE"), "越權中的管理員：可用")
+cmd(ADM, "setAdminOverride", { enabled = false })
+local row = S.row(recs[3], "rown")
+check(row.lock == "RENT" and row.lockUntilMs == GU and S.row(recs[3], "rmem").lock == "RENT", "車隊列帶 lock／lockUntilMs（車主與成員）")
+RL.minute()
+check(recs[3].recordState == "ACTIVE" and recs[2].recordState == "ACTIVE" and recs[3].lock == "RENT" and RL.watch.rown == true,
+    "寬限中每分鐘重算：鎖定不變，絕不釋出")
+H.fail = "not_ready"
+E.onChanged("rown", MVM.ECON_PRODUCT)
+RL.minute()
+H.fail, H.throw = nil, true
+RL.evaluate("rown")
+H.throw = nil
+check(recs[3].lock == "RENT" and recs[2].lock == "RENT" and recs[1].lock == nil and recs[3].recordState == "ACTIVE",
+    "Economy 讀取失敗或丟錯：什麼都不改")
+local n0 = GH.count(OW, "notice")
+check(cmd(OW, "unclaim", { vehicleId = cars[1].id, expectedOid = recs[1].oid, expectedEpoch = recs[1].epoch }).ok
+    and recs[2].lock == nil and recs[3].lock == "RENT" and lastOf(OW, "notice").key == "IGUI_MVM_Rent_Unlocked"
+    and lastOf(OW, "notice").n == 1 and GH.count(OW, "notice") == n0 + 1, "車主解除另一台：最舊的鎖定車解鎖，通知 IGUI_MVM_Rent_Unlocked")
+ENT.rown = rent(0, "expired", 2)
+E.onChanged("rown", MVM.ECON_PRODUCT)
+check(recs[3].lock == "RENT" and recs[3].lockUntilMs == nil and recs[3].recordState == "ACTIVE", "租約到期（還在 Economy 上）：保持鎖定，沒有截止時間")
+ENT.rown = rent(0, "pending", 2)
+E.onChanged("rown", MVM.ECON_PRODUCT)
+check(recs[3].recordState == "ACTIVE" and recs[2].recordState == "ACTIVE", "續租待確認（pending）：不釋出")
+ENT.rown = rent(2, "active", 2)
+E.onChanged("rown", MVM.ECON_PRODUCT)
+check(recs[3].lock == nil and recs[2].lock == nil and O.canUse(OW, cars[3], "DRIVE") and S.publicTable()[recs[3].oid] == MVM.ACTIONS.PASSENGER
+    and RL.watch.rown == nil, "續租：全部解鎖，公開恢復")
+cars[4] = vehicle(124, 1204, 9204, "Base.CarNormal", 1, 1)
+recs[4] = rec(claim(OW, cars[4]).oid)
+ENT.rown = rent(2, "grace", 2, GU)
+E.onChanged("rown", MVM.ECON_PRODUCT)
+check(recs[4].lock == "RENT" and recs[3].lock == "RENT" and recs[2].lock == nil, "再進寬限：最新的兩台鎖住")
+cmd(ADM, "adminSetQuota", { usernames = { "rown" }, amount = 2 })
+ENT.rown = rent(0, nil)
+local box0 = #outbox.rown
+E.onChanged("rown", MVM.ECON_PRODUCT)
+check(recs[4].recordState == "RELEASED" and recs[4].endReason == "RENT_EXPIRED" and recs[4].lock == nil
+    and recs[3].recordState == "ACTIVE" and recs[3].lock == nil and recs[2].recordState == "ACTIVE",
+    "租約移除仍超額：釋出 min(鎖定數, 超額) 台最新的鎖定車（RELEASED、RENT_EXPIRED），其餘解鎖")
+local keys = {}
+for i = box0 + 1, #outbox.rown do
+    local m = outbox.rown[i]
+    if m.command == "notice" then keys[m.payload.key] = m.payload.n end
+end
+check(keys.IGUI_MVM_Rent_Released == 1 and keys.IGUI_MVM_Rent_Unlocked == 1 and S.row(recs[4], "rown").endReason == "RENT_EXPIRED",
+    "通知 IGUI_MVM_Rent_Released 與 Rent_Unlocked；列帶 endReason")
+
+-- 載著受保護車的拖車：不釋出，保持鎖定
+local CO = player("rcar", 1, 1)
+O.mapSet("quotaOverrides", "rcar", 1)
+ENT.rcar = rent(1, "active", 1)
+local cargo, tr = vehicle(131, 1301, 9301, "Base.CarNormal", 1, 1), vehicle(132, 1302, 9302, "Base.Trailer", 1, 1)
+local rc, rt = rec(claim(CO, cargo).oid), rec(claim(CO, tr).oid)
+O.noteLoad(tr, cargo)
+cargo:permanentlyRemove()
+check(O.hasCargo(rt), "拖車載著受保護的車")
+ENT.rcar = rent(1, "grace", 1, GU)
+E.onChanged("rcar", MVM.ECON_PRODUCT)
+check(rt.lock == "RENT" and rc.lock == nil, "寬限：鎖住最新的拖車")
+ENT.rcar = rent(0, nil)
+E.onChanged("rcar", MVM.ECON_PRODUCT)
+check(rt.recordState == "ACTIVE" and rt.lock == "RENT" and rc.recordState == "ACTIVE", "租約移除：載著貨的拖車不釋出，保持鎖定")
+
+-- 管理員調降名額、沒有租約：不鎖
+local LO = player("rlow", 1, 1)
+for i = 1, 3 do claim(LO, vehicle(140 + i, 1400 + i, 9400 + i, "Base.CarNormal", 1, 1)) end
+cmd(ADM, "adminSetQuota", { usernames = { "rlow" }, amount = 1 })
+E.onChanged("rlow", MVM.ECON_PRODUCT)
+RL.evaluate("rlow")
+local lowLocked = 0
+for _, rr in ipairs(O.R.byOwner.rlow or {}) do if rr.lock then lowLocked = lowLocked + 1 end end
+check(O.quotaUsed("rlow") == 3 and lowLocked == 0, "管理員調降名額（沒有租約）：超額也不鎖")
+
+-- 寬限中的名額不能拿來綁新車
+local GR = player("rgr", 1, 1)
+O.mapSet("quotaOverrides", "rgr", 1)
+ENT.rgr = rent(1, "grace", 1, GU)
+check(claim(GR, vehicle(151, 1501, 9501, "Base.CarNormal", 1, 1)).ok and O.graceSlots("rgr") == 1, "寬限中：基本名額照常可綁")
+local blocked = claim(GR, vehicle(152, 1502, 9502, "Base.CarNormal", 1, 1))
+check(blocked.reason == "QUOTA_EXCEEDED" and O.quotaLimit("rgr") == 2, "寬限中的租用名額不能綁新車：QUOTA_EXCEEDED")
+H.fail = "x"
+check(O.graceSlots("rgr") == 0, "讀取失敗：graceSlots 為 0")
+H.fail = nil
+ENT.rgr = rent(1, "active", 1)
+check(claim(GR, world[152]).ok, "續租後：可以綁")
+
+-- Economy 沒裝：清掉所有租約鎖定
+MinidoracatEconomy = nil
+E.init()
+l0 = #logLines
+RL.minute()
+check(E.status == "ABSENT" and rt.lock == nil and GH.logged(l0, "RENT_UNLOCK", rt.oid, "ECONOMY_ABSENT"), "Economy 沒裝（ABSENT）：清掉所有租約鎖定並稽核")
+end)();
+
+(function()
+out("情境 G6：Economy 兩個產品（綁定名額＋保全名額）：註冊、摘要、guardPaid、購買驗證、變更分派、各自的設定檔")
+local E, PS, X, P = MVM.Econ, MVM.PaidSlots, MVM.Export, MVM.Parked
+local GP = MVM.GUARD_PRODUCT
+local function copy(t) local c = {}; for k, v in pairs(t) do c[k] = v end; return c end
+local REG, PLANS, REV, CALLS, ENT, H = {}, {}, {}, {}, { [MVM.ECON_PRODUCT] = {}, [GP] = {} }, {}
+MinidoracatEconomy = { CURRENCIES = { survivor = {} }, v1 = { API_MAJOR = 1, API_REVISION = 2,
+    CAPABILITIES = { entitlements = true, rentals = true, setPlan = true },
+    registerSource = function()
+        return { registerProduct = function(p)
+                REG[#REG + 1] = p
+                PLANS[p.id], REV[p.id], CALLS[p.id] = copy(p.defaults), 0, 0
+                return { ok = true }
+            end,
+            getEntitlement = function(user, product)
+                if H.fail then return { ok = false, error = H.fail } end
+                return { ok = true, entitlement = ENT[product] and ENT[product][user] or { usable = 0, rentals = {} } }
+            end,
+            getPlan = function(product)
+                if PLANS[product] == nil then return { ok = false, error = "unknown_product" } end
+                local p = copy(PLANS[product])
+                p.revision = REV[product]
+                return { ok = true, plan = p }
+            end,
+            setPlan = function(product, values, opts)
+                if PLANS[product] == nil then return { ok = false, error = "unknown_product" } end
+                CALLS[product] = CALLS[product] + 1
+                if opts.expectedRevision ~= nil and opts.expectedRevision ~= REV[product] then return { ok = false, error = "stale_revision" } end
+                PLANS[product], REV[product] = copy(values), REV[product] + 1
+                return { ok = true, updated = true, revision = REV[product], changed = { "rentalEnabled" } }
+            end,
+            setPlanSource = function() return { ok = true } end }
+    end } }
+boot()
+serverMode = true
+check(E.guardPaid("g6new") == 0, "Economy 不是 READY、從沒讀到過：guardPaid 0")
+for k in pairs(files) do files[k] = nil end
+E.init()
+local byId = {}
+for _, p in ipairs(REG) do byId[p.id] = p end
+check(E.status == "READY" and #REG == 2 and byId[MVM.ECON_PRODUCT] and byId[GP] and byId[GP].nameKey == "IGUI_MVM_Product_guard_slot"
+    and byId[MVM.ECON_PRODUCT].nameKey == "IGUI_MVM_Product_" .. MVM.ECON_PRODUCT and byId[GP].instant == true
+    and byId[MVM.ECON_PRODUCT].instant == true and byId[GP].validatePurchase == E.validatePurchase and byId[GP].defaults == E.DEFAULTS,
+    "同一來源註冊兩個產品：nameKey IGUI_MVM_Product_<id>、instant、共用 validatePurchase 與預設方案")
+ENT[MVM.ECON_PRODUCT].gp1 = { usable = 3, permanent = 1, rental = 2, rentals = {} }
+ENT[GP].gp1 = { usable = 2, permanent = 2, rental = 0, rentals = {} }
+local sc, sg = E.summary("gp1"), E.summary("gp1", GP)
+check(sc.paid == 3 and sc.rental == 2 and sg.paid == 2 and sg.permanent == 2 and sg.rental == 0 and O.quotaLimit("gp1") == 3 + 3,
+    "摘要分產品：綁定名額加到綁定上限，保全名額另計")
+check(E.guardPaid("gp1") == 2, "guardPaid：保全產品的 usable")
+ENT[GP].gp1.usable = 3
+local cachedGP = E.guardPaid("gp1")
+E.onChanged("gp1", GP)
+check(cachedGP == 2 and E.guardPaid("gp1") == 3,
+    "guardPaid 留 GUARD_TTL_MS 不重讀（停車保全每秒排名不打 Economy）；權益變更通知立刻作廢，下一次就是新值")
+nowMs = nowMs + E.GUARD_TTL_MS
+H.fail = "not_ready"
+check(E.guardPaid("gp1") == 3 and E.summary("gp1", GP).economy == "UNAVAILABLE" and E.guardPaid("gp2") == 0,
+    "讀取失敗：沿用上次讀到的值（不讓付費保全暫停）；從沒讀到過的人 0")
+H.fail = nil
+ENT[GP].gp1.usable = 2
+E.onChanged("gp1", GP)
+SB.ParkedGuard = MVM.GUARD.ALL
+local okG, whyG = E.validatePurchase("gp1", GP, "permanent", 1, 3)
+check(okG == false and whyG == "GUARD_NOT_SLOTS" and E.validatePurchase("gp1", MVM.ECON_PRODUCT, "permanent", 1, 4) == true,
+    "不是 SLOTS：拒絕買保全名額（GUARD_NOT_SLOTS），綁定名額照常")
+SB.ParkedGuard = MVM.GUARD.SLOTS
+check(E.validatePurchase("gp1", GP, "permanent", 1, 3) == true, "SLOTS：可以買保全名額")
+
+-- 變更分派：保全產品 → 暫停通知；綁定產品 → RentLock 重算
+local G3p = player("gp3", 1, 1)
+ENT[GP].gp3 = { usable = 1, rentals = {} }
+local a1, a2 = rec(claim(G3p, GH.car(161)).oid), rec(claim(G3p, GH.car(162)).oid)
+cmd(G3p, "setGuard", { expectedOid = a1.oid, enabled = true })
+cmd(G3p, "setGuard", { expectedOid = a2.oid, enabled = true })
+check(P.state(a1) == "ON" and P.state(a2) == "ON", "基本 1＋付費 1：兩台都 ON")
+ENT[GP].gp3 = { usable = 0, rentals = {} }
+-- 沒開車隊視窗（沒有串流）：變更後不重送快照，暫停通知只能來自保全產品的 limitChanged
+S.R.streams.gp3 = nil
+local n0 = GH.count(G3p, "notice")
+E.onChanged("gp3", MVM.ECON_PRODUCT)
+check(GH.count(G3p, "notice") == n0, "綁定名額的變更：不走保全暫停通知")
+E.onChanged("gp3", GP)
+check(GH.count(G3p, "notice") == n0 + 1 and lastOf(G3p, "notice").key == "IGUI_MVM_Guard_Paused" and P.state(a2) == "OVER",
+    "保全名額的變更：OVER 變多，通知 IGUI_MVM_Guard_Paused")
+local G4p = player("gp4", 1, 1)
+O.mapSet("quotaOverrides", "gp4", 0)
+ENT[MVM.ECON_PRODUCT].gp4 = { usable = 1, rentals = { { quantity = 1, state = "active" } } }
+local b1 = rec(claim(G4p, GH.car(163)).oid)
+ENT[MVM.ECON_PRODUCT].gp4 = { usable = 1, rentals = { { quantity = 1, state = "grace", graceUntil = nowMs + 3600000 } } }
+E.onChanged("gp4", GP)
+check(b1.lock == nil, "保全名額的變更：不重算租約鎖定")
+E.onChanged("gp4", MVM.ECON_PRODUCT)
+check(b1.lock == "RENT", "綁定名額的變更：RentLock 重算（寬限超額就鎖）")
+
+-- 各自的設定檔與 adminPaidSlots product
+local function text(path) return files[path] and table.concat(files[path]) or nil end
+PS.start()
+nowMs = nowMs + PS.POLL_MS
+fire("OnTickEvenPaused")
+local CF, GF = X.folder() .. "paid-slots.json", X.folder() .. "guard-slots.json"
+check(text(CF) and text(GF) and PS.of[GP].status.source == "created" and PS.of[MVM.ECON_PRODUCT].status.source == "created",
+    "兩個產品各建一份設定檔與狀態")
+local AD, PL = player("g6adm", 1, 1, { admin = true }), player("g6pl", 1, 1)
+local gg, gc = cmd(AD, "adminPaidSlots", { op = "GET", product = GP }), cmd(AD, "adminPaidSlots", { op = "GET" })
+check(gg.ok and gg.product == GP and gg.file == "Zomboid/Lua/" .. GF and gg.plan.rentalEnabled == false and gc.product == MVM.ECON_PRODUCT
+    and gc.file == "Zomboid/Lua/" .. CF, "GET：product 省略＝綁定名額；guard_slot 回自己的檔案")
+check(cmd(PL, "adminPaidSlots", { op = "GET", product = GP }).reason == "NOT_ADMIN", "非管理員：NOT_ADMIN")
+local vals = copy(gg.plan)
+vals.rentalEnabled = true
+local c0 = CALLS[MVM.ECON_PRODUCT]
+check(cmd(AD, "adminPaidSlots", { op = "SET", product = "bogus", values = vals, expectedRevision = gg.revision, reason = "x" }).reason
+    == "BAD_ARGS" and CALLS[GP] == 0 and CALLS[MVM.ECON_PRODUCT] == c0, "未知產品：BAD_ARGS（SCHEMA），不送 Economy")
+local l0 = #logLines
+local set = cmd(AD, "adminPaidSlots", { op = "SET", product = GP, values = vals, expectedRevision = gg.revision, reason = "guard sale" })
+local back = PS.parse(text(GF):sub(1, -2))
+check(set.ok and PLANS[GP].rentalEnabled == true and PLANS[MVM.ECON_PRODUCT].rentalEnabled == false and back.rentalEnabled == true
+    and PS.parse(text(CF):sub(1, -2)).rentalEnabled == false and PS.of[GP].status.source == "admin"
+    and PS.of[MVM.ECON_PRODUCT].status.source == "created" and GH.logged(l0, "ADMIN_PAID_SLOTS", GP, "guard sale"),
+    "SET guard_slot：只改保全產品的方案、寫 guard-slots.json 與它自己的狀態，綁定名額不動；稽核帶產品")
+files[GF] = { (PS.encode(PLANS[GP], "external"):gsub('"price": 250', '"price": 300')) .. "\n" }
+local g0 = CALLS[GP]
+nowMs = nowMs + PS.POLL_MS
+fire("OnTickEvenPaused")
+check(CALLS[GP] == g0 + 1 and PLANS[GP].rentalPrice == 300 and PLANS[MVM.ECON_PRODUCT].rentalPrice == 250 and PS.of[GP].status.source == "file",
+    "外部改 guard-slots.json：輪詢送保全產品的 setPlan")
+MinidoracatEconomy = nil
+E.init()
+SB.ParkedGuard = MVM.GUARD.ALL
+end)();
+
+(function()
+out("情境 G7：客戶端（保全／鎖定文字、狀態、RENT_LOCKED、通知參數、提示、綁定確認的風險行）")
+local F = MVM.FleetUI
+local slots = { mode = MVM.GUARD.SLOTS, used = 1, total = 2 }
+local own = { role = "OWNER", state = "ACTIVE" }
+local function with(t, k, v) local c = {}; for a, b in pairs(t) do c[a] = b end; c[k] = v; return c end
+local overText, overToken = F.guardText(with(own, "guard", "OVER"), slots)
+check(F.guardText(with(own, "guard", "ON"), slots) == "IGUI_MVM_Guard_On(1,2)" and overText == "IGUI_MVM_Guard_Over(1,2)" and overToken == "accent"
+    and F.guardText(own, slots) == "IGUI_MVM_Guard_Off(1,2)" and F.guardText({ role = "OWNER", state = "RELEASED" }, slots) == nil,
+    "車主 SLOTS：開／暫停（強調色）／關附已用／總數；已結束的車不寫")
+check(F.guardText(with(own, "guard", "ON"), { mode = MVM.GUARD.ALL }) == "IGUI_MVM_Guard_All"
+    and F.guardText(own, { mode = MVM.GUARD.OFF }) == nil, "ALL：一句保全中；OFF：不寫")
+local mem = { role = "MEMBER", state = "ACTIVE" }
+check(F.guardText(with(mem, "guard", "ON"), slots) == "IGUI_MVM_Guard_All" and F.guardText(mem, slots) == nil, "被分享的車：只有 ON 才寫")
+local AT = 1790439302927
+local t = os.date("*t", math.floor(AT / 1000))
+local when = string.format("IGUI_MVM_Date(%d,%02d,%02d) %02d:%02d", t.year, t.month, t.day, t.hour, t.min)
+check(F.lockText({ lock = "RENT", lockUntilMs = AT }) == "IGUI_MVM_Lock_Rent(" .. when .. ")" and F.lockText({ lock = "RENT" }) == "IGUI_MVM_Lock_RentEnded"
+    and F.lockText({}) == nil, "鎖定行：有截止時間寫日期時間（本機時區）、沒有寫即將解除、沒鎖不寫")
+check(F.stateText({ state = "RELEASED", endReason = "RENT_EXPIRED" }, nowMs) == "IGUI_MVM_State_RELEASED_RENT_EXPIRED"
+    and F.stateText({ state = "RELEASED" }, nowMs) == "IGUI_MVM_State_RELEASED", "狀態：租用到期釋出另有說法，一般解除照舊")
+check(F.stateText({ state = "ACTIVE", lock = "RENT" }, nowMs) == "IGUI_MVM_State_LOCKED" and F.stateToken({ state = "ACTIVE", lock = "RENT" }) == "errorText"
+    and F.stateText({ state = "PENDING_RELEASE", lock = "RENT", releaseDueAtMs = nowMs }, nowMs) == "IGUI_MVM_State_PENDING_RELEASE(0)"
+    and F.stateToken({ state = "ACTIVE" }) == "text", "狀態：租用鎖定的車在清單與詳情都寫已鎖定（錯誤色）；回報遺失的倒數優先")
+
+local savedIsClient, savedBad, savedGood = isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText
+isClient = function() return true end
+local toast, toastBad
+HaloTextHelper.addBadText = function(_, s) toast, toastBad = s, true end
+HaloTextHelper.addGoodText = function(_, s) toast, toastBad = s, false end
+online = {}
+local me = player("gcl", 1, 1)
+function me:getRole() return { hasCapability = function(_, cap) return me.admin == true and cap == "ManipulateVehicle" end } end
+local function car(id, oid) local v = vehicle(id, 1700 + id, 9700 + id, "Base.CarNormal", 1, 1); rawset(v.parts.Engine.md, "MinidoracatVehicleManager", { oid = oid }); return v end
+local vLock, vFree, vMem = car(171, "gLock"), car(172, "gFree"), car(173, "gMem")
+MVM.clientReceive("fleetSnapshot", { to = "gcl", streamId = "g7a", seq = 0, guard = { mode = MVM.GUARD.OFF }, rows = {
+    { oid = "gLock", role = "OWNER", state = "ACTIVE", name = "Red Truck", lock = "RENT", lockUntilMs = AT },
+    { oid = "gFree", role = "OWNER", state = "ACTIVE" },
+    { oid = "gMem", role = "MEMBER", state = "ACTIVE", owner = "x", myBits = MVM.ACTIONS.DRIVE, lock = "RENT" } } })
+local ok, why = MVM.clientCanUse(me, vLock, "DRIVE")
+local okM, whyM = MVM.clientCanUse(me, vMem, "DRIVE")
+check(not ok and why == "RENT_LOCKED" and not okM and whyM == "RENT_LOCKED" and MVM.clientCanUse(me, vLock, "MANAGE")
+    and MVM.clientCanUse(me, vFree, "DRIVE"), "客戶端：鎖定的車車主與成員都 RENT_LOCKED，MANAGE 照常，沒鎖的照常")
+me.admin = true
+MVM.clientReceive("adminSnapshot", { to = "gcl", id = "g7s", part = 1, parts = 1, ok = true, rows = {}, players = {}, override = true })
+ok, why = MVM.clientCanUse(me, vLock, "DRIVE")
+check(ok and why == "ADMIN", "客戶端：越權中的管理員可用鎖定的車")
+me.admin = false
+MVM.clientReceive("adminSnapshot", { to = "gcl", id = "g7t", part = 1, parts = 1, ok = true, rows = {}, players = {}, override = false })
+
+local notice = MVM.clientHandlers.notice
+notice({ to = "gcl", key = "IGUI_MVM_Attack_Guarded", oid = "gLock", who = "mallory", bad = true })
+check(toast == "IGUI_MVM_Attack_Guarded(Red Truck,mallory)" and toastBad == true, "通知：參數依序是車名（自己車隊的列）、對方帳號；紅字")
+notice({ to = "gcl", key = "K", oid = "nope", who = "w", n = 3, atMs = AT, bad = false })
+check(toast == "K(IGUI_MVM_FloatFallback,w,3," .. when .. ")" and toastBad == false, "通知：對不到的車用 FloatFallback；數量、日期時間依序接在後面")
+notice({ to = "gcl", key = "IGUI_MVM_Rent_Locked", n = 2, atMs = AT, bad = true })
+check(toast == "IGUI_MVM_Rent_Locked(2," .. when .. ")", "通知：只放有的參數（沒有車名與帳號）")
+toast = nil
+notice({ to = "someone", key = "IGUI_MVM_Guard_Repaired", oid = "gLock" })
+notice({ to = "gcl", key = 5 })
+check(toast == nil, "通知：不是給本機玩家或沒有 key：不顯示")
+local enf = MVM.clientHandlers.enforcement
+enf({ to = "gcl", action = "CMD:vehicle.damageWindow", reason = "NOT_AUTHORIZED", guard = true })
+local hitText = toast
+enf({ to = "gcl", action = "CMD:vehicle.damageWindow", reason = "NOT_AUTHORIZED", guard = false })
+local ownedText = toast
+local realGetText = getText
+getText = function(k, ...) if k == "IGUI_MVM_Reason_RENT_LOCKED" then return "RENT_LOCKED text" end return realGetText(k, ...) end
+enf({ to = "gcl", action = "ISUninstallVehiclePart", reason = "RENT_LOCKED" })
+getText = realGetText
+check(hitText == "IGUI_MVM_Guard_Hit" and ownedText == "IGUI_MVM_Attack_Owned" and toast == "RENT_LOCKED text",
+    "提示：砸窗保全中說打不壞、沒保全說已被綁定；RENT_LOCKED 說怎麼解鎖（IGUI_MVM_Reason_RENT_LOCKED）")
+local missing = {}
+local want = { "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_GUARD_FULL", "IGUI_MVM_Reason_GUARD_NOT_SLOTS",
+    "IGUI_MVM_State_RELEASED_RENT_EXPIRED", "IGUI_MVM_State_LOCKED", "IGUI_MVM_Product_" .. MVM.ECON_PRODUCT,
+    "IGUI_MVM_Product_" .. MVM.GUARD_PRODUCT }
+for i = 1, 3 do want[#want + 1] = "IGUI_MVM_ClaimRisk_" .. i; want[#want + 1] = "IGUI_MVM_Disclosure_" .. i end
+for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
+    local fh = io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json")
+    local json = fh and fh:read("*a") or ""
+    if fh then fh:close() end
+    for _, k in ipairs(want) do if not json:find('"' .. k .. '"', 1, true) then missing[#missing + 1] = lang .. ":" .. k end end
+end
+check(#missing == 0, "組字串用到的翻譯鍵（原因、狀態、產品名、風險行、揭露）四語都有（缺：" .. table.concat(missing, ",") .. "）")
+
+local loose = vehicle(174, 1774, 9774, "Base.CarNormal", 1, 1)
+local function snap(id, guard) MVM.clientReceive("fleetSnapshot", { to = "gcl", streamId = id, seq = 0, guard = guard, rows = {} }) end
+snap("g7b", { mode = MVM.GUARD.OFF })
+local offText = MVM.claimText(0, loose)
+snap("g7c", { mode = MVM.GUARD.ALL })
+local allText = MVM.claimText(0, loose)
+snap("g7d", { mode = MVM.GUARD.SLOTS, used = 1, total = 3 })
+local slotText = MVM.claimText(0, loose)
+snap("g7e", nil)
+SB.ParkedGuard = MVM.GUARD.OFF
+local localText = MVM.claimText(0, loose)
+SB.ParkedGuard = MVM.GUARD.ALL
+check(offText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_1" and allText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2"
+    and slotText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_3(1,3)" and localText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_1",
+    "綁定確認：風險行依伺服器模式（SLOTS 帶保全名額已用／總數），還沒收到快照用本機沙盒")
+isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
+end)();
 out("")
 if failures > 0 then
     out(failures .. " 項失敗，" .. passes .. " 項通過")

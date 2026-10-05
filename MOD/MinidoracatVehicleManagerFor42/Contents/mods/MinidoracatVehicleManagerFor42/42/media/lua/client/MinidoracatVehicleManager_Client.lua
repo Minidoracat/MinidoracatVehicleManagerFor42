@@ -21,6 +21,9 @@ MVM.ui = ui
 local toastColors = nil
 local BAD_HOLD_MS = 8000
 local avoidSet = false
+-- 同一句還掛在畫面上（停留時間內）就不再疊一張：連續揮擊、連點被擋的動作時，通知會疊成一排蓋住小地圖（E2E guard-mp）
+local lastToast, lastToastAt = nil, 0
+local GOOD_HOLD_MS = 3000
 local function fleetRect()
     local f = MVM.FleetWindow and MVM.FleetWindow.instance
     local w = f and f.win
@@ -37,6 +40,9 @@ function MVM.notify(player, text, bad)
         if not avoidSet and (UI.API_REVISION or 0) >= 12 and UI.CAPABILITIES.toastAvoid then
             avoidSet = pcall(UI.Toast.setAvoid, "MinidoracatVehicleManagerFor42", fleetRect)
         end
+        local now = getTimestampMs()
+        if text == lastToast and now - lastToastAt < (bad and BAD_HOLD_MS or GOOD_HOLD_MS) then return end
+        lastToast, lastToastAt = text, now
         UI.Toast.show({ message = text, colors = bad and toastColors.bad or toastColors.good, maxLines = 3,
             holdMs = bad and BAD_HOLD_MS or nil })
     elseif player then
@@ -87,6 +93,25 @@ function MVM.reasonText(reason)
     return getText("IGUI_MVM_Failed")
 end
 
+-- 年月日時分（玩家電腦的時區）：PZCalendar＝Java Calendar.getInstance()（PZCalendar.java:14-15，LuaManager 有 expose）；
+-- Kahlua 的 os.date 固定 UTC（OsLib.java:331），只在沒有 PZCalendar 的離線環境退回
+function MVM.localTime(ms)
+    if PZCalendar then
+        local cal = PZCalendar.getInstance()
+        cal:setTimeInMillis(ms)
+        return cal:get(1), cal:get(2) + 1, cal:get(5), cal:get(11), cal:get(12)
+    end
+    local t = os.date("*t", math.floor(ms / 1000))
+    return t.year, t.month, t.day, t.hour, t.min
+end
+
+-- 日期＋時間：日期排列跟著語系（IGUI_MVM_Date：%1 年、%2 月、%3 日），時間 24 小時制，月日時分補零
+local function two(n) return (n < 10 and "0" or "") .. n end
+function MVM.dateTimeText(ms)
+    local y, m, d, h, mi = MVM.localTime(ms)
+    return getText("IGUI_MVM_Date", y, two(m), two(d)) .. " " .. two(h) .. ":" .. two(mi)
+end
+
 -- 投影或越權狀態變了：清見證快取、重列物品欄的車上容器（ISInventoryPage.lua:1330 dirtyUI 對每位本機玩家 refreshBackpacks）
 local witnessCache, witnessCacheAt = {}, 0
 local function accessChanged()
@@ -94,10 +119,12 @@ local function accessChanged()
     if ISInventoryPage and ISInventoryPage.dirtyUI then ISInventoryPage.dirtyUI() end
 end
 
--- 伺服器存好新的全服預設名額或閒置天數後通知（沒有原版 Lua 廣播）：本機沙盒選項跟著改並投影到 SandboxVars，
+-- 伺服器存好新的沙盒選項（全服預設名額、閒置天數、停車保全模式、保全名額）後通知（沒有原版 Lua 廣播）：本機沙盒選項跟著改並投影到 SandboxVars，
 -- 否則之後從原版沙盒 UI 存檔會把舊值整份送回伺服器（GameServer.java:1694-1708）。不是整數的欄位不動
 local SYNCED = { claimsPerPlayer = "MinidoracatVehicleManager.ClaimsPerPlayer",
-    releaseDays = "MinidoracatVehicleManager.InactivityReleaseDays" }
+    releaseDays = "MinidoracatVehicleManager.InactivityReleaseDays",
+    parkedGuard = "MinidoracatVehicleManager.ParkedGuard",
+    guardSlots = "MinidoracatVehicleManager.GuardSlotsPerPlayer" }
 local function syncSandbox(payload)
     local opts, any = getSandboxOptions(), false
     for key, option in pairs(SYNCED) do
@@ -137,6 +164,7 @@ function MVM.clientReceive(command, payload)
         for _, row in ipairs(payload.rows or {}) do b.rows[row.oid] = row end
         b.quotaUsed, b.quotaLimit, b.quota, b.status = payload.quotaUsed, payload.quotaLimit, payload.quota, payload.status
         b.pub, b.releaseDays = type(payload.pub) == "table" and payload.pub or {}, payload.releaseDays
+        b.guard = type(payload.guard) == "table" and payload.guard or nil -- 停車保全模式與保全名額（MVM.Parked.counts）
     elseif command == "publicDelta" then
         if type(payload.oid) ~= "string" then return end
         b.pub = b.pub or {}
@@ -180,6 +208,8 @@ function MVM.clientReceive(command, payload)
         b.adminPlayers = ok and players or nil
         b.adminDefaultQuota = ok and meta.defaultQuota or nil
         b.adminReleaseDays = ok and meta.releaseDays or nil
+        b.adminGuardMode = ok and meta.guardMode or nil
+        b.adminGuardSlots = ok and meta.guardSlots or nil
         b.migrationAvailable = ok and meta.migrationAvailable == true
         b.adminOverride = ok and meta.override == true
         b.identitySteam = ok and meta.identitySteam == true
@@ -199,6 +229,23 @@ end
 Events.OnServerCommand.Add(function(module, command, args)
     if module == MVM.MODULE then MVM.clientReceive(command, args) end
 end)
+
+-- 伺服器通知（停車保全、租用名額到期）：譯文參數只放有的、依序是車名（自己車隊的列，同車隊視窗的名稱；
+-- 對不到用 IGUI_MVM_FloatFallback）、對方帳號、數量、日期時間（本機時區）
+MVM.clientHandlers = MVM.clientHandlers or {}
+MVM.clientHandlers.notice = function(payload)
+    local p = getSpecificPlayer(0)
+    if p == nil or principal(0) ~= payload.to or type(payload.key) ~= "string" then return end
+    local args = {}
+    if type(payload.oid) == "string" then
+        local row = bucket(payload.to).rows[payload.oid]
+        args[#args + 1] = row and MVM.FleetUI and MVM.FleetUI.displayName(row) or getText("IGUI_MVM_FloatFallback")
+    end
+    if type(payload.who) == "string" then args[#args + 1] = payload.who end
+    if MVM.isInt(payload.n) then args[#args + 1] = payload.n end
+    if type(payload.atMs) == "number" then args[#args + 1] = MVM.dateTimeText(payload.atMs) end
+    MVM.notify(p, getText(payload.key, args[1], args[2], args[3], args[4]), payload.bad == true)
+end
 
 -- 車上的零件見證只給 oid，用來對到自己的投影列；他人的車只知道「已被綁定」，以及公開表裡的公開動作。
 -- 宿主可能是任一零件（server 找不到 Engine 等時用第 0 個），要掃全部零件（≤128 個）。
@@ -253,6 +300,11 @@ function MVM.clientCanUse(actor, vehicle, action)
     local n = actor:getPlayerNum()
     local row = MVM.clientProjection(n, vehicle)
     if row == nil then return true, "UNCLAIMED" end
+    -- 租用名額到期鎖住的車：管理以外的動作只有越權能用（同 server O.allowsRecord，排在車主之前）
+    if row.lock ~= nil and action ~= "MANAGE" then
+        if MVM.clientOverride(n) then return true, "ADMIN" end
+        return false, "RENT_LOCKED"
+    end
     if row.state ~= "QUARANTINED" then
         if row.role == "OWNER" then return true, "OWNER" end
         if action ~= "MANAGE" then
@@ -331,10 +383,23 @@ function MVM.quotaNumbers(b)
     return nil
 end
 
--- 綁定確認視窗內文：保護邊界＋名額（讀得到才加）＋能裝車的載具多一句「綁定的車只能裝上已綁定的拖車」
+-- 停車保全模式：快照帶的伺服器值優先，還沒收到快照用本機沙盒（伺服器存檔後經 sandboxSync 同步）
+function MVM.guardModeFor(b)
+    return b and b.guard and b.guard.mode or MVM.guardMode()
+end
+
+-- 綁定確認視窗內文：保護邊界＋這個模式的保全說明（SLOTS 附保全名額已用／總數）＋名額（讀得到才加）
+-- ＋能裝車的載具多一句「綁定的車只能裝上已綁定的拖車」
 function MVM.claimText(playerNum, vehicle)
-    local text = getText("IGUI_MVM_ClaimDisclosure")
-    local used, total = MVM.quotaNumbers(C.buckets[principal(playerNum) or ""])
+    local b = C.buckets[principal(playerNum) or ""]
+    local mode, g = MVM.guardModeFor(b), b and b.guard
+    local text = getText("IGUI_MVM_ClaimDisclosure") .. "\n"
+    if mode == MVM.GUARD.SLOTS then
+        text = text .. getText("IGUI_MVM_ClaimRisk_3", g and g.used or 0, g and g.total or MVM.guardSlotsDefault())
+    else
+        text = text .. getText("IGUI_MVM_ClaimRisk_" .. mode)
+    end
+    local used, total = MVM.quotaNumbers(b)
     if used ~= nil then text = text .. "\n" .. getText("IGUI_MVM_ClaimQuotaNote", used, total) end
     if MVM.isCarrier(vehicle) then text = text .. "\n" .. getText("IGUI_MVM_ClaimCarrierNote") end
     return text

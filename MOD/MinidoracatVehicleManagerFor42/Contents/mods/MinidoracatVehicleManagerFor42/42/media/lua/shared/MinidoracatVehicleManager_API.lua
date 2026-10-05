@@ -6,9 +6,14 @@ local MVM = MinidoracatVehicleManager
 MVM.MODULE = "MinidoracatVehicleManager"
 MVM.PROTOCOL = 1
 MVM.LOG_PREFIX = "[MinidoracatVehicleManagerFor42] "
--- Economy 選用整合（付費名額）：來源與產品 id，server 註冊與 client 查詢共用同一組字串
+-- Economy 選用整合（付費名額）：來源與產品 id，server 註冊與 client 查詢共用同一組字串。
+-- ECON_PRODUCT＝綁定名額、GUARD_PRODUCT＝停車保全名額；PRODUCTS 是名額視窗與設定視窗的分頁順序
 MVM.ECON_SOURCE = "MinidoracatVehicleManagerFor42"
 MVM.ECON_PRODUCT = "vehicle_slot"
+MVM.GUARD_PRODUCT = "guard_slot"
+MVM.PRODUCTS = { MVM.ECON_PRODUCT, MVM.GUARD_PRODUCT }
+-- 停車保全模式（沙盒 ParkedGuard）：OFF＝關閉、ALL＝所有綁定的車、SLOTS＝依保全名額（車主逐台開啟）
+MVM.GUARD = { OFF = 1, ALL = 2, SLOTS = 3 }
 -- 付費名額方案 12 欄，設定檔（paid-slots.json）的順序：key＝Economy 方案欄位（翻譯 IGUI_MVM_Paid_Name_<key>），
 -- file＝設定檔鍵（群組.鍵），kind＝bool／int／currency。server 讀寫設定檔與 client 設定視窗共用這一份
 MVM.PAID_FIELDS = {
@@ -109,6 +114,19 @@ function MVM.sandbox(name, default)
     local v = page and page[name]
     if v == nil then return default end
     return v
+end
+
+-- 停車保全模式；沙盒值不是 1–3 時當成預設（所有綁定的車）
+function MVM.guardMode()
+    local m = MVM.sandbox("ParkedGuard", MVM.GUARD.ALL)
+    if m ~= MVM.GUARD.OFF and m ~= MVM.GUARD.ALL and m ~= MVM.GUARD.SLOTS then return MVM.GUARD.ALL end
+    return m
+end
+
+-- 每位玩家的免費保全名額（依保全名額模式；個人設定見伺服器 guardOverrides）
+function MVM.guardSlotsDefault()
+    local n = MVM.sandbox("GuardSlotsPerPlayer", 1)
+    return MVM.isInt(n) and n >= 0 and n or 1
 end
 
 MinidoracatVehicleManagerAPI = MinidoracatVehicleManagerAPI or {}

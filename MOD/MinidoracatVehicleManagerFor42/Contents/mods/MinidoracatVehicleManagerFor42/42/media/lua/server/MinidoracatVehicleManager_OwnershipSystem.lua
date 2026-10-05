@@ -1,5 +1,5 @@
 -- 所有權帳本（server-only）：SGlobalObjectSystem 衍生系統只存單一鍵 state（計畫 §4.1），
--- 身分真相鏈 §4.2、狀態機 §4.5、sentinel §4.3、權限 §5。Server.lua 只做命令驗證與投遞，所有判定在這裡。
+-- 身分真相鏈 §4.2、狀態機 §4.5、sentinel §4.3、權限 §5（含租用名額到期鎖定 rec.lock）。Server.lua 只做命令驗證與投遞，所有判定在這裡。
 -- 不讀車身 modData 做授權：client 可經 ObjectModDataPacket 覆寫車身 modData（E2E trust-mp 實證）；
 -- 見證寫在零件 modData，只作一致性證據。
 if isClient() then return end
@@ -23,7 +23,7 @@ local SCHEMA_VERSION = 1
 -- （CGlobalObjects.java:105），超過 127 所有 MOD 的客戶端 GOS 都會壞：開新分片前總數必須低於 systemBudget（留空間給別的 MOD）。
 -- 本 MOD 自己最多 60 片（約 12 萬筆）。
 O.SHARDED_MAPS = { "recordsByOid", "ownerActivity", "knownUsers", "quotaOverrides", "pendingRebindByLegacyKey", "migratedLegacyIds",
-    "identityBindings" }
+    "identityBindings", "guardOverrides" }
 O.SHARD_LIMITS = { records = 2000, entries = 20000, shards = 60, systemBudget = 100 }
 local DAY_MS, HOUR_MS = 86400000, 3600000
 -- 授權裝車後拖車改 keyId 的認領期限（裝車命令與 keyId 改變在同一次處理，下一個 tick 就觀測；給重啟以外的延遲留餘裕）
@@ -722,12 +722,12 @@ function O.quotaLimit(owner)
     return O.quotaBase(owner) + (O.paidSlots and O.paidSlots(owner) or 0)
 end
 
--- claim 前置條件（不含車輛本身的檢查）
+-- claim 前置條件（不含車輛本身的檢查）。寬限中的租用名額（O.graceSlots，RentLock.lua）不能再拿來綁新車
 function O.claimBlocked(owner)
     local ok, reason = O.ready()
     if not ok then return reason end
     if O.configBlocked() then return "CONFIG_BLOCKED" end
-    if O.quotaUsed(owner) >= O.quotaLimit(owner) then return "QUOTA_EXCEEDED" end
+    if O.quotaUsed(owner) >= O.quotaLimit(owner) - (O.graceSlots and O.graceSlots(owner) or 0) then return "QUOTA_EXCEEDED" end
     return nil
 end
 
@@ -817,8 +817,8 @@ function O.grantBits(rec, user)
 end
 
 -- --------------------------------------------------------------- canUse ---
--- 權威授權。回 allowed, reason, record。順序：車主 → 分享／陣營／公開（MANAGE 除外）→ 管理員越權 → 拒絕。
--- 管理員身分本身不放行，要在車隊視窗開啟越權；有分享權限的管理員照一般成員記，不寫 ADMIN_BYPASS。
+-- 權威授權。回 allowed, reason, record。順序：租用到期鎖定（MANAGE 除外）→ 車主 → 分享／陣營／公開（MANAGE 除外）
+-- → 管理員越權 → 拒絕。管理員身分本身不放行，要在車隊視窗開啟越權；有分享權限的管理員照一般成員記，不寫 ADMIN_BYPASS。
 -- QUARANTINED 紀錄只有越權中的管理員能用。公開分享也要有身分（同分享：分割畫面與身分未確認的人不能用）
 function O.canUse(actor, vehicle, action, context)
     if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION" end
@@ -833,6 +833,11 @@ end
 function O.allowsRecord(actor, rec, action, context)
     if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION", rec end
     local who = O.principal(actor)
+    -- 鎖定的車連車主也不能用（解除綁定、改名、分享等車主管理命令不經這裡）；越權中的管理員照常
+    if rec.lock ~= nil and action ~= "MANAGE" and not O.overrideActive(actor) then
+        O.deny(who, action, rec.oid, "RENT_LOCKED")
+        return false, "RENT_LOCKED", rec
+    end
     local quarantined = rec.recordState == "QUARANTINED"
     if not quarantined then
         if who ~= nil and who == rec.ownerUser then return true, "OWNER", rec end

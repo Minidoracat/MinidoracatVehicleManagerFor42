@@ -5,6 +5,7 @@
 -- 就安靜結束。伺服器上的 sendClientCommand 直接觸發本機 OnClientCommand（LuaManager.java:8936-8938）：TimedAction 的
 -- complete 回送（ATAISLoadVehicle.lua:45、ISOpenTent.lua:46）也經過這裡，判定與 adapter 相同（同一人、同一台車）。
 -- 沒有規則的指令立刻放行；目標都不受保護照原版；受保護的目標要有權限、送指令的人要在附近。
+-- 放行後通知停車保全目標車是授權改的（MVM.Parked.touch）；拒絕砸窗時問停車保全這台車有沒有布防（提示攻擊者、通知車主）
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Actions"
 
@@ -237,6 +238,9 @@ function CG.decide(rule, module, command, player, args)
     local why = targets.check and targets.check() or nil
     if why then return false, why end
     if onAllow then onAllow() end
+    if MVM.Parked then
+        for _, t in ipairs(targets) do if t.vehicle then MVM.Parked.touch(t.vehicle) end end
+    end
     return true
 end
 
@@ -254,13 +258,14 @@ function CG.neutralize(module, args)
     for _, k in ipairs(NEG_IDS[module] or {}) do args[k] = -1 end
 end
 
-local function notify(player, label, reason, oid)
+-- guard：拒絕砸窗時這台車是否在停車保全布防中（客戶端據此顯示「保全擋下」或「別人的車」）
+local function notify(player, label, reason, oid, guard)
     local S = MVM.Srv
     if S == nil or not instanceof(player, "IsoPlayer") then return end
     local key, t = tostring(player:getUsername()), getTimestampMs()
     if t - (R.notified[key] or 0) < CG.NOTIFY_MS then return end
     R.notified[key] = t
-    S.send(player, "enforcement", { action = label, reason = reason, oid = oid })
+    S.send(player, "enforcement", { action = label, reason = reason, oid = oid, guard = guard })
 end
 
 function CG.onCommand(module, command, player, args)
@@ -279,7 +284,10 @@ function CG.onCommand(module, command, player, args)
     CG.neutralize(module, args)
     reason = reason or "NOT_AUTHORIZED"
     O.deny(O.principal(player) or ("?" .. tostring(player and player:getUsername())), label, oid, reason)
-    notify(player, label, reason, oid)
+    -- 車主通知的節流在 ParkedGuard（同一台車＋同一攻擊者），這裡每次拒絕都要問
+    local guard = nil
+    if label == "CMD:vehicle.damageWindow" then guard = MVM.Parked and MVM.Parked.onAttack(player, oid) or false end
+    notify(player, label, reason, oid, guard)
 end
 
 -- 只在伺服器註冊一次：Lua 重載時換掉 MVM.CommandGate，已註冊的轉接呼叫新版

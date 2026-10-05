@@ -112,6 +112,12 @@ local BUILTIN = {
     -- 油罐車與車之間抽油（TsarLiqudTanker_ISRefuelFromFuelTruck.lua:56-81）：兩台車的油量都改，油罐車放 also
     { class = "ISRefuelFromLiqudTanker", action = "FUEL", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete", "serverStop" },
       push = { "moddata" }, also = { { vehicleOf = function(a) return a.tank and a.tank:getVehicle() or nil end, action = "FUEL" } } },
+    -- 收音機（RadioCom/ISRadioAction.lua）：42.21 起 NetTimedAction，伺服器只在 complete 裝／拆耳機（拆下的交給執行者）。
+    -- 車上收音機的 device 是 VehiclePart；手持或擺在地上的收音機（InventoryItem／IsoObject）不是車 → 不受保護
+    { class = "ISRadioAction", stages = { "complete" },
+      action = function(a) return (a.mode == "AddHeadphones" or a.mode == "RemoveHeadphones") and { "CARGO" } or { "PASSENGER" } end,
+      vehicleOf = function(a) return a.device ~= nil and instanceof(a.device, "VehiclePart") and a.device:getVehicle() or nil end,
+      partOf = function(a) return a.device ~= nil and instanceof(a.device, "VehiclePart") and a.device or nil end },
 }
 
 local byClass = {}

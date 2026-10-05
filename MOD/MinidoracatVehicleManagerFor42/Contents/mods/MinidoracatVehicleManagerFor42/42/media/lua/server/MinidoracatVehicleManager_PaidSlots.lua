@@ -1,12 +1,13 @@
--- 付費名額方案（Economy 選用整合）。方案歸 VM：唯一來源是伺服器 Lua 目錄的
--- MinidoracatVehicleManager/<伺服器名>/paid-slots.json，Economy 只存目前生效的一份（setPlan）。
+-- 付費名額方案（Economy 選用整合）。方案歸 VM：每個產品一份設定檔，唯一來源是伺服器 Lua 目錄的
+-- MinidoracatVehicleManager/<伺服器名>/ 下的 paid-slots.json（綁定名額）與 guard-slots.json（停車保全名額），
+-- Economy 只存目前生效的一份（setPlan）。兩份檔各自輪詢、各自記處理狀態與狀態檔（PS.of[產品]）。
 -- 1. Economy READY 後每 POLL_MS 讀一次；文字跟上次處理過的相同就跳過，不同就解析 → setPlan(origin=file) → 狀態檔 → setPlanSource。
 --    not_ready 不記為已處理（下輪再試）；其他錯誤記為已處理（同一份壞內容不每 5 秒重報）。
 -- 2. 檔案不存在：用 Economy 目前生效的方案寫一份（新伺服器＝E.DEFAULTS，兩種販售都關閉）。
 --    存在但讀不到：狀態 unreadable，方案不動、不覆寫。
--- 3. 管理員在遊戲內套用（adminPaidSlots SET）前先處理一次檔案（外部剛改的內容不被蓋掉），成功後寫回這份檔，
---    寫入的文字記為已處理；寫不進去時回 fileError，方案已在 Economy 生效，但重啟後會用檔案的舊值。
--- 4. paid-slots.status.json：每次處理後整份覆寫；外部程式或 AI 改檔後讀它就知道結果。
+-- 3. 管理員在遊戲內套用（adminPaidSlots SET，product 省略＝綁定名額）前先處理一次該產品的檔案（外部剛改的內容不被蓋掉），
+--    成功後寫回這份檔，寫入的文字記為已處理；寫不進去時回 fileError，方案已在 Economy 生效，但重啟後會用檔案的舊值。
+-- 4. <檔名>.status.json：每次處理後整份覆寫；外部程式或 AI 改檔後讀它就知道結果。
 -- Economy 不在或不支援：開機寫一次 economy_unavailable，不建也不讀設定檔。數值範圍由 Economy 驗證，這裡只驗 JSON 形狀與型別。
 if isClient() then return end
 require "MinidoracatVehicleManager_Economy"
@@ -14,7 +15,11 @@ require "MinidoracatVehicleManager_Export"
 
 local MVM = MinidoracatVehicleManager
 local O, E, X = MVM.Own, MVM.Econ, MVM.Export
-local PS = { lastText = nil, lastPollMs = 0, status = nil }
+-- 每個產品的設定檔名（不含 .json）與輪詢狀態：lastText＝上次處理過的文字、status＝最後一次狀態
+local PS = { lastPollMs = 0, of = {
+    [MVM.ECON_PRODUCT] = { name = "paid-slots" },
+    [MVM.GUARD_PRODUCT] = { name = "guard-slots" },
+} }
 MVM.PaidSlots = PS
 PS.POLL_MS = 5000
 
@@ -167,8 +172,8 @@ function PS.encode(values, reason)
 end
 
 -- ----------------------------------------------------------------- files ---
-function PS.path() return X.folder() .. "paid-slots.json" end
-function PS.displayPath() return "Zomboid/Lua/" .. PS.path() end
+function PS.path(product) return X.folder() .. PS.of[product or MVM.ECON_PRODUCT].name .. ".json" end
+function PS.displayPath(product) return "Zomboid/Lua/" .. PS.path(product) end
 
 -- readLine 去掉行尾（含 \r）：比對用的文字一律以 \n 接回、不含最後換行。
 -- 回 text，或 nil 與 "missing"／"unreadable"：getFileReader 把開檔的 IOException 吞掉回 nil（LuaManager.java:5949-5960），
@@ -219,15 +224,17 @@ function PS.problem(code, field)
         field = plan and ("IGUI_MVM_Paid_Name_" .. plan) or nil, ref = field and field:sub(1, 64) or nil }
 end
 
--- 寫狀態檔並告訴 Economy 設定檔有沒有錯（唯讀總覽顯示）
-local function report(st)
+-- 寫該產品的狀態檔並告訴 Economy 設定檔有沒有錯（唯讀總覽顯示）
+local function report(product, st)
+    local p = PS.of[product]
     st.at, st.economy = X.utc(getTimestampMs()), E.status
-    PS.status = st
+    p.status = st
     local doc = { __order = STATUS_ORDER }
     for _, k in ipairs(STATUS_ORDER) do doc[k] = st[k] == nil and NULL or st[k] end
-    if not writeText(X.folder() .. "paid-slots.status.json", X.json(doc)) then MVM.log("paid-slots.status.json write failed") end
+    local file = p.name .. ".status.json"
+    if not writeText(X.folder() .. file, X.json(doc)) then MVM.log(file .. " write failed") end
     if E.src then
-        pcall(E.src.setPlanSource, MVM.ECON_PRODUCT, { file = PS.displayPath(), problem = PS.problem(st.error, st.field) })
+        pcall(E.src.setPlanSource, product, { file = PS.displayPath(product), problem = PS.problem(st.error, st.field) })
     end
 end
 
@@ -244,39 +251,41 @@ local function planOf(p)
 end
 
 -- 檔案不存在：寫一份目前生效的方案。provisional（舊方案欄位不合）不記為已處理，下輪讀回後經 setPlan 取代
-function PS.create()
-    local res = call("getPlan", MVM.ECON_PRODUCT)
+function PS.create(product)
+    local p = PS.of[product]
+    local res = call("getPlan", product)
     if res.ok ~= true or type(res.plan) ~= "table" then return end
     local text = PS.encode(res.plan)
-    if not writeText(PS.path(), text) then
-        if PS.status == nil or PS.status.error ~= "write_failed" then
-            report({ state = "error", source = "created", error = "write_failed" })
+    if not writeText(PS.path(product), text) then
+        if p.status == nil or p.status.error ~= "write_failed" then
+            report(product, { state = "error", source = "created", error = "write_failed" })
         end
         return
     end
-    if not res.plan.provisional then PS.lastText = text end
-    report({ state = "ok", source = "created", revision = res.plan.revision })
+    if not res.plan.provisional then p.lastText = text end
+    report(product, { state = "ok", source = "created", revision = res.plan.revision })
 end
 
-function PS.poll()
+function PS.poll(product)
     if E.status ~= "READY" or E.src == nil then return end
-    local text, why = readText(PS.path())
-    if why == "missing" then return PS.create() end
+    local p = PS.of[product]
+    local text, why = readText(PS.path(product))
+    if why == "missing" then return PS.create(product) end
     if text == nil then
         -- 存在但讀不到：方案不動、不覆寫；恢復可讀時重新處理（同一份內容也要清掉錯誤）
-        PS.lastText = nil
-        if PS.status == nil or PS.status.error ~= "unreadable" then
-            report({ state = "error", source = "file", error = "unreadable" })
+        p.lastText = nil
+        if p.status == nil or p.status.error ~= "unreadable" then
+            report(product, { state = "error", source = "file", error = "unreadable" })
         end
         return
     end
-    if text == PS.lastText then return end
+    if text == p.lastText then return end
     local values, reason, field = PS.parse(text)
     local st
     if values == nil then
         st = { state = "error", source = "file", error = reason, field = field }
     else
-        local res = call("setPlan", MVM.ECON_PRODUCT, values, { actor = "file", origin = "file", reason = reason })
+        local res = call("setPlan", product, values, { actor = "file", origin = "file", reason = reason })
         if res.error == "not_ready" then return end
         if res.ok == true then
             st = { state = "ok", source = "file", revision = res.revision }
@@ -284,8 +293,8 @@ function PS.poll()
             st = { state = "error", source = "file", error = tostring(res.error), field = FILE_KEY[res.field] or res.field }
         end
     end
-    PS.lastText = text
-    report(st)
+    p.lastText = text
+    report(product, st)
 end
 
 function PS.tick()
@@ -293,28 +302,35 @@ function PS.tick()
     local t = getTimestampMs()
     if t - PS.lastPollMs < PS.POLL_MS then return end
     PS.lastPollMs = t
-    PS.poll()
+    for _, product in ipairs(MVM.PRODUCTS) do PS.poll(product) end
 end
 
 -- 排在 E.init 之後（本檔 require Economy，它先註冊 OnServerStarted）
 function PS.start()
-    PS.lastText, PS.lastPollMs, PS.status = nil, 0, nil
-    if E.status ~= "READY" and E.status ~= "OFF" then report({ state = "economy_unavailable", source = "file" }) end
+    PS.lastPollMs = 0
+    for _, product in ipairs(MVM.PRODUCTS) do
+        local p = PS.of[product]
+        p.lastText, p.status = nil, nil
+        if E.status ~= "READY" and E.status ~= "OFF" then report(product, { state = "economy_unavailable", source = "file" }) end
+    end
 end
 
 -- ----------------------------------------------------------------- admin ---
 local function fail(reason, field) return { ok = false, reason = reason, field = field } end
 
--- Server.lua 的 H.adminPaidSlots 已驗過管理員與 SCHEMA
+-- Server.lua 的 H.adminPaidSlots 已驗過管理員與 SCHEMA（product 省略＝綁定名額）
 function PS.admin(who, a)
+    local product = a.product or MVM.ECON_PRODUCT
+    local p = PS.of[product]
+    if p == nil then return fail("BAD_ARGS") end
     local ready = E.status == "READY" and E.src ~= nil
     if a.op == "GET" then
-        if not ready then return { ok = true, economy = E.status } end
-        local res = call("getPlan", MVM.ECON_PRODUCT)
+        if not ready then return { ok = true, economy = E.status, product = product } end
+        local res = call("getPlan", product)
         if res.ok ~= true or type(res.plan) ~= "table" then return fail("ECONOMY_UNAVAILABLE") end
         local lc = res.lastChange
-        return { ok = true, economy = E.status, plan = planOf(res.plan), revision = res.plan.revision,
-            provisional = res.plan.provisional, currencies = E.currencies, file = PS.displayPath(), status = PS.status,
+        return { ok = true, economy = E.status, product = product, plan = planOf(res.plan), revision = res.plan.revision,
+            provisional = res.plan.provisional, currencies = E.currencies, file = PS.displayPath(product), status = p.status,
             lastChange = type(lc) == "table" and { actor = lc.actor, origin = lc.origin, at = lc.at, reason = lc.reason } or nil }
     end
     if a.values == nil or a.expectedRevision == nil then return fail("BAD_ARGS") end
@@ -322,9 +338,9 @@ function PS.admin(who, a)
     if #reason < 1 or #reason > 256 then return fail("NEED_REASON") end
     if not ready then return fail("ECONOMY_UNAVAILABLE") end
     -- 先處理還沒輪詢到的外部修改：合法就讓 revision 前進（管理員的舊版本變成 STALE_REVISION），不合法照常記錯
-    PS.poll()
+    PS.poll(product)
     local values = planOf(a.values)
-    local res = call("setPlan", MVM.ECON_PRODUCT, values,
+    local res = call("setPlan", product, values,
         { actor = who, origin = "admin", reason = reason, expectedRevision = a.expectedRevision })
     if res.ok ~= true then
         if res.error == "stale_revision" then return fail("STALE_REVISION") end
@@ -336,10 +352,10 @@ function PS.admin(who, a)
     local changed = type(res.changed) == "table" and res.changed or {}
     local text = PS.encode(values, reason)
     local fileError
-    if writeText(PS.path(), text) then PS.lastText = text else fileError = "write_failed" end
-    report({ state = fileError and "error" or "ok", source = "admin", revision = res.revision, error = fileError })
-    O.audit("WARN", "ADMIN_PAID_SLOTS", { actor = who, role = "ADMIN", reason = table.concat(changed, ",") .. " " .. reason,
-        count = #changed })
+    if writeText(PS.path(product), text) then p.lastText = text else fileError = "write_failed" end
+    report(product, { state = fileError and "error" or "ok", source = "admin", revision = res.revision, error = fileError })
+    O.audit("WARN", "ADMIN_PAID_SLOTS", { actor = who, role = "ADMIN",
+        reason = product .. " " .. table.concat(changed, ",") .. " " .. reason, count = #changed })
     return { ok = true, revision = res.revision, changed = changed, fileError = fileError }
 end
 
