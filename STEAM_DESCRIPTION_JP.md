@@ -31,7 +31,7 @@
 [*] [b]ミニマップ追跡[/b]（任意）：自分の車と位置表示を許可された共有車が地図に表示されます
 [*] [b]MVCK からの移行[/b]：管理者がワンクリックで MVCK の登録を取り込めます
 [/list]
-📖 [b]保護の範囲、共有の権限、管理者ツール、よくある質問：[/b][url={VM_GUIDE_EN}]Vehicle Manager Guide: Claims, Protection & Fleet[/url]（英語）
+📖 [b]保護の範囲、共有の権限、管理者ツール、よくある質問：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910928/]Vehicle Manager Guide: Claims, Protection & Fleet[/url]（英語）
 
 [h2]🔗 Minidoracat の MOD 一覧[/h2]
 すべての MOD を[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全シリーズ コレクション[/url]にまとめています。必要なものを選んでサブスクライブしてください。
@@ -47,5 +47,5 @@ MOD はずっと無料です。気に入っていただけたらコーヒーを�
 
 [b]#Minidoracat[/b]
 
-Workshop ID: 未割り当て
+Workshop ID: 3813972279
 Mod ID: MinidoracatVehicleManagerFor42

@@ -1,8 +1,8 @@
 <!-- Steam 討論區貼文稿源（繁中）；簡介只放摘要，詳細內容以本串為準 -->
-<!-- 討論串網址：（待建立） -->
+<!-- 討論串網址：https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910915/ -->
 <!-- 標題：📖 Vehicle Manager 完整說明：車輛綁定、保護與車隊 -->
 
-[b]English version:[/b] [url={VM_GUIDE_EN}]Vehicle Manager Guide: Claims, Protection & Fleet[/url]
+[b]English version:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910928/]Vehicle Manager Guide: Claims, Protection & Fleet[/url]
 
 Vehicle Manager 讓你把車綁在自己的帳號上，別人就不能開你的車、偷你的油、拆你的零件或把車拖走；也可以分享給朋友或陣營，並在車隊視窗與小地圖上管理。本串整理每項功能的細節、管理員工具與常見問題。
 

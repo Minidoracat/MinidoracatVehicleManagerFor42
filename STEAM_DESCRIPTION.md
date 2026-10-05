@@ -31,7 +31,7 @@
 [*] [b]小地圖追蹤[/b]（選用）：自己的車與可查看位置的分享車會顯示在地圖上
 [*] [b]從 MVCK 移轉[/b]：管理員一鍵匯入 MVCK 的既有綁定
 [/list]
-📖 [b]保護範圍、分享權限、管理員工具與常見問題：[/b][url={VM_GUIDE_ZH}]Vehicle Manager 完整說明：車輛綁定、保護與車隊[/url]
+📖 [b]保護範圍、分享權限、管理員工具與常見問題：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910915/]Vehicle Manager 完整說明：車輛綁定、保護與車隊[/url]
 
 [h2]🔗 Minidoracat 全系列[/h2]
 其他作品都在[url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat 全系列收藏[/url]，依需求自選訂閱。
@@ -47,5 +47,5 @@ MOD 永遠免費。喜歡的話可以請我喝杯咖啡，贊助會用在伺服�
 
 [b]#Minidoracat[/b]
 
-Workshop ID: 尚未指派
+Workshop ID: 3813972279
 Mod ID: MinidoracatVehicleManagerFor42

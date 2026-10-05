@@ -1,8 +1,8 @@
 <!-- Steam 討論區貼文稿源（English）；簡介只放摘要，詳細內容以本串為準 -->
-<!-- 討論串網址：（待建立） -->
+<!-- 討論串網址：https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910928/ -->
 <!-- 標題：📖 Vehicle Manager Guide: Claims, Protection & Fleet -->
 
-[b]繁體中文版：[/b][url={VM_GUIDE_ZH}]Vehicle Manager 完整說明：車輛綁定、保護與車隊[/url]
+[b]繁體中文版：[/b][url=https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910915/]Vehicle Manager 完整說明：車輛綁定、保護與車隊[/url]
 
 Vehicle Manager lets you claim a car to your account so other players can no longer drive it, siphon its fuel, strip its parts or tow it away. You can share it with friends or your faction and manage your cars from a fleet window and the minimap. This thread covers every feature in detail, the admin tools and common questions.
 
