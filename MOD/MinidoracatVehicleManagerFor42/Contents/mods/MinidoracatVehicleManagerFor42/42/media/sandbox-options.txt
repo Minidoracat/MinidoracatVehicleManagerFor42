@@ -13,10 +13,7 @@ option MinidoracatVehicleManager.AllowFactionShare
 {type = boolean, default = true, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerAllowFactionShare,}
 
 option MinidoracatVehicleManager.InactivityReleaseDays
-{type = integer, min = 0, max = 365, default = 0, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerInactivityReleaseDays,}
-
-option MinidoracatVehicleManager.InactivityGraceDays
-{type = integer, min = 1, max = 30, default = 7, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerInactivityGraceDays,}
+{type = integer, min = 0, max = 365, default = 30, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerInactivityReleaseDays,}
 
 option MinidoracatVehicleManager.ReleaseFinalizeHours
 {type = integer, min = 1, max = 168, default = 24, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerReleaseFinalizeHours,}

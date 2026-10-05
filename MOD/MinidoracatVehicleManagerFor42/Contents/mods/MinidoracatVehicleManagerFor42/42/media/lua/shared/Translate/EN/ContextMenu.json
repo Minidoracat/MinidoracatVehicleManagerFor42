@@ -1,10 +1,11 @@
 {
     "ContextMenu_MVM_Menu": "Vehicle Manager",
     "ContextMenu_MVM_Claim": "Claim vehicle",
-    "ContextMenu_MVM_Unclaim": "Release vehicle",
-    "ContextMenu_MVM_Reissue": "Re-issue vehicle identity",
-    "ContextMenu_MVM_ClaimedByOther": "Claimed by another player",
+    "ContextMenu_MVM_Unclaim": "Unclaim vehicle",
+    "ContextMenu_MVM_Reissue": "Verify vehicle",
+    "ContextMenu_MVM_ClaimedByOther": "Someone else's vehicle",
+    "ContextMenu_MVM_PublicVehicle": "Anyone can: %1",
     "ContextMenu_MVM_StartVirtualKey": "Start engine (virtual key)",
     "ContextMenu_MVM_UnlockVirtualKey": "Unlock (virtual key)",
-    "ContextMenu_MVM_OpenFleet": "Open vehicle fleet"
+    "ContextMenu_MVM_OpenFleet": "Open fleet"
 }

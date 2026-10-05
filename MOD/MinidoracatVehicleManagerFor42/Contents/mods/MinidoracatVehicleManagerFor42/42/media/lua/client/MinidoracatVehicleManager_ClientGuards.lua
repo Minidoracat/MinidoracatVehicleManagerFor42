@@ -113,10 +113,12 @@ local function hasKey(player, vehicle)
     return vehicle:isKeysInIgnition() or player:getInventory():haveThisKeyId(vehicle:getKeyId())
 end
 
+-- 自己的車、被分享的車與公開的車（公開表有這個動作）；管理員越權開別人的車不給虛擬鑰匙
 local function virtualKeyFor(player, vehicle, act)
     if SandboxVars.VehicleEasyUse or not MVM.sandbox("VirtualKey", true) then return false end
     local row = MVM.clientProjection(player:getPlayerNum(), vehicle)
-    return row ~= nil and row.role ~= "OTHER" and MVM.clientCanUse(player, vehicle, act) == true and not hasKey(player, vehicle)
+    if row == nil or (row.role == "OTHER" and not MVM.bitsAllow(row.publicBits or 0, act)) then return false end
+    return MVM.clientCanUse(player, vehicle, act) == true and not hasKey(player, vehicle)
 end
 
 -- 車內圓盤選單：原版只在有鑰匙／熱線時給「發動」（ISVehicleMenu.lua:94-104）
@@ -147,7 +149,7 @@ end
 -- 車外右鍵子選單加「虛擬鑰匙解鎖」（Client.lua 已建「車輛管理」子選單）
 MVM.clientMenuHooks = MVM.clientMenuHooks or {}
 table.insert(MVM.clientMenuHooks, function(player, sub, vehicle, row)
-    if row == nil or row.role == "OTHER" then return end
+    if row == nil or (row.role == "OTHER" and (row.publicBits or 0) == 0) then return end
     local door = lockedDoor(vehicle)
     if door and virtualKeyFor(player, vehicle, "PASSENGER") then
         sub:addOption(getText("ContextMenu_MVM_UnlockVirtualKey"), player, ISVehicleMenu.onUnlockDoor, door)

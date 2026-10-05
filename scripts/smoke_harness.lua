@@ -121,7 +121,7 @@ end
 function cacheFileExists(path) return files[path] ~= nil end -- 與 getFileReader 同一個 Lua 目錄根
 
 SandboxVars = { MinidoracatVehicleManager = { ClaimsPerPlayer = 3, MaxMembersPerVehicle = 6,
-    ClaimDistance = 2.5, AllowFactionShare = true, InactivityReleaseDays = 0, InactivityGraceDays = 7,
+    ClaimDistance = 2.5, AllowFactionShare = true, InactivityReleaseDays = 0,
     ReleaseFinalizeHours = 24, TombstoneRetentionDays = 14, NameMaxBytes = 32 } }
 local SB = SandboxVars.MinidoracatVehicleManager
 -- SandboxOptions：set 只改 Java 端的值，toLua 才投影到 SandboxVars；saveServerLuaFile 回 SBOX.saveOk，成功才記下「檔案」內容
@@ -136,7 +136,10 @@ function getSandboxOptions()
         end,
         saveServerLuaFile = function(_, server)
             SBOX.saves = SBOX.saves + 1
-            if SBOX.saveOk then SBOX.file = { server = server, ClaimsPerPlayer = SandboxVars.MinidoracatVehicleManager.ClaimsPerPlayer } end
+            if SBOX.saveOk then
+                local page = SandboxVars.MinidoracatVehicleManager
+                SBOX.file = { server = server, ClaimsPerPlayer = page.ClaimsPerPlayer, InactivityReleaseDays = page.InactivityReleaseDays }
+            end
             return SBOX.saveOk
         end }
 end
@@ -344,6 +347,7 @@ local function boot(diskState, keepGmd, keepGos)
     for k in pairs(O.R.denyAgg) do O.R.denyAgg[k] = nil end
     O.R.factionRefs, O.R.suspectKeys, O.R.lastMaintMs, O.R.lastScanMs, O.R.overrides = {}, {}, 0, 0, {}
     S.R.acks, S.R.rate, S.R.attempts, S.R.streams, S.R.unverified, S.R.recheck = {}, {}, {}, {}, {}, {}
+    S.R.pub, S.R.sandboxSeen = nil, nil
     O.R.identityConflicts, steamActive = nil, false
     G.R.intents, G.R.due, G.R.lastRun = {}, {}, 0
     MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.lastRun = {}, {}, 0
@@ -735,7 +739,8 @@ do
     check(okSet.ok and okSet.amount == 5 and SB.ClaimsPerPlayer == 5 and SBOX.file.ClaimsPerPlayer == 5
         and SBOX.file.server == "servertest" and O.quotaBase("bob") == 5, "管理員改預設名額：寫入沙盒並存進伺服器沙盒檔")
     check(lastOf(BOB, "sandboxSync").claimsPerPlayer == 5 and lastOf(ALI, "sandboxSync").claimsPerPlayer == 5
-        and lastOf(ADMQ, "sandboxSync").claimsPerPlayer == 5, "存檔成功後通知每位線上客戶端同步沙盒值")
+        and lastOf(ADMQ, "sandboxSync").claimsPerPlayer == 5 and lastOf(ALI, "sandboxSync").releaseDays == 0,
+        "存檔成功後通知每位線上客戶端同步沙盒值（名額與閒置天數一起帶）")
     check(count(ALI, "fleetSnapshot") == aliSnaps + 1 and lastOf(ALI, "fleetSnapshot").quota.base == 5
         and lastOf(ALI, "fleetSnapshot").quota.used == 1 and lastOf(BOB, "fleetSnapshot").quota.base == 5,
         "預設名額改變後重送所有線上玩家的快照，名額即時變")
@@ -751,6 +756,33 @@ do
     S.minute()
     check(count(ALI, "fleetSnapshot") == aliSnaps + 1, "沙盒值沒變：tick 不重送")
     SB.ClaimsPerPlayer, SBOX.values = 3, {}
+    S.minute()
+    -- 閒置釋放天數：同一條存檔路徑（非管理員、範圍、存檔失敗回滾、成功同步並重送快照、原版沙盒 UI 改值）
+    local DN = "MinidoracatVehicleManager.InactivityReleaseDays"
+    check(cmd(BOB, "adminSetReleaseDays", { amount = 30 }).reason == "NOT_ADMIN" and SB.InactivityReleaseDays == 0,
+        "非管理員不能改閒置釋放天數")
+    check(cmd(ADMQ, "adminSetReleaseDays", { amount = 366 }).reason == "BAD_ARGS" and cmd(ADMQ, "adminSetReleaseDays", { amount = 1.5 }).reason == "BAD_ARGS"
+        and cmd(ADMQ, "adminSetReleaseDays", { amount = -1 }).reason == "BAD_ARGS", "閒置釋放天數只收 0–365 的整數")
+    SBOX.saveOk = false
+    n0 = #logLines
+    check(cmd(ADMQ, "adminSetReleaseDays", { amount = 30 }).reason == "SAVE_FAILED" and SB.InactivityReleaseDays == 0 and SBOX.values[DN] == 0
+        and not logged(n0, "ADMIN_RELEASE_DAYS"), "閒置天數存檔失敗：改回原值、回 SAVE_FAILED、不記稽核")
+    SBOX.saveOk = true
+    aliSnaps, n0 = count(ALI, "fleetSnapshot"), #logLines
+    local okDays = cmd(ADMQ, "adminSetReleaseDays", { amount = 45 })
+    check(okDays.ok and SB.InactivityReleaseDays == 45 and SBOX.file.InactivityReleaseDays == 45
+        and lastOf(ALI, "sandboxSync").releaseDays == 45 and lastOf(ALI, "sandboxSync").claimsPerPlayer == 3
+        and count(ALI, "fleetSnapshot") == aliSnaps + 1 and lastOf(ALI, "fleetSnapshot").releaseDays == 45
+        and logged(n0, "ADMIN_RELEASE_DAYS", "0->45", "admin"),
+        "管理員改閒置天數：寫入並存檔、同步客戶端沙盒（含名額）、重送快照帶新天數、稽核舊值→新值")
+    cmd(ADMQ, "adminList", {}, false)
+    check(lastOf(ADMQ, "adminSnapshot").releaseDays == 45, "管理員總表回報目前的閒置天數")
+    SB.InactivityReleaseDays = 60
+    aliSnaps, n0 = count(ALI, "fleetSnapshot"), #logLines
+    S.minute()
+    check(count(ALI, "fleetSnapshot") == aliSnaps + 1 and lastOf(ALI, "fleetSnapshot").releaseDays == 60
+        and logged(n0, "ADMIN_RELEASE_DAYS", "45->60", "SANDBOX"), "原版沙盒 UI 改天數：每分鐘偵測並重送快照")
+    SB.InactivityReleaseDays, SBOX.values = 0, {}
     S.minute()
 
     -- 批次個人名額：usernames 清單驗證
@@ -936,11 +968,11 @@ check(Cl.buckets.alice.migrationAvailable and #Cl.buckets.alice.admin == 0,
 check(Cl.buckets.alice.rows.o9 == nil, "不同 username 分桶")
 do -- 客戶端收到 sandboxSync：本機沙盒選項改值並投影到 SandboxVars；不是整數就不動
     local QN = "MinidoracatVehicleManager.ClaimsPerPlayer"
-    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = 5 })
-    local synced = SBOX.values[QN] == 5 and SB.ClaimsPerPlayer == 5
+    MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = 5, releaseDays = 40 })
+    local synced = SBOX.values[QN] == 5 and SB.ClaimsPerPlayer == 5 and SB.InactivityReleaseDays == 40
     MVM.clientReceive("sandboxSync", { to = "alice", claimsPerPlayer = "9" })
-    check(synced and SB.ClaimsPerPlayer == 5, "客戶端收到 sandboxSync：set＋toLua 更新本機沙盒，非整數忽略")
-    SB.ClaimsPerPlayer, SBOX.values = 3, {}
+    check(synced and SB.ClaimsPerPlayer == 5, "客戶端收到 sandboxSync：名額與閒置天數 set＋toLua 更新本機沙盒，非整數忽略")
+    SB.ClaimsPerPlayer, SB.InactivityReleaseDays, SBOX.values = 3, 0, {}
 end
 clientSent = {}
 MVM.clientReceive("fleetDelta", { to = "alice", streamId = "s1", seq = 2, upserts = { { oid = "o2" } }, removes = {} })
@@ -1089,6 +1121,19 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     nowMs = nowMs + 1100
     can(bound, "TruckBed")
     check(once <= 1 and bound.scans - s0 == once + 1, "見證快取：1 秒內多次查詢只掃一次零件，逾時才重掃")
+    -- 公開分享：陌生人的客戶端靠公開表（快照 pub、publicDelta）知道能用哪些動作；撤權後回到他人的車
+    me.admin = nil
+    MVM.clientReceive("fleetSnapshot", { to = "carl", streamId = "k2", seq = 0, rows = {}, pub = { oS = MVM.ACTIONS.PASSENGER } })
+    local pubOk, pubWhy = MVM.clientCanUse(me, bound, "PASSENGER")
+    check(pubOk and pubWhy == "PUBLIC" and can(bound, "SeatFrontRight") and not can(bound, "TruckBed")
+        and not MVM.clientCanUse(me, bound, "DRIVE") and MVM.clientProjection(0, bound).publicBits == MVM.ACTIONS.PASSENGER,
+        "公開搭乘：陌生人可用座位與置物箱，後車廂與駕駛照擋")
+    MVM.clientReceive("publicDelta", { to = "carl", oid = "oS", bits = MVM.ACTIONS.DRIVE + MVM.ACTIONS.CARGO })
+    check(can(bound, "TruckBed") and MVM.clientCanUse(me, bound, "DRIVE") and MVM.clientCanUse(me, bound, "PASSENGER"),
+        "publicDelta 改公開內容：立即生效（駕駛含搭乘）")
+    MVM.clientReceive("publicDelta", { to = "carl", oid = "oS", bits = 0 })
+    check(not can(bound, "SeatFrontRight") and Cl.buckets.carl.pub.oS == nil and not MVM.clientCanUse(me, bound, "PASSENGER"),
+        "公開關閉：回到他人的車")
     me.admin = nil
     ISInventoryPage, ISTimedActionQueue, BaseVehicle, __classmetatables = nil, nil, nil, nil
     for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
@@ -1121,16 +1166,36 @@ ack = claim(A, car)
 r = rec(ack.oid)
 cmd(A, "reportLost", { expectedOid = r.oid })
 check(cmd(A, "cancelRelease", { expectedOid = r.oid }).ok and r.recordState == "ACTIVE", "cancelRelease → ACTIVE")
--- inactivity
+do -- 閒置釋放：車主最後在線超過天數 → 車直接解除綁定；在線時每分鐘刷新；伺服器停機的時間不算（主 chunk 區域變數已滿，用區塊）
 SB.InactivityReleaseDays = 10
+local function running(days) -- 伺服器一直在跑：上一次維護在一分鐘前
+    nowMs = nowMs + days * 86400000
+    O.state().lastMaintAtMs = nowMs - 60000
+    O.maintain(true)
+end
 online = {}
-nowMs = nowMs + 11 * 86400000
+O.state().ownerActivity.alice.lastSuccessfulLoginAtMs = nowMs
+running(9)
+check(r.recordState == "ACTIVE", "離線未滿天數：照常保護")
+online = { A }
+S.minute()
+online = {}
+running(9)
+check(r.recordState == "ACTIVE", "在線時每分鐘刷新最後在線：從下線起重新算")
+running(2)
+check(r.recordState == "RELEASED" and O.quotaUsed("alice") == 0, "離線超過天數：直接解除綁定、釋放名額")
+car = vehicle(3, 103, 5003, "Base.CarNormal", 1, 1)
+r = rec(claim(A, car).oid)
+O.state().ownerActivity.alice.lastSuccessfulLoginAtMs = nowMs
+O.state().lastMaintAtMs = nowMs
+nowMs = nowMs + 20 * 86400000
 O.maintain(true)
-check(O.state().ownerActivity.alice.releaseWarnedAtMs > 0 and r.recordState == "ACTIVE", "超過天數先警告，不立刻釋放")
-nowMs = nowMs + 8 * 86400000
-O.maintain(true)
-check(r.recordState == "PENDING_RELEASE" and r.releaseReason == "INACTIVITY", "寬限期後 → PENDING_RELEASE（unloaded 先 pending）")
+check(r.recordState == "ACTIVE" and O.state().ownerActivity.alice.lastSuccessfulLoginAtMs == nowMs,
+    "伺服器停機 20 天（兩次維護相隔很久）：停機時間不算，最後在線一起往後移")
 SB.InactivityReleaseDays = 0
+running(400)
+check(r.recordState == "ACTIVE", "天數 0：關閉，不釋放")
+end
 
 out("情境 28：audit 清洗")
 O.audit("INFO", "TEST", { actor = "evil\tname\r\n[x]", reason = "a\tb" })
@@ -1244,11 +1309,29 @@ check(FU.listToBits({ "CARGO", "FUEL" }) == 12, "清單轉權限位")
 check(FU.stateText({ state = "PENDING_RELEASE", releaseDueAtMs = nowMs + 90 * 60000 }, nowMs) == "IGUI_MVM_State_PENDING_RELEASE(2)", "等待釋放剩餘小時無條件進位")
 check(FU.stateText({ state = "QUARANTINED" }, nowMs) == "IGUI_MVM_State_QUARANTINED", "狀態文字照 server 狀態")
 check(FU.locationText({}, nowMs) == "IGUI_MVM_Location_Unknown", "沒有最後位置就說未知，不畫假座標")
-check(FU.locationText({ lastKnownX = 10.7, lastKnownY = 20.2, lastKnownAtMs = nowMs - 5 * 60000 }, nowMs) == "IGUI_MVM_Location_LastKnown(10,20,5)", "最後位置與經過分鐘")
-check(FU.shareText({ role = "OWNER", grants = {} }) == "IGUI_MVM_Share_Private", "無分享＝私人")
-check(FU.shareText({ role = "OWNER", grants = { {}, {} }, factionShare = true, factionState = "SUSPENDED", factionName = "W" })
-    == "IGUI_MVM_Share_Members(2) / IGUI_MVM_Share_FactionSuspended(W)", "成員數與陣營暫停一起顯示")
+check(FU.locationText({ lastKnownX = 10.7, lastKnownY = 20.2, lastKnownAtMs = nowMs - 5 * 60000 }, nowMs)
+    == "IGUI_MVM_Location_LastKnown(10,20,IGUI_MVM_Ago_Minutes(5))", "最後位置與多久以前")
+check(FU.locationText({ state = "PENDING_REBIND", lastKnownX = 7, lastKnownY = 8, lastKnownAtMs = nowMs }, nowMs)
+    == "IGUI_MVM_Location_Imported(7,8)", "MVCK 待轉列：寫匯入時的位置，不寫時間（那是匯入時間，不是車被看到的時間）")
+check(FU.agoText(nowMs - 30000, nowMs) == "IGUI_MVM_Ago_Now" and FU.agoText(nowMs - 3 * 3600000, nowMs) == "IGUI_MVM_Ago_Hours(3)"
+    and FU.agoText(nowMs - 5 * 86400000, nowMs) == "IGUI_MVM_Ago_Days(5)", "多久以前：剛剛／小時／天，不出現上千分鐘")
 check(FU.shareText({ role = "MEMBER", owner = "carol" }) == "IGUI_MVM_Share_ViaMember(carol)", "成員看到分享者")
+check(FU.publicBits(MVM.SHAREABLE_MASK) == MVM.PUBLIC_MASK and FU.publicBits(MVM.ACTIONS.TRACK + MVM.ACTIONS.TOW) == 0,
+    "公開給所有人只帶得了公開允許的動作（位置、拖曳、拆解不帶）")
+do -- 保留期限：天數 0 不顯示；日期照語系排列、月日補零
+    local at = os.time({ year = 2026, month = 1, day = 2, hour = 12 }) * 1000
+    check(FU.keptText(0, at) == nil and FU.keptText(30, at) == "IGUI_MVM_KeptUntil(IGUI_MVM_Date(2026,02,01))",
+        "保留到＝現在＋天數，天數 0 不顯示")
+    local b = { streamId = "s", releaseDays = 30 }
+    local function line(rows, needle) for _, l in ipairs(rows) do if l.text:find(needle, 1, true) then return l end end end
+    local own = FU.cardLines({ role = "OWNER", state = "ACTIVE", name = "", script = "Base.CarNormal" }, "OWNED", b, "", at)
+    local shared = FU.cardLines({ role = "MEMBER", owner = "carol", myBits = 1, state = "ACTIVE", script = "Base.CarNormal" }, "SHARED", b, "", at)
+    check(line(own, "IGUI_MVM_KeptUntil") ~= nil and line(shared, "IGUI_MVM_KeptUntil") == nil and line(shared, "IGUI_MVM_YourActions") ~= nil,
+        "詳情卡：車主看得到保留期限，被分享的人看到你能做什麼")
+    local empty = FU.cardLines(nil, "OWNED", b, "", at)
+    check(empty[1].text == "IGUI_MVM_Empty" and empty[2].text == "IGUI_MVM_EmptyHint" and FU.cardLines(nil, "SHARED", b, "", at)[1].text == "IGUI_MVM_EmptyShared",
+        "空清單：我的車指出怎麼綁定，分享給我另一句")
+end
 local many, names = {}, { "g", "c", "e", "a", "f", "b", "d" }
 for i, nm in ipairs(names) do many["o" .. i] = { oid = "o" .. i, role = "OWNER", name = nm, state = "ACTIVE", grants = {} } end
 local sorted, seq = FU.filter(many, "OWNED", ""), ""
@@ -1410,7 +1493,8 @@ local function seedLegacy()
     gmd.MVCKByVehicleSQLID = {
         [1700000000101] = { OwnerPlayerID = "alice", CarModel = "Base.CarNormal", ClaimDateTime = 1700000000, LastLocationX = 5, LastLocationY = 6,
             AllowDrive = true },
-        [1700000000102] = { OwnerPlayerID = "alice", CarModel = "Base.Van", ClaimDateTime = 1700000000, LastLocationX = 7, LastLocationY = 8 },
+        [1700000000102] = { OwnerPlayerID = "alice", CarModel = "Base.Van", ClaimDateTime = 1700000000, LastLocationX = 7, LastLocationY = 8,
+            AllowPassenger = true, AllowUninstallParts = true, AllowAttachVehicle = true },
         [1700000000103] = { OwnerPlayerID = "bad\nname", CarModel = "Base.Van" },
     }
     gmd.MVCKByPlayerID = { alice = { [1700000000101] = true, LastKnownLogonTime = 1 } }
@@ -1446,9 +1530,12 @@ check(im.ok and im.imported == 2 and im.skipped == 1 and im.rebound == 1 and im.
 check(gmd.MVCKByVehicleSQLID ~= nil and gmd.MVCKByVehicleSQLID[1700000000101] ~= nil and gmd.MVCKByPlayerID ~= nil, "不刪 MVCK 原始資料")
 local verdict5, rec5 = O.lookup(real)
 check(verdict5 == "AUTHORIZED" and rec5.ownerUser == "alice" and witness(real).oid == rec5.oid, "轉正為 alice 的受保護車並寫見證")
+check(rec5.publicBits == MVM.ACTIONS.DRIVE and S.publicTable()[rec5.oid] == MVM.ACTIONS.DRIVE,
+    "MVCK 的公共權限（允許駕駛）轉正時帶成公開分享，進公開表")
 local pe = O.state().pendingRebindByLegacyKey[1700000000102]
-check(pe.ownerUser == "alice" and pe.vehicleScript == "Base.Van" and pe.AllowDrive == nil and pe.claimedAtMs == 1700000000000,
-    "未載入的車留為待轉項，只帶白名單欄位（權限欄位不匯入）")
+check(pe.ownerUser == "alice" and pe.vehicleScript == "Base.Van" and pe.AllowPassenger == nil and pe.claimedAtMs == 1700000000000
+    and pe.publicBits == MVM.ACTIONS.PASSENGER,
+    "未載入的車留為待轉項：只帶白名單欄位；公共權限轉成公開位元（拆零件、掛拖車不帶入）")
 local again = cmd(AD5, "adminMigration", { op = "IMPORT" })
 check(again.ok and again.imported == 0 and again.already == 2 and O.state().pendingRebindByLegacyKey[1700000000101] == nil,
     "重複執行不重複匯入，已轉正的不會變回待轉")
@@ -3980,10 +4067,10 @@ check(cmd(OW, "reportLost", { expectedOid = L.rbt.oid }).reason == "CARRIER_HAS_
     "回報遺失：載著受保護紀錄 → CARRIER_HAS_CARGO")
 check(cmd(AD, "adminRecover", { expectedOid = L.rbt.oid, op = "RELEASE" }).reason == "CARRIER_HAS_CARGO" and L.rbt.recordState == "ACTIVE",
     "管理員釋出：載著受保護紀錄 → CARRIER_HAS_CARGO（開越權卸下再釋出）")
-O.beginRelease(L.rbt, "INACTIVITY")
+O.beginRelease(L.rbt, "REPORT_LOST")
 nowMs = nowMs + 25 * 3600000
 O.maintain(true)
-check(L.rbt.recordState == "PENDING_RELEASE", "待釋放（閒置）到期但仍載著受保護紀錄：先不結束")
+check(L.rbt.recordState == "PENDING_RELEASE", "待釋放到期但仍載著受保護紀錄：先不結束")
 back(L.c, L.rc)
 O.maintain(true)
 check(L.rc.removedAtMs == nil and L.rbt.recordState == "RELEASED", "卸下（接回）之後：待釋放到期照常結束")
@@ -3993,8 +4080,69 @@ check(cmd(OW, "unclaim", { vehicleId = M.bt.id, expectedOid = M.rbt.oid, expecte
 back(M.c, M.rc)
 check(cmd(OW, "unclaim", { vehicleId = M.bt.id, expectedOid = M.rbt.oid, expectedEpoch = M.rbt.epoch }).ok and M.rbt.recordState == "RELEASED",
     "卸下之後：解除綁定成功")
+-- 閒置釋放遇到載著自己車的拖車：被載的車先解除，拖車在仍載著受保護紀錄時不放，下一輪再放
+local c9, bt9 = veh(151, "Base.CarNormal"), veh(153, "Base.TestWrecker")
+local rc9, rbt9 = rec(claim(OW, c9).oid), rec(claim(OW, bt9).oid)
+send(OW, "msw", "loadVehicle", { trailer = bt9.id, vehicle = c9.id, slot = 1 })
+SB.InactivityReleaseDays = 1
+O.state().ownerActivity.uow.lastSuccessfulLoginAtMs = nowMs - 2 * 86400000
+O.state().lastMaintAtMs = nowMs - 60000
+O.maintain(true)
+local carrierFirst = rbt9.recordState == "RELEASED" and rc9.recordState ~= "RELEASED"
+nowMs = nowMs + 60000
+O.maintain(true)
+check(c9.removed and rc9.carrierSqlId == nil and not carrierFirst and rc9.recordState == "RELEASED" and rbt9.recordState == "RELEASED",
+    "閒置釋放：被載的車先解除，拖車不會在仍載著受保護紀錄時被放")
+SB.InactivityReleaseDays = 0
 Events.OnClientCommand.Remove(stand)
 SB.ClaimsPerPlayer = quota0
+end)(); -- 分號：下一個情境也是 IIFE
+
+(function()
+out("情境 PS：公開分享（所有人）")
+boot()
+local OWp, STp = player("pown", 1, 1), player("pstr", 1, 1)
+cmd(OWp, "fleetSubscribe", {}, false)
+cmd(STp, "fleetSubscribe", {}, false)
+local car = vehicle(61, 961, 9961, "Base.CarNormal", 1, 1)
+local r = rec(claim(OWp, car).oid)
+local function setPub(bits, p) return cmd(p or OWp, "setPublicShare", { expectedOid = r.oid, expectedEpoch = r.epoch, actionBits = bits }) end
+check(not O.canUse(STp, car, "PASSENGER") and lastOf(STp, "fleetSnapshot").pub[r.oid] == nil, "沒公開：陌生人不能用，公開表沒有")
+check(setPub(MVM.ACTIONS.TRACK).reason == "BAD_ARGS" and setPub(MVM.ACTIONS.TOW).reason == "BAD_ARGS"
+    and setPub(MVM.ACTIONS.SALVAGE).reason == "BAD_ARGS" and setPub(MVM.ACTIONS.MANAGE).reason == "BAD_ARGS" and r.publicBits == 0,
+    "公開只收搭乘、駕駛、置物、加油、修理（位置、拖曳、拆解、管理不行）")
+check(setPub(MVM.ACTIONS.PASSENGER, STp).reason == "NOT_OWNER" and r.publicBits == 0, "只有車主能設定公開")
+local pub5 = MVM.ACTIONS.PASSENGER + MVM.ACTIONS.CARGO
+local ok = setPub(pub5)
+local pd = lastOf(STp, "publicDelta")
+check(ok.ok and r.publicBits == pub5 and pd and pd.oid == r.oid and pd.bits == pub5
+    and lastOf(OWp, "fleetDelta").upserts[1].publicBits == pub5,
+    "公開搭乘與置物：寫入紀錄、推 publicDelta 給所有線上玩家、車主的列帶 publicBits")
+local allowed, why = O.canUse(STp, car, "PASSENGER")
+check(allowed and why == "PUBLIC" and O.canUse(STp, car, "CARGO") and not O.canUse(STp, car, "DRIVE")
+    and not O.canUse(STp, car, "SALVAGE") and not O.canUse(STp, car, "MANAGE"), "陌生人可用公開的動作，其餘照擋")
+local split = player("pstr", 1, 1)
+split.num = 1
+check(not O.canUse(split, car, "PASSENGER"), "沒有身分的人（分割畫面）不能用公開分享")
+local NEW = player("pnew", 1, 1)
+cmd(NEW, "fleetSubscribe", {}, false)
+local snapNew = lastOf(NEW, "fleetSnapshot")
+check(snapNew.pub[r.oid] == pub5 and #snapNew.rows == 0, "新上線玩家的快照帶公開表，公開車不進他的車輛列")
+local before = #outbox[STp.name]
+setPub(pub5)
+check(#outbox[STp.name] == before, "公開內容沒變：不重送 publicDelta")
+O.setState(r, "QUARANTINED", "TEST")
+check(lastOf(STp, "publicDelta").bits == 0 and S.publicTable()[r.oid] == nil and not O.canUse(STp, car, "PASSENGER"),
+    "隔離：公開表撤掉，陌生人不能用")
+O.setState(r, "ACTIVE", "TEST")
+check(lastOf(STp, "publicDelta").bits == pub5, "解除隔離：公開表恢復")
+check(setPub(0).ok and r.publicBits == 0 and lastOf(STp, "publicDelta").bits == 0 and not O.canUse(STp, car, "PASSENGER"),
+    "設成 0：停止公開")
+setPub(MVM.ACTIONS.DRIVE)
+local tr = cmd(OWp, "transfer", { vehicleId = car.id, expectedOid = r.oid, expectedEpoch = r.epoch, recipient = "pnew" })
+local fresh = tr.ok and rec(tr.oid)
+check(fresh and fresh.publicBits == 0 and lastOf(STp, "publicDelta").oid == r.oid and lastOf(STp, "publicDelta").bits == 0,
+    "轉讓：舊紀錄的公開撤掉，新車主從私人開始")
 end)()
 
 out("")

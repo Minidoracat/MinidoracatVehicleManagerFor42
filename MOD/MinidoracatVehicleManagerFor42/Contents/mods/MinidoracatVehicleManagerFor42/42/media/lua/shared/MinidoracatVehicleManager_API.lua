@@ -29,6 +29,9 @@ MVM.PAID_FIELDS = {
 -- Lua 5.1／Kahlua 沒有位元運算：每個 action 是 2 的冪，以整數除法測位
 MVM.ACTIONS = { PASSENGER = 1, DRIVE = 2, CARGO = 4, FUEL = 8, REPAIR = 16, SALVAGE = 32, TOW = 64, TRACK = 128, MANAGE = 256 }
 MVM.SHAREABLE_MASK = 255 -- MANAGE 永不可分享
+-- 公開分享（所有人）只開放搭乘、駕駛、置物、加油、修理（＝前五個位元）：位置會讓全服看到車在哪；拖曳含把車裝上
+-- 別人的拖車載走，且 MSW 的名單沒有「所有人」（ClaimTags）；拆解沒有公開的用途
+MVM.PUBLIC_MASK = 31
 MVM.ACTION_ORDER = { "PASSENGER", "DRIVE", "CARGO", "FUEL", "REPAIR", "SALVAGE", "TOW", "TRACK", "MANAGE" }
 
 function MVM.log(msg) print(MVM.LOG_PREFIX .. tostring(msg)) end
@@ -46,6 +49,10 @@ end
 -- action bits 必須是 0..SHAREABLE_MASK 的整數
 function MVM.validShareBits(bits)
     return MVM.isInt(bits) and bits >= 0 and bits <= MVM.SHAREABLE_MASK
+end
+
+function MVM.validPublicBits(bits)
+    return MVM.isInt(bits) and bits >= 0 and bits <= MVM.PUBLIC_MASK
 end
 
 -- 能裝載其他車的載具：MSW 多槽拖車（零件 ATAMultiSlotWrecker，MSW_ISVehicleMenu.lua:43-46）或 Autotsar 拖吊車／拖車

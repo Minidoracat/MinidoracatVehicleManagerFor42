@@ -71,6 +71,19 @@ end
 
 local function validOwner(v) return type(v) == "string" and #v >= 1 and #v <= 50 and not v:find("%c") end
 
+-- MVCK 的公共權限（同一張車輛表的 Allow* 鍵，值只有 true 或缺鍵：MVCKServer.lua:186-201、MVCKShared.lua:126-153）
+-- → 本 MOD 的公開分享位元。搭乘、駕駛、開後車廂、抽油、打氣對應搭乘、駕駛、置物、加油、修理；
+-- 拆零件、放氣、砸窗、拿引擎零件（拆解）、掛拖車（拖曳）、移除燒毀車不帶入（MVM.PUBLIC_MASK 不開放）
+local MVCK_PUBLIC = { AllowPassenger = "PASSENGER", AllowDrive = "DRIVE", AllowOpeningTrunk = "CARGO", AllowSiphonFuel = "FUEL",
+    AllowInflatTires = "REPAIR" }
+function M.publicBits(e)
+    local bits = 0
+    for key, action in pairs(MVCK_PUBLIC) do
+        if e[key] == true then bits = MVM.bitsOr(bits, MVM.ACTIONS[action]) end
+    end
+    return bits
+end
+
 -- 一鍵匯入全部；回傳 ok, 結果表（imported 新匯入、already 先前已匯入、skipped 欄位不合格、rebound 當場轉正、pending 等待載入）
 function M.importAll(actor)
     local st = O.state()
@@ -90,10 +103,11 @@ function M.importAll(actor)
         elseif MVM.isInt(id) and type(e) == "table" and validOwner(e.OwnerPlayerID) and type(e.CarModel) == "string" then
             O.mapSet("pendingRebindByLegacyKey", id, { legacyVehicleId = id, ownerUser = e.OwnerPlayerID, vehicleScript = e.CarModel,
                 claimedAtMs = MVM.isInt(e.ClaimDateTime) and e.ClaimDateTime * 1000 or t,
-                lastX = tonumber(e.LastLocationX), lastY = tonumber(e.LastLocationY), importedAtMs = t, factionShare = factionShare })
+                lastX = tonumber(e.LastLocationX), lastY = tonumber(e.LastLocationY), importedAtMs = t, factionShare = factionShare,
+                publicBits = M.publicBits(e) })
             O.mapSet("migratedLegacyIds", id, true)
             if st.ownerActivity[e.OwnerPlayerID] == nil then
-                O.mapSet("ownerActivity", e.OwnerPlayerID, { lastSuccessfulLoginAtMs = t, releaseWarnedAtMs = 0 })
+                O.mapSet("ownerActivity", e.OwnerPlayerID, { lastSuccessfulLoginAtMs = t })
             end
             O.reserveUnbound(e.OwnerPlayerID) -- 身分已匯入但這個名字沒綁定：帳號已刪或是分割畫面名，別讓同名新帳號接收
             out.imported = out.imported + 1
@@ -170,6 +184,12 @@ function M.rebind(vehicle)
     rec.claimedAtMs = e.claimedAtMs
     O.audit("INFO", "MIGRATE", { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser, vehicle = rec.sqlIdHint, reason = reason })
     S.push({ [rec.ownerUser] = true }, { oid = M.rowId(legacy) }, true) -- 撤掉待轉列
+    -- MVCK 的公共權限帶成公開分享（先寫入，下面推給車主的列就帶著）
+    if (e.publicBits or 0) > 0 then
+        rec.publicBits = e.publicBits
+        O.audit("INFO", "ACL_CHANGE", { oid = rec.oid, owner = rec.ownerUser, reason = "PUBLIC " .. e.publicBits .. " MVCK_IMPORT" })
+        S.pushPublic(rec)
+    end
     -- 安全屋共享不帶入。陣營：車主此刻有陣營才開，權限為管理以外的全部；沒有陣營就不開
     local f = e.factionShare == true and MVM.sandbox("AllowFactionShare", true) and S.findFactionOf(rec.ownerUser) or nil
     if f then

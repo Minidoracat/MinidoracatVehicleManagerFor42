@@ -2,8 +2,9 @@
     "ContextMenu_MVM_Menu": "車両管理",
     "ContextMenu_MVM_Claim": "車両を登録",
     "ContextMenu_MVM_Unclaim": "登録を解除",
-    "ContextMenu_MVM_Reissue": "車両識別を再発行",
-    "ContextMenu_MVM_ClaimedByOther": "他のプレイヤーが登録済み",
+    "ContextMenu_MVM_Reissue": "車両を再確認",
+    "ContextMenu_MVM_ClaimedByOther": "他のプレイヤーの車両",
+    "ContextMenu_MVM_PublicVehicle": "誰でも利用可：%1",
     "ContextMenu_MVM_StartVirtualKey": "エンジン始動（バーチャルキー）",
     "ContextMenu_MVM_UnlockVirtualKey": "解錠（バーチャルキー）",
     "ContextMenu_MVM_OpenFleet": "車両一覧を開く"

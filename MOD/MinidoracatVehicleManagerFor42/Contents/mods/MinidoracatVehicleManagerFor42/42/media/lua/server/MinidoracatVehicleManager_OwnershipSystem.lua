@@ -696,7 +696,7 @@ function O.newRecord(owner, vehicle, host)
     return { oid = getRandomUUID(), epoch = getRandomUUID(), recordState = "ACTIVE", ownerUser = owner,
         claimedAtMs = t, sqlIdHint = sqlId, keyIdHint = keyId, vehicleScript = script,
         witnessPartId = host and host:getId() or nil, customName = "", grants = {}, factionShare = false,
-        factionState = "NONE", factionActionBits = 0,
+        factionState = "NONE", factionActionBits = 0, publicBits = 0,
         lastKnownX = vehicle:getX(), lastKnownY = vehicle:getY(), lastKnownZ = vehicle:getZ(), lastKnownAtMs = t,
         lastObservedSqlIdAtMs = t, pendingReleaseAtMs = 0, releaseDueAtMs = 0, revision = 1 }
 end
@@ -739,9 +739,7 @@ function O.createRecord(owner, vehicle, host)
     R.bySqlId[rec.sqlIdHint] = { rec }
     R.byKeyId[rec.keyIdHint] = rec.sqlIdHint
     addToList(R.byOwner, owner, rec)
-    if st.ownerActivity[owner] == nil then
-        O.mapSet("ownerActivity", owner, { lastSuccessfulLoginAtMs = now(), releaseWarnedAtMs = 0 })
-    end
+    if st.ownerActivity[owner] == nil then O.mapSet("ownerActivity", owner, { lastSuccessfulLoginAtMs = now() }) end
     writeWitness(vehicle, host, rec)
     O.bump(rec)
     claimTags(rec, vehicle)
@@ -773,9 +771,7 @@ function O.reown(rec, newOwner)
     rec.ownerUser = newOwner
     addToList(R.byOwner, newOwner, rec)
     local st = O.state()
-    if st.ownerActivity[newOwner] == nil then
-        O.mapSet("ownerActivity", newOwner, { lastSuccessfulLoginAtMs = now(), releaseWarnedAtMs = 0 })
-    end
+    if st.ownerActivity[newOwner] == nil then O.mapSet("ownerActivity", newOwner, { lastSuccessfulLoginAtMs = now() }) end
 end
 
 -- --------------------------------------------------------------- faction ---
@@ -821,9 +817,9 @@ function O.grantBits(rec, user)
 end
 
 -- --------------------------------------------------------------- canUse ---
--- 權威授權。回 allowed, reason, record。順序：車主 → 分享／陣營（MANAGE 除外）→ 管理員越權 → 拒絕。
+-- 權威授權。回 allowed, reason, record。順序：車主 → 分享／陣營／公開（MANAGE 除外）→ 管理員越權 → 拒絕。
 -- 管理員身分本身不放行，要在車隊視窗開啟越權；有分享權限的管理員照一般成員記，不寫 ADMIN_BYPASS。
--- QUARANTINED 紀錄只有越權中的管理員能用
+-- QUARANTINED 紀錄只有越權中的管理員能用。公開分享也要有身分（同分享：分割畫面與身分未確認的人不能用）
 function O.canUse(actor, vehicle, action, context)
     if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION" end
     if actor == nil or vehicle == nil then return false, "BAD_TARGET" end
@@ -844,6 +840,7 @@ function O.allowsRecord(actor, rec, action, context)
             local bits = O.grantBits(rec, who)
             if bits ~= nil and MVM.bitsAllow(bits, action) then return true, "MEMBER", rec end
             if MVM.bitsAllow(rec.factionActionBits or 0, action) and O.factionAllows(rec, who) then return true, "FACTION", rec end
+            if who ~= nil and MVM.bitsAllow(rec.publicBits or 0, action) then return true, "PUBLIC", rec end
         end
     end
     if O.overrideActive(actor) then
@@ -903,7 +900,11 @@ MinidoracatVehicleManagerAPI.canUse = function(actor, vehicle, actionCode, conte
 end
 
 -- ----------------------------------------------------------- maintenance ---
--- 每分鐘（牆鐘節流）：finalize PENDING_RELEASE、清 tombstone、inactivity、聚合 DENY
+-- 每分鐘（牆鐘節流）：finalize PENDING_RELEASE、清 tombstone、閒置釋放、聚合 DENY。
+-- 閒置釋放：車主最後在線（O.observeLogin 每分鐘刷新）超過 InactivityReleaseDays 天，他的車直接解除綁定（玩家車隊視窗
+-- 顯示的「保留到」就是這個時間）。伺服器停機或空服暫停（EveryOneMinute 不跑）的時間不算：兩次維護間隔超過 DOWNTIME_MS，
+-- 所有車主的最後在線一起往後移，免得長時間停機後一開服就把所有人的車放掉
+local DOWNTIME_MS = 10 * 60000
 function O.maintain(force)
     local t = now()
     if not force and t - R.lastMaintMs < 60000 then return end
@@ -911,30 +912,27 @@ function O.maintain(force)
     flushDenies()
     if not O.ready() then return end
     local st = O.state()
+    local gap = t - (st.lastMaintAtMs or t)
+    if gap > DOWNTIME_MS then
+        for _, act in pairs(st.ownerActivity) do act.lastSuccessfulLoginAtMs = (act.lastSuccessfulLoginAtMs or t) + gap end
+    end
+    st.lastMaintAtMs = t
     local retention = MVM.sandbox("TombstoneRetentionDays", 14) * DAY_MS
-    local inactDays = MVM.sandbox("InactivityReleaseDays", 0)
-    local graceMs = MVM.sandbox("InactivityGraceDays", 7) * DAY_MS
-    local expiredOwners = {}
-    if inactDays > 0 then
+    local idleMs = MVM.sandbox("InactivityReleaseDays", 30) * DAY_MS
+    local expired = {}
+    if idleMs > 0 then
         for owner, act in pairs(st.ownerActivity) do
-            if t - (act.lastSuccessfulLoginAtMs or t) > inactDays * DAY_MS then
-                if (act.releaseWarnedAtMs or 0) == 0 then
-                    act.releaseWarnedAtMs = t
-                    O.bump(nil)
-                    O.audit("WARN", "INACTIVITY_WARNING", { owner = owner })
-                elseif t - act.releaseWarnedAtMs > graceMs then
-                    expiredOwners[owner] = true
-                end
-            end
+            if t - (act.lastSuccessfulLoginAtMs or t) > idleMs then expired[owner] = true end
         end
     end
     local drop = {}
     for _, rec in pairs(st.recordsByOid) do
         local state = rec.recordState
-        if state == "PENDING_RELEASE" and t >= (rec.releaseDueAtMs or 0) then
+        if expired[rec.ownerUser] and (state == "ACTIVE" or state == "WITNESS_STALE" or state == "PENDING_RELEASE") then
+            -- 載著受保護紀錄的拖車先不放（CARRIER_HAS_CARGO）：同一位車主的被載車這一輪放掉後，下一輪再放拖車
+            if not O.hasCargo(rec) then O.setState(rec, "RELEASED", "INACTIVITY") end
+        elseif state == "PENDING_RELEASE" and t >= (rec.releaseDueAtMs or 0) then
             if not O.hasCargo(rec) then O.setState(rec, "RELEASED", "RELEASE_FINALIZED") end
-        elseif (state == "ACTIVE" or state == "WITNESS_STALE") and expiredOwners[rec.ownerUser] then
-            O.beginRelease(rec, "INACTIVITY")
         elseif O.TOMBSTONE[state] and t - (rec.endedAtMs or t) > retention then
             drop[#drop + 1] = rec
         end
@@ -973,13 +971,11 @@ function O.knownUser(who, online)
     return (online and online[who] ~= nil) or (st ~= nil and (st.knownUsers[who] ~= nil or st.ownerActivity[who] ~= nil))
 end
 
--- 登入觀測：online 名單中的 owner 更新 lastSuccessfulLoginAtMs、清 warning
+-- 在線觀測：online 名單中的 owner 每分鐘更新最後在線時間（閒置釋放從這裡起算）
 function O.observeLogin(owner)
     local st = O.state()
     local act = st and st.ownerActivity[owner]
-    if act == nil then return end
-    act.lastSuccessfulLoginAtMs = now()
-    if (act.releaseWarnedAtMs or 0) ~= 0 then act.releaseWarnedAtMs = 0; O.bump(nil) end
+    if act ~= nil then act.lastSuccessfulLoginAtMs = now() end
 end
 
 -- 已載入車輛：reconcile 身分並低頻收斂 lastKnown（§7.3：不存每次 sample）；第三方車身標記也在這裡比對修正

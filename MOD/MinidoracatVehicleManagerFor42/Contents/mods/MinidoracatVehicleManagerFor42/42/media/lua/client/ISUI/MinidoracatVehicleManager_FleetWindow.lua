@@ -34,6 +34,16 @@ function F.listToBits(list)
     return bits
 end
 
+-- 公開給所有人只能給 MVM.PUBLIC_MASK 內的動作（伺服器同樣驗）；其餘勾選的不帶
+function F.publicBits(bits)
+    local out = 0
+    for _, a in ipairs(SHAREABLE) do
+        local bit = MVM.ACTIONS[a]
+        if MVM.hasBit(bits or 0, bit) and MVM.hasBit(MVM.PUBLIC_MASK, bit) then out = out + bit end
+    end
+    return out
+end
+
 -- 原始車名：原版車名鍵（去掉模組前綴）；沒有譯名就顯示 script 名
 function F.modelName(row)
     local short = tostring(row.script or "?"):gsub("^.-%.", "")
@@ -72,28 +82,99 @@ function F.stateText(row, now)
     return getText("IGUI_MVM_State_" .. tostring(s))
 end
 
--- 位置：v1 只有 server 低頻收斂的最後已知點；沒有就明說未知，不畫假座標
-function F.locationText(row, now)
-    if row.lastKnownX == nil or row.lastKnownAtMs == nil or row.lastKnownAtMs <= 0 then
-        return getText("IGUI_MVM_Location_Unknown")
-    end
-    local minutes = math.max(0, math.floor((now - row.lastKnownAtMs) / 60000))
-    return getText("IGUI_MVM_Location_LastKnown", math.floor(row.lastKnownX), math.floor(row.lastKnownY), minutes)
+-- 狀態字色：要玩家處理的用強調色、隔離用錯誤色；暫時不在世界上是正常的受保護狀態，不用警示色
+local STATE_TOKEN = { ACTIVE = "text", WITNESS_STALE = "accent", PENDING_RELEASE = "accent", PENDING_REBIND = "accent",
+    QUARANTINED = "errorText" }
+function F.stateToken(row)
+    if row.removedAtMs and (row.state == "ACTIVE" or row.state == "WITNESS_STALE") then return "textMuted" end
+    return STATE_TOKEN[row.state] or "textFaint"
 end
 
+-- 多久以前：1 分鐘內「剛剛」、1 小時內幾分鐘、2 天內幾小時，再久用天
+local MINUTE_MS, HOUR_MS, DAY_MS = 60000, 3600000, 86400000
+function F.agoText(atMs, now)
+    local d = math.max(0, now - atMs)
+    if d < MINUTE_MS then return getText("IGUI_MVM_Ago_Now") end
+    if d < HOUR_MS then return getText("IGUI_MVM_Ago_Minutes", math.floor(d / MINUTE_MS)) end
+    if d < 2 * DAY_MS then return getText("IGUI_MVM_Ago_Hours", math.floor(d / HOUR_MS)) end
+    return getText("IGUI_MVM_Ago_Days", math.floor(d / DAY_MS))
+end
+
+-- 位置：v1 只有 server 低頻收斂的最後已知點；沒有就明說未知，不畫假座標。MVCK 待轉列的座標是匯入時的，不寫時間
+function F.locationText(row, now)
+    if row.lastKnownX == nil or row.lastKnownY == nil then return getText("IGUI_MVM_Location_Unknown") end
+    local x, y = math.floor(row.lastKnownX), math.floor(row.lastKnownY)
+    if row.state == "PENDING_REBIND" then return getText("IGUI_MVM_Location_Imported", x, y) end
+    if row.lastKnownAtMs == nil or row.lastKnownAtMs <= 0 then return getText("IGUI_MVM_Location_Unknown") end
+    return getText("IGUI_MVM_Location_LastKnown", x, y, F.agoText(row.lastKnownAtMs, now))
+end
+
+-- 年月日（玩家電腦的時區）：PZCalendar＝Java Calendar.getInstance()（PZCalendar.java:14-15，LuaManager 有 expose）；
+-- Kahlua 的 os.date 固定 UTC（OsLib.java:331），只在沒有 PZCalendar 的離線環境退回
+local function ymd(ms)
+    if PZCalendar then
+        local cal = PZCalendar.getInstance()
+        cal:setTimeInMillis(ms)
+        return cal:get(1), cal:get(2) + 1, cal:get(5)
+    end
+    local t = os.date("*t", math.floor(ms / 1000))
+    return t.year, t.month, t.day
+end
+
+local function two(n) return (n < 10 and "0" or "") .. n end
+
+-- 閒置釋放的保留期限：伺服器每分鐘刷新在線玩家的最後在線，所以看得到視窗的人期限就是「現在＋天數」。
+-- 日期排列跟著語系（IGUI_MVM_Date：%1 年、%2 月、%3 日，月日補零）；天數 0＝關閉回 nil
+function F.keptText(days, now)
+    if type(days) ~= "number" or days <= 0 then return nil end
+    local y, m, d = ymd(now + days * DAY_MS)
+    return getText("IGUI_MVM_KeptUntil", getText("IGUI_MVM_Date", y, two(m), two(d)))
+end
+
+-- 被分享者看到的來源（車主的分享清單在詳情下方逐列列出，不再寫摘要）
 function F.shareText(row)
-    if row.role ~= "OWNER" then
-        local key = row.role == "FACTION" and "IGUI_MVM_Share_ViaFaction" or "IGUI_MVM_Share_ViaMember"
-        return getText(key, tostring(row.owner or "?"))
+    local key = row.role == "FACTION" and "IGUI_MVM_Share_ViaFaction" or "IGUI_MVM_Share_ViaMember"
+    return getText(key, tostring(row.owner or "?"))
+end
+
+-- 詳情卡的行（第一行是大字標題）。layoutDetail 算好存在 self.card，draw 只畫；b＝自己的資料桶
+function F.cardLines(row, tab, b, query, now)
+    local lines = {}
+    local function add(s, token, big) lines[#lines + 1] = { text = s, token = token or "textMuted", big = big } end
+    if b == nil or b.streamId == nil then
+        add(getText("IGUI_MVM_Loading"))
+    elseif row == nil then
+        if query ~= "" then add(getText("IGUI_MVM_NoMatch", query))
+        elseif tab == "ADMIN" then add(getText("IGUI_MVM_Admin_Empty"))
+        elseif tab == "SHARED" then add(getText("IGUI_MVM_EmptyShared"), "text")
+        else add(getText("IGUI_MVM_Empty"), "text"); add(getText("IGUI_MVM_EmptyHint")) end
+    elseif row.kind == "PLAYER" then
+        add(row.user == "" and getText("IGUI_MVM_Admin_NoOwner") or row.user, "text", true)
+        local info = row.info
+        if info then
+            add(getText("IGUI_MVM_Quota", info.used, info.limit), "text")
+            local base = getText(info.custom and "IGUI_MVM_Admin_BaseCustom" or "IGUI_MVM_Admin_BaseDefault", info.base)
+            if info.limit > info.base then base = base .. getText("IGUI_MVM_Sep") .. getText("IGUI_MVM_Admin_Paid", info.limit - info.base) end
+            add(base)
+            if info.lastSeenAtMs then add(getText("IGUI_MVM_Admin_LastSeen", F.agoText(info.lastSeenAtMs, now))) end
+        end
+        add(row.summary)
+    else
+        add(F.displayName(row), "text", true)
+        if F.renamed(row) then add(getText("IGUI_MVM_ModelName", F.modelName(row))) end
+        local state = F.stateText(row, now)
+        local kept = tab ~= "ADMIN" and row.role == "OWNER" and (row.state == "ACTIVE" or row.state == "WITNESS_STALE")
+            and F.keptText(b.releaseDays, now)
+        add(kept and (state .. getText("IGUI_MVM_Sep") .. kept) or state, F.stateToken(row))
+        add(F.locationText(row, now))
+        if tab == "ADMIN" then
+            add(getText("IGUI_MVM_AdminOwner", row.owner or getText("IGUI_MVM_Admin_NoOwner")))
+        elseif row.role == "MEMBER" or row.role == "FACTION" then
+            add(F.shareText(row))
+            add(getText("IGUI_MVM_YourActions", F.actionsText(row.myBits)))
+        end
     end
-    local parts = {}
-    if row.grants and #row.grants > 0 then parts[#parts + 1] = getText("IGUI_MVM_Share_Members", #row.grants) end
-    if row.factionShare then
-        parts[#parts + 1] = getText(row.factionState == "SUSPENDED" and "IGUI_MVM_Share_FactionSuspended" or "IGUI_MVM_Share_Faction",
-            tostring(row.factionName or "?"))
-    end
-    if #parts == 0 then return getText("IGUI_MVM_Share_Private") end
-    return table.concat(parts, " / ", 1, #parts)
+    return lines
 end
 
 -- 分頁過濾＋搜尋（大小寫不敏感、純字串比對，中文照原字比）；依名稱排序
@@ -251,13 +332,6 @@ local function fit(s, w)
     return s:sub(1, lo) .. "..."
 end
 
-local STATE_TOKEN = { ACTIVE = "text", WITNESS_STALE = "accent", PENDING_RELEASE = "accent", PENDING_REBIND = "accent",
-    QUARANTINED = "errorText" }
-local function stateToken(row)
-    if row.removedAtMs and (row.state == "ACTIVE" or row.state == "WITNESS_STALE") then return "accent" end
-    return STATE_TOKEN[row.state] or "textFaint"
-end
-
 -- 清單列：選取狀態存在 list，cell 只是投影；文字在 bind 時算好，render 不配置。
 -- 管理頁的玩家列最左畫批次勾選框（BOX_W 寬的點擊區），再畫展開箭頭與右側「已用 / 上限」，車輛列縮排在玩家底下
 local INDENT = 24
@@ -306,14 +380,17 @@ function Body:prerender()
     theme:fill(self, PAD, f.listTop, f.listW, f.listH, "well")
 end
 function Body:render() self.fleet:draw(self) end
--- 管理頁詳情放不下時（layoutDetail 算出的 adminScrollMax）：滑鼠在詳情區上滾輪捲動
+-- 詳情放不下時（layoutDetail 算出的 scrollMax）：滑鼠在詳情區上滾輪捲動
 function Body:onMouseWheel(del)
     local f = self.fleet
-    if f.tab ~= "ADMIN" or (f.adminScrollMax or 0) <= 0 or self:getMouseX() < f.detailX then return false end
-    f.adminScroll = (f.adminScroll or 0) + del * (f.fh + 2) * 3
+    if (f.scrollMax or 0) <= 0 or self:getMouseX() < f.detailX then return false end
+    f.scroll = (f.scroll or 0) + del * (f.fh + 2) * 3
     f:layoutDetail()
+    f:keepFocus()
     return true
 end
+-- Focus 落點前呼叫（焦點描述的 scrollOwner）：把捲出可視範圍的控制項捲進來
+function Body:scrollTo(control) self.fleet:scrollToControl(control) end
 
 local FleetWindow = {}
 FleetWindow.__index = FleetWindow
@@ -324,7 +401,7 @@ function FleetWindow.new()
         messageBad = false, dirty = true, lastNearCheck = 0, headings = {}, expanded = {}, picked = {} }, FleetWindow)
     local sw, sh = getCore():getScreenWidth(), getCore():getScreenHeight()
     local w = math.min(940, math.floor(sw * 0.92))
-    local h = math.min(680, math.floor(sh * 0.9))
+    local h = math.min(720, math.floor(sh * 0.9)) -- 1080p 下管理頁玩家詳情不用捲；720p 時是 648
     self.win = UI.Window.new({ x = math.floor((sw - w) / 2), y = math.floor((sh - h) / 2), width = w, height = h,
         title = getText("IGUI_MVM_FleetTitle"), icon = "steeringwheel", theme = theme })
     self:build()
@@ -405,22 +482,23 @@ function FleetWindow:build()
                 c.sub, c.titleToken = fit(row.summary, w), "text"
             else
                 c.color, c.icon = MVM.Appearance.get(row)
+                -- 狀態在前：清單寬度不夠時被截掉的是原始車名，不是狀態
                 local sub = F.stateText(row, getTimestampMs())
-                if F.renamed(row) then sub = F.modelName(row) .. " - " .. sub end -- 改過名也看得到原始車名
+                if F.renamed(row) then sub = sub .. getText("IGUI_MVM_Sep") .. F.modelName(row) end
                 c.title, c.sub = fit(F.displayName(row), w), fit(sub, w)
-                c.token, c.titleToken = stateToken(row), F.isHistory(row) and "textMuted" or "text"
+                c.token, c.titleToken = F.stateToken(row), F.isHistory(row) and "textMuted" or "text"
             end
         end,
         unbindCell = function(_, c) c.row = nil end,
         onSelect = function(_, row)
-            self.selectedOid, self.current = row and row.oid, row
+            self:select(row)
             -- 點玩家列（或焦點框上按 Enter／手把 A）＝選取並切換展開（清單在下一幀重建）
             if row and row.kind == "PLAYER" then self.expanded[row.user] = not row.open; self.dirty = true end
             self:layoutDetail()
         end,
         -- 鍵盤方向鍵／手把上下只移動反白：詳情跟著換，不切換展開（框架 rev 10）
         onHighlight = function(_, row)
-            self.selectedOid, self.current = row and row.oid, row
+            self:select(row)
             self:layoutDetail()
         end,
         onKey = function(_, key, row, index) return self:treeKey(key, row, index) end,
@@ -442,26 +520,28 @@ function FleetWindow:build()
     self.detailX = PAD * 2 + self.listW
     self.detailTop = self.listTop
     self.detailW = W - self.detailX - PAD
-    self.infoH = fontH(FM) + (fh + 2) * 5 + 20
-    -- 頁尾右側兩行：英文在 1280×720 會超出視窗，建立時依寬度截一次
-    self.disclosure = fit(getText("IGUI_MVM_Disclosure"), self.detailW)
-    self.overrideActive = fit(getText("IGUI_MVM_Override_Active"), self.detailW)
+    self.infoH = 0 -- 詳情卡高度依內容行數（layoutDetail）
+    -- 頁尾：保護範圍一句話（完整說明在綁定確認框）、越權中的提醒；兩句都寫得夠短，不截字
+    self.disclosure, self.overrideActive = getText("IGUI_MVM_Disclosure"), getText("IGUI_MVM_Override_Active")
 
-    self.nameEntry = self:field(math.min(260, self.detailW - 120))
-    self.btnRename = self:button(getText("IGUI_MVM_Btn_Rename"), FleetWindow.onRename, "primary")
+    self.btnRename = self:button(getText("IGUI_MVM_Btn_Rename"), FleetWindow.onRename)
     self.userEntry = self:field(180, getText("IGUI_MVM_UserHint"))
     self.btnAddMember = self:button(getText("IGUI_MVM_Btn_AddMember"), FleetWindow.onAddMember, "primary")
     self.btnFaction = self:button(getText("IGUI_MVM_Btn_FactionOn"), FleetWindow.onFaction)
+    self.btnPublic = self:button(getText("IGUI_MVM_Btn_PublicOn"), FleetWindow.onPublic)
     self.btnTransfer = self:button(getText("IGUI_MVM_Btn_Transfer"), FleetWindow.onTransfer)
+    -- 新增分享時要給的權限：短名稱、寬度照標籤（欄數在 layoutDetail 依最寬的一個決定，各語系都不重疊）
     self.checks = {}
-    local colW = math.floor(self.detailW / 4)
     for i, a in ipairs(SHAREABLE) do
-        local cb = UI.Checkbox.new({ x = 0, y = 0, width = colW - GAP, label = getText("IGUI_MVM_Action_" .. a), theme = theme })
+        local cb = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_ActionShort_" .. a), theme = theme })
         cb.internal = a
         cb:setVisible(false)
         body:addChild(cb)
         self.checks[i] = cb
     end
+    -- 目前的分享：所有人、陣營、每位成員各一顆停止／移除鈕（x 圖示，標題「對象：權限」，提示寫動作）
+    self.btnPublicOff = self:button("", FleetWindow.onPublicOff, "normal", "close")
+    self.btnFactionOff = self:button("", FleetWindow.onFactionOff, "normal", "close")
     self.memberButtons = {}
     for i = 1, 16 do self.memberButtons[i] = self:button("", FleetWindow.onRemoveMember, "normal", "close") end
     self.btnUnclaim = self:button(getText("IGUI_MVM_Btn_Unclaim"), FleetWindow.onUnclaim, "danger")
@@ -469,8 +549,8 @@ function FleetWindow:build()
     self.btnCancel = self:button(getText("IGUI_MVM_Btn_CancelRelease"), FleetWindow.onCancelRelease, "primary")
     self.btnReissue = self:button(getText("IGUI_MVM_Btn_Reissue"), FleetWindow.onReissue, "primary")
     self.btnDismiss = self:button(getText("IGUI_MVM_Btn_Dismiss"), FleetWindow.onDismiss)
-    self.btnMap = self:button(getText("IGUI_MVM_Btn_Map"), FleetWindow.onMap, "ghost", "locate")
-    self.btnLook = self:button(getText("IGUI_MVM_Btn_Appearance"), FleetWindow.onAppearance, "ghost", "sliders")
+    self.btnMap = self:button(getText("IGUI_MVM_Btn_Map"), FleetWindow.onMap, "normal", "locate")
+    self.btnLook = self:button(getText("IGUI_MVM_Btn_Appearance"), FleetWindow.onAppearance, "normal", "sliders")
     self.btnLeave = self:button(getText("IGUI_MVM_Btn_Leave"), FleetWindow.onLeave, "danger")
     self.btnAdminRelease = self:button(getText("IGUI_MVM_Btn_AdminRelease"), FleetWindow.onAdminRelease, "danger")
     self.quotaEntry = self:field(80, nil, true)
@@ -481,10 +561,14 @@ function FleetWindow:build()
     self.btnPickShown = self:button(getText("IGUI_MVM_Btn_PickShown"), FleetWindow.onPickShown)
     self.btnPickClear = self:button(getText("IGUI_MVM_Btn_PickClear"), FleetWindow.onPickClear)
     self.batchEntry = self:field(80, "0-100", true)
-    self.btnBatch = self:button(getText("IGUI_MVM_Btn_BatchQuota"), FleetWindow.onBatchQuota, "primary")
+    self.btnBatch = self:button(getText("IGUI_MVM_Btn_BatchQuota"), FleetWindow.onBatchQuota)
     self.btnBatchDefault = self:button(getText("IGUI_MVM_Btn_QuotaDefault"), FleetWindow.onBatchDefault)
     self.defaultEntry = self:field(80, "0-20", true)
-    self.btnDefaultQuota = self:button(getText("IGUI_MVM_Btn_Apply"), FleetWindow.onDefaultQuota, "primary")
+    self.btnDefaultQuota = self:button(getText("IGUI_MVM_Btn_Apply"), FleetWindow.onDefaultQuota)
+    self.btnDefaultQuota:setTooltip(getText("IGUI_MVM_DefaultQuota_Tip"))
+    self.releaseEntry = self:field(80, "0-365", true)
+    self.btnReleaseDays = self:button(getText("IGUI_MVM_Btn_Apply"), FleetWindow.onReleaseDays)
+    self.btnReleaseDays:setTooltip(getText("IGUI_MVM_ReleaseDays_Tip"))
     self.btnMigrate = self:button(getText("IGUI_MVM_Btn_ImportMVCK"), FleetWindow.onImportMVCK)
     self.btnIdentity = self:button(getText("IGUI_MVM_Btn_ImportIdentity"), FleetWindow.onImportIdentity)
     self.btnRebind = self:button("", FleetWindow.onRebindIdentity, "danger")
@@ -493,20 +577,28 @@ function FleetWindow:build()
         onChange = FleetWindow.onOverride })
     self.overrideBox:setVisible(false)
     body:addChild(self.overrideBox)
-    self.actionButtons = { self.btnRename, self.btnAddMember, self.btnFaction, self.btnTransfer, self.btnUnclaim,
+    self.actionButtons = { self.btnRename, self.btnAddMember, self.btnFaction, self.btnPublic, self.btnTransfer, self.btnUnclaim,
         self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnLeave, self.btnAdminRelease, self.btnQuota,
-        self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnMigrate, self.btnIdentity,
-        self.btnRebind, self.overrideBox }
-    self.detailControls = { self.nameEntry, self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction,
+        self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnReleaseDays, self.btnMigrate,
+        self.btnIdentity, self.btnRebind, self.overrideBox, self.btnPublicOff, self.btnFactionOff }
+    self.detailControls = { self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction, self.btnPublic,
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap,
         self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
         self.btnPickShown, self.btnPickClear, self.batchEntry, self.btnBatch, self.btnBatchDefault, self.defaultEntry,
-        self.btnDefaultQuota, self.btnMigrate, self.btnIdentity, self.btnRebind, self.btnLook, self.overrideBox, self.btnPaidSlots }
+        self.btnDefaultQuota, self.releaseEntry, self.btnReleaseDays, self.btnMigrate, self.btnIdentity, self.btnRebind,
+        self.btnLook, self.overrideBox, self.btnPaidSlots, self.btnPublicOff, self.btnFactionOff }
     for _, cb in ipairs(self.checks) do self.detailControls[#self.detailControls + 1] = cb end
     for _, b in ipairs(self.memberButtons) do
         self.actionButtons[#self.actionButtons + 1] = b
         self.detailControls[#self.detailControls + 1] = b
     end
+    self.detailSet, self.placed, self.focusList, self.focusPool = {}, {}, {}, {}
+    for _, c in ipairs(self.detailControls) do
+        self.detailSet[c] = true
+        if c._entry then c.scrollTo = function(field) self:scrollToControl(field) end end
+    end
+    -- 鍵盤／手把：詳情要捲動時，捲出可視範圍的控制項也要走得到（keyboardTargets 帶 scrollOwner，落點前先捲過去）
+    self.win.keyboardTargets = function(w) return self:focusTargets(w) end
 end
 
 function FleetWindow:who()
@@ -522,13 +614,23 @@ end
 
 function FleetWindow:selectedRow() return self.current end
 
+-- 換到另一列：詳情捲回頂端；權限開關是「這次要給的權限」、不是這台車現有的分享，換車就清空
+function FleetWindow:select(row)
+    local oid = row and row.oid
+    if oid ~= self.selectedOid then
+        self.scroll = 0
+        for _, cb in ipairs(self.checks or {}) do cb:setChecked(false, true) end
+    end
+    self.selectedOid, self.current = oid, row
+end
+
 -- 鍵盤／手把把反白移到第 i 列（同滑鼠以外的移動：詳情跟著換，不切換展開）
 function FleetWindow:highlight(i)
     local row = self.list:getItems()[i]
     if row == nil then return end
     self.list:setSelectedIndex(i)
     self.list:scrollToIndex(i)
-    self.selectedOid, self.current = row.oid, row
+    self:select(row)
     self:layoutDetail()
 end
 
@@ -604,8 +706,20 @@ end
 
 function FleetWindow:heading(key, y, arg) return self:headingText(arg ~= nil and getText(key, arg) or getText(key), y) end
 
--- 管理頁的伺服器工具：每列「標題＋按鈕」，按鈕對齊同一欄（這一組最寬的標題之後），放不下的列改成標題在上、
--- 按鈕在下（左緣）。r.next＝同一工具的第二列控制項。回傳下一段的 y
+-- 一排控制項由左往右放，放不下就換到下一排（右緣留給捲軸）。回傳下一段的 y
+function FleetWindow:flow(ctrls, y)
+    local x0, right = self.detailX, self.detailX + self.detailW - 8
+    local x, h = x0, 0
+    for _, c in ipairs(ctrls) do
+        if x > x0 and x + c.width > right then x, y, h = x0, y + h + GAP, 0 end
+        x = place(c, x, y)
+        h = math.max(h, c.height)
+    end
+    return y + h + GAP
+end
+
+-- 管理頁的列：「標題＋控制項」同一列，控制項對齊同一欄（這一組最寬的標題之後），放不下的列改成標題在上、
+-- 控制項在下（左緣）。r.next＝同一列的第二排控制項；r.gap＝這一列前面多空一段（分組）。回傳下一段的 y
 function FleetWindow:toolRows(rows, y)
     local x0, step, tm = self.detailX, self.ch + GAP, getTextManager()
     local right = x0 + self.detailW - 8 -- 右緣留給放不下時的捲軸
@@ -618,6 +732,7 @@ function FleetWindow:toolRows(rows, y)
         return w
     end
     for _, r in ipairs(rows) do
+        if r.gap then y = y + PAD end
         local inline = col + width(r.buttons) <= right
         local x = inline and col or x0
         if inline then
@@ -633,48 +748,42 @@ function FleetWindow:toolRows(rows, y)
             y = y + step
         end
     end
-    return y + PAD
+    return y
 end
 
--- 管理頁詳情（資訊框以下）。flow＝false：預設名額與越權固定在詳情區底部（選哪一列都在同一個位置），上面放不下時
--- （Steam 伺服器＋MVCK 舊資料＋批次選取、矮視窗或大字級）依序省掉預設名額的說明（改成套用鈕的提示）、越權的說明；
--- 還是放不下就回傳 flow＝true，改接在上面之後（說明全顯示、由 layoutDetail 捲動）。回傳內容底端 y 與 flow
-function FleetWindow:layoutAdmin(row, b, y, flow)
-    local x0, step = self.detailX, self.ch + GAP
+-- 管理頁詳情（資訊卡以下），全部一列一項、說明收進提示文字：選到的玩家或車 → 批次 → 身分驗證（Steam 伺服器）
+-- → MVCK → 付費名額 → 全服預設名額 → 閒置解除天數 → 越權。回傳內容底端 y
+function FleetWindow:layoutAdmin(row, b, y)
+    local rows = {}
     if row ~= nil and row.kind == "PLAYER" then
         local info = row.info
         if info then
-            y = self:heading("IGUI_MVM_Section_Quota", y)
             -- 預填目前基本名額；伺服器值變了（設定／恢復預設後的新快照）才重填，不蓋掉正在輸入的值
             local fill = row.user .. ":" .. info.base
             if self.quotaEntry.forKey ~= fill then self.quotaEntry.forKey = fill; self.quotaEntry:setText(tostring(info.base)) end
-            local x = place(self.btnQuota, place(self.quotaEntry, x0, y), y)
-            if info.custom then x = place(self.btnQuotaDefault, x, y) end
+            local r = { title = getText("IGUI_MVM_Section_Quota"), buttons = { self.quotaEntry, self.btnQuota } }
+            if info.custom then r.buttons[#r.buttons + 1] = self.btnQuotaDefault end
             if F.pickable(row) then
                 self.btnPick:setTitle(getText(self.picked[row.user] and "IGUI_MVM_Btn_PickRemove" or "IGUI_MVM_Btn_PickAdd"))
-                place(self.btnPick, x, y)
+                r.buttons[#r.buttons + 1] = self.btnPick
             end
-            y = y + step + PAD
+            rows[#rows + 1] = r
         end
     elseif row ~= nil then
-        local release = not F.isHistory(row) and row.state ~= "PENDING_REBIND"
-        if release or row.lastKnownX then
-            y = self:heading("IGUI_MVM_Section_Vehicle", y)
-            local x = x0
-            if release then x = place(self.btnAdminRelease, x, y) end
-            if row.lastKnownX then place(self.btnMap, x, y) end
-            y = y + step + PAD
-        end
+        local r = { title = getText("IGUI_MVM_Section_Vehicle"), buttons = {} }
+        if not F.isHistory(row) and row.state ~= "PENDING_REBIND" then r.buttons[#r.buttons + 1] = self.btnAdminRelease end
+        if row.lastKnownX then r.buttons[#r.buttons + 1] = self.btnMap end
+        if #r.buttons > 0 then rows[#rows + 1] = r end
     end
-    -- 伺服器工具：批次設定名額（全選目前清單常駐；有選取才多一列名額欄與送出按鈕）、身分驗證（只有 Steam
-    -- 伺服器；匯入前沿用帳號名判定，所以標題顯示是否已匯入）、MVCK 匯入、付費名額設定（方案在伺服器的
-    -- paid-slots.json；視窗內說明 Economy 不在場、框架太舊時按下說明要更新）
+    -- 伺服器工具：批次設定名額（全選目前清單常駐；有選取才多一排名額欄與送出按鈕）、身分驗證（只有 Steam
+    -- 伺服器；匯入前沿用帳號名判定，所以標題顯示是否已匯入）、MVCK 匯入、付費名額設定
     local n = #F.pickedList(self.picked)
-    local tools = { { title = getText("IGUI_MVM_Section_Batch", n), buttons = { self.btnPickShown } } }
+    local batch = { title = getText("IGUI_MVM_Section_Batch", n), buttons = { self.btnPickShown }, gap = #rows > 0 }
     if n > 0 then
-        tools[1].buttons[2] = self.btnPickClear
-        tools[1].next = { self.batchEntry, self.btnBatch, self.btnBatchDefault }
+        batch.buttons[2] = self.btnPickClear
+        batch.next = { self.batchEntry, self.btnBatch, self.btnBatchDefault }
     end
+    rows[#rows + 1] = batch
     if b ~= nil and b.identitySteam then
         local r = { title = getText(b.identityImported and "IGUI_MVM_Section_IdentityOn" or "IGUI_MVM_Section_IdentityPending"),
             buttons = { self.btnIdentity } }
@@ -683,136 +792,218 @@ function FleetWindow:layoutAdmin(row, b, y, flow)
             self.btnRebind:setTitle(getText("IGUI_MVM_Btn_RebindIdentity", c))
             r.buttons[2] = self.btnRebind
         end
-        tools[#tools + 1] = r
+        rows[#rows + 1] = r
     end
     if b ~= nil and b.migrationAvailable then
-        tools[#tools + 1] = { title = getText("IGUI_MVM_Section_MVCK"), buttons = { self.btnMigrate } }
+        rows[#rows + 1] = { title = getText("IGUI_MVM_Section_MVCK"), buttons = { self.btnMigrate } }
     end
-    tools[#tools + 1] = { title = getText("IGUI_MVM_Section_PaidSlots"), buttons = { self.btnPaidSlots } }
-    y = self:toolRows(tools, y)
-    local box = self.overrideBox
-    local bottom = self.listTop + self.listH
-    local function anchors(dl, ol)
-        local oy = bottom - (self.fh + 4) - box.height - GAP - (self.fh + 2) * ol
-        return oy - PAD - (self.fh + 4) - step - (self.fh + 2) * dl, oy
-    end
-    local dl, ol, dy, oy = 2, 2, nil, nil
-    if not flow then
-        dy, oy = anchors(dl, ol)
-        if dy < y then dl = 0; dy, oy = anchors(dl, ol) end
-        if dy < y then ol = 0; dy, oy = anchors(dl, ol) end
-        flow = dy < y
-    end
-    if flow then
-        dl, ol, dy = 2, 2, y
-        oy = dy + (self.fh + 4) + step + (self.fh + 2) * dl + PAD
-    end
-    dy = self:heading("IGUI_MVM_Section_DefaultQuota", dy)
-    local def = b and b.adminDefaultQuota
+    rows[#rows + 1] = { title = getText("IGUI_MVM_Section_PaidSlots"), buttons = { self.btnPaidSlots } }
+    -- 全服設定：預填伺服器值，值變了才重填（不蓋掉正在輸入的值）
+    local def, days = b and b.adminDefaultQuota, b and b.adminReleaseDays
     if def ~= nil and self.defaultEntry.forValue ~= def then self.defaultEntry.forValue = def; self.defaultEntry:setText(tostring(def)) end
-    place(self.btnDefaultQuota, place(self.defaultEntry, x0, dy), dy)
-    local desc1, desc2 = getText("IGUI_MVM_DefaultQuota_Desc1"), getText("IGUI_MVM_DefaultQuota_Desc2")
-    self.btnDefaultQuota:setTooltip(dl == 0 and (desc1 .. " " .. desc2) or nil)
-    dy = dy + step
-    if dl > 0 then
-        self.headings[#self.headings + 1] = { text = desc1, y = dy }
-        self.headings[#self.headings + 1] = { text = desc2, y = dy + self.fh + 2 }
-    end
-    oy = self:heading("IGUI_MVM_Section_Override", oy)
-    box:setChecked(b ~= nil and b.adminOverride == true, true)
-    place(box, x0, oy)
-    oy = oy + box.height + GAP
-    if ol > 0 then
-        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc1"), y = oy }
-        self.headings[#self.headings + 1] = { text = getText("IGUI_MVM_Override_Desc2"), y = oy + self.fh + 2 }
-    end
-    return oy + (self.fh + 2) * ol, flow
+    if days ~= nil and self.releaseEntry.forValue ~= days then self.releaseEntry.forValue = days; self.releaseEntry:setText(tostring(days)) end
+    rows[#rows + 1] = { title = getText("IGUI_MVM_Section_DefaultQuota"), buttons = { self.defaultEntry, self.btnDefaultQuota }, gap = true }
+    rows[#rows + 1] = { title = getText("IGUI_MVM_Section_ReleaseDays"), buttons = { self.releaseEntry, self.btnReleaseDays } }
+    self.overrideBox:setChecked(b ~= nil and b.adminOverride == true, true)
+    rows[#rows + 1] = { title = getText("IGUI_MVM_Section_Override"), buttons = { self.overrideBox } }
+    return self:toolRows(rows, y)
 end
 
--- 依選取列與角色擺放可用的控制項（選取變更、資料變更與每 2 秒走近／離開車輛時重排）
-function FleetWindow:layoutDetail()
-    for _, c in ipairs(self.detailControls) do c:setVisible(false) end
-    self.headings = {}
-    local row = self.current
-    local b = self:bucket()
-    local recovery = b ~= nil and b.status == "RECOVERY_REQUIRED"
-    local x0, step = self.detailX, self.ch + GAP
-    local y = self.detailTop + self.infoH + PAD
-    if self.tab == "ADMIN" then
-        local bottom = self.listTop + self.listH
-        local endY, flow = self:layoutAdmin(row, b, y, false)
-        self.adminScrollMax = 0
-        if flow and endY > bottom then
-            -- 接在上面之後仍超出詳情區：整段可用滑鼠滾輪捲動（draw 畫捲軸），捲出可視範圍的控制項隱藏、標題不畫
-            self.adminScrollMax = endY - bottom
-            self.adminScroll = math.max(0, math.min(self.adminScroll or 0, self.adminScrollMax))
-            for _, c in ipairs(self.detailControls) do c:setVisible(false) end
-            self.headings = {}
-            self:layoutAdmin(row, b, y - self.adminScroll, true)
-            for _, c in ipairs(self.detailControls) do
-                if c:getIsVisible() and (c:getY() < y or c:getY() + c.height > bottom) then c:setVisible(false) end
-            end
-            local kept = {}
-            for _, h in ipairs(self.headings) do if h.y >= y and h.y + self.fh <= bottom then kept[#kept + 1] = h end end
-            self.headings = kept
-        else
-            self.adminScroll = 0
-        end
-        self:updateEnabled(recovery)
-        return
+-- 權限開關：欄寬＝最寬的標籤，放得下幾欄就排幾欄（最多 4），任何語系都不重疊
+function FleetWindow:checkGrid(y)
+    local widest = 0
+    for _, cb in ipairs(self.checks) do widest = math.max(widest, cb.width) end
+    local usable = self.detailW - 8
+    local cols = math.max(1, math.min(4, math.floor((usable + GAP) / (widest + GAP * 2))))
+    local colW = math.floor(usable / cols)
+    for i, cb in ipairs(self.checks) do
+        local col = (i - 1) % cols
+        place(cb, self.detailX + col * colW, y)
+        if col == cols - 1 or i == #self.checks then y = y + cb.height + GAP end
     end
-    if row == nil then return end
-    if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正，沒有可用操作
-        if row.lastKnownX then place(self.btnMap, x0, y) end
-    elseif row.role ~= "OWNER" then
-        local x = x0
-        if row.lastKnownX then x = place(self.btnMap, x, y) end
-        if F.onMap(row) then x = place(self.btnLook, x, y) end
-        if row.role == "MEMBER" then place(self.btnLeave, x, y) end
-    elseif F.isHistory(row) then
-        place(self.btnDismiss, x0, y)
-    else
-        y = self:heading("IGUI_MVM_Section_Name", y)
-        if self.nameEntry.forOid ~= row.oid then self.nameEntry.forOid = row.oid; self.nameEntry:setText(row.name or "") end
-        place(self.btnRename, place(self.nameEntry, x0, y), y)
-        y = self:heading("IGUI_MVM_Section_Share", y + step + 4)
-        local x = place(self.userEntry, x0, y)
-        x = place(self.btnAddMember, x, y)
-        self.btnFaction:setTitle(getText(row.factionShare and "IGUI_MVM_Btn_FactionOff" or "IGUI_MVM_Btn_FactionOn"))
-        x = place(self.btnFaction, x, y)
-        place(self.btnTransfer, x, y)
-        y = y + step
-        local colW = math.floor(self.detailW / 4)
-        for i, cb in ipairs(self.checks) do
-            local col = (i - 1) % 4
-            place(cb, x0 + col * colW, y)
-            if col == 3 or i == #self.checks then y = y + cb.height + GAP end
+    return y
+end
+
+-- 車主的車：動作列在最上面（最常用，也最不該被擠出視窗）→ 目前分享給（所有人、陣營、成員各一顆停止鈕）→
+-- 新增分享（先勾權限、再選對象）。回傳內容底端 y
+function FleetWindow:layoutOwner(row, y)
+    local near = F.findLoaded(row)
+    self.nearVehicle = near
+    local pending = row.state == "PENDING_RELEASE"
+    local acts = {}
+    if pending then acts[#acts + 1] = self.btnCancel end
+    if row.state == "WITNESS_STALE" and near then acts[#acts + 1] = self.btnReissue end
+    if row.lastKnownX then acts[#acts + 1] = self.btnMap end
+    if F.onMap(row) then acts[#acts + 1] = self.btnLook end
+    acts[#acts + 1] = self.btnRename
+    if not pending then
+        if near then acts[#acts + 1] = self.btnTransfer end
+        acts[#acts + 1] = near and self.btnUnclaim or self.btnReport
+    end
+    y = self:flow(acts, y) + PAD
+    local shares = {}
+    local function share(btn, who, bits, tip)
+        btn:setTitle(getText("IGUI_MVM_ShareRow", who, F.actionsText(bits)))
+        btn:setTooltip(tip)
+        shares[#shares + 1] = btn
+    end
+    if (row.publicBits or 0) > 0 then
+        share(self.btnPublicOff, getText("IGUI_MVM_Everyone"), row.publicBits, getText("IGUI_MVM_StopPublic", F.actionsText(row.publicBits)))
+    end
+    if row.factionShare then
+        local who = getText(row.factionState == "SUSPENDED" and "IGUI_MVM_Share_FactionSuspended" or "IGUI_MVM_Share_Faction",
+            tostring(row.factionName or "?"))
+        share(self.btnFactionOff, who, row.factionActionBits or 0, getText("IGUI_MVM_StopFaction", F.actionsText(row.factionActionBits or 0)))
+    end
+    for i, g in ipairs(row.grants or {}) do
+        local mb = self.memberButtons[i]
+        if mb == nil then break end
+        mb.internal = g.user
+        share(mb, g.user, g.bits, getText("IGUI_MVM_Btn_RemoveMember", g.user, F.actionsText(g.bits)))
+    end
+    if #shares > 0 then
+        y = self:heading("IGUI_MVM_Section_Members", y)
+        -- 等寬兩欄（看起來是一張清單，不是長短不一的按鈕）；標題太長時截字，提示文字有全文
+        local cols = self.detailW >= 360 and 2 or 1
+        local colW = math.floor((self.detailW - 8 - GAP * (cols - 1)) / cols)
+        for i, c in ipairs(shares) do
+            c:setWidth(colW)
+            local col = (i - 1) % cols
+            place(c, self.detailX + col * (colW + GAP), y)
+            if col == cols - 1 or i == #shares then y = y + c.height + GAP end
         end
-        if row.grants and #row.grants > 0 then
-            y = self:heading("IGUI_MVM_Section_Members", y + 4)
-            for i, g in ipairs(row.grants) do
-                local mb = self.memberButtons[i]
-                if mb == nil then break end
-                local title = getText("IGUI_MVM_Btn_RemoveMember", g.user, F.actionsText(g.bits))
-                mb:setTitle(fit(title, self.detailW - 48)) -- 八項全開時不超出詳情區
-                mb.tooltip = title -- 保留完整帳號與所有權限供查看
-                mb.internal = g.user
-                place(mb, x0, y)
-                y = y + step
+        y = y + PAD
+    end
+    y = self:heading("IGUI_MVM_Section_Share", y)
+    y = self:checkGrid(y)
+    return self:flow({ self.userEntry, self.btnAddMember, self.btnFaction, self.btnPublic }, y)
+end
+
+function FleetWindow:layoutBody(row, b, y)
+    if self.tab == "ADMIN" then return self:layoutAdmin(row, b, y) end
+    if row == nil then return y end
+    if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正，沒有可用操作
+        return row.lastKnownX and self:flow({ self.btnMap }, y) or y
+    elseif row.role ~= "OWNER" then
+        local acts = {}
+        if row.lastKnownX then acts[#acts + 1] = self.btnMap end
+        if F.onMap(row) then acts[#acts + 1] = self.btnLook end
+        if row.role == "MEMBER" then acts[#acts + 1] = self.btnLeave end
+        return self:flow(acts, y)
+    elseif F.isHistory(row) then
+        return self:flow({ self.btnDismiss }, y)
+    end
+    return self:layoutOwner(row, y)
+end
+
+-- 依選取列與角色排詳情卡與控制項（選取變更、資料變更與每 2 秒走近／離開車輛時重排）。放不下時整段可用滑鼠滾輪捲動
+-- （draw 畫捲軸）：捲出可視範圍的按鈕隱藏、輸入框停到畫面外（Focus 只對可見控制項落點），標題不畫
+local PARK_X = -100000
+function FleetWindow:layoutDetail()
+    local row, b = self.current, self:bucket()
+    local recovery = b ~= nil and b.status == "RECOVERY_REQUIRED"
+    self.card = F.cardLines(row, self.tab, b, self.query, getTimestampMs())
+    local h = 20
+    for _, l in ipairs(self.card) do h = h + (l.big and fontH(FM) + 4 or self.fh + 2) end
+    self.infoH = h
+    local top, bottom = self.detailTop + h + PAD, self.listTop + self.listH
+    local function run(y)
+        for _, c in ipairs(self.detailControls) do c:setVisible(false) end
+        self.headings = {}
+        return self:layoutBody(row, b, y)
+    end
+    local endY = run(top)
+    local placed = self.placed
+    for i = #placed, 1, -1 do placed[i] = nil end
+    if endY - GAP > bottom then
+        self.scrollMax = endY - GAP - bottom
+        self.scroll = math.max(0, math.min(self.scroll or 0, self.scrollMax))
+        run(top - self.scroll)
+        for _, c in ipairs(self.detailControls) do
+            if c:getIsVisible() then
+                c.contentX, c.contentY = c:getX(), c:getY() + self.scroll
+                -- 閱讀順序（由上而下、同列由左而右）插入；家族禁用 table.sort
+                local i = #placed
+                while i >= 1 and (placed[i].contentY > c.contentY or (placed[i].contentY == c.contentY and placed[i].contentX > c.contentX)) do
+                    placed[i + 1] = placed[i]
+                    i = i - 1
+                end
+                placed[i + 1] = c
+                if c:getY() < top or c:getY() + c.height > bottom then
+                    if c._entry then
+                        if c:isFocused() then c._entry:unfocus() end
+                        c:setX(PARK_X)
+                    else
+                        c:setVisible(false)
+                    end
+                end
             end
         end
-        y = self:heading("IGUI_MVM_Section_Vehicle", y + 4)
-        local near = F.findLoaded(row)
-        self.nearVehicle = near
-        x = x0
-        if row.state == "PENDING_RELEASE" then x = place(self.btnCancel, x, y)
-        elseif near then x = place(self.btnUnclaim, x, y)
-        else x = place(self.btnReport, x, y) end
-        if row.state == "WITNESS_STALE" and near then x = place(self.btnReissue, x, y) end
-        if row.lastKnownX then x = place(self.btnMap, x, y) end
-        if F.onMap(row) then place(self.btnLook, x, y) end
+        local kept = {}
+        for _, hd in ipairs(self.headings) do if hd.y >= top and hd.y + self.fh <= bottom then kept[#kept + 1] = hd end end
+        self.headings = kept
+    else
+        self.scrollMax, self.scroll = 0, 0
     end
     self:updateEnabled(recovery)
+end
+
+-- 把控制項連同它那一列捲進詳情區的可視範圍（contentY＝不捲動時的位置）。高度至少一列（ch）：
+-- 管理頁同列標題垂直置中在列高裡，比開關底邊低，只對齊控制項底邊會把標題切掉
+function FleetWindow:scrollToControl(c)
+    if (self.scrollMax or 0) <= 0 or c.contentY == nil then return end
+    local top, bottom = self.detailTop + self.infoH + PAD, self.listTop + self.listH
+    local y, s, h = c.contentY - top, self.scroll or 0, math.max(c.height, self.ch)
+    if y < s then s = y elseif y + h > s + (bottom - top) then s = y + h - (bottom - top) end
+    s = math.max(0, math.min(s, self.scrollMax))
+    if s ~= self.scroll then self.scroll = s; self:layoutDetail() end
+end
+
+-- 滑鼠把焦點下的控制項捲出可視範圍：焦點改到第一個看得見的詳情按鈕（否則 Focus 判失效、從頭重走）。
+-- 輸入框的焦點在內層原生 entry（Focus.focused 回它），改焦點時不選輸入框（會開始打字）
+function FleetWindow:keepFocus()
+    local Focus = UI.Focus
+    local c = Focus and Focus.focused and Focus.focused()
+    if c ~= nil and not self.detailSet[c] then c = c.parent end
+    if c == nil or not self.detailSet[c] or (c:getIsVisible() and c:getX() ~= PARK_X) then return end
+    for _, p in ipairs(self.placed) do
+        if p._entry == nil and p:getIsVisible() and Focus.focusControl(p, false) then return end
+    end
+end
+
+-- 鍵盤／手把目標：不用捲動時就是框架的自動目標；要捲動時，詳情區以外照自動目標，詳情控制項照排版順序全部列出
+-- （含捲出範圍的），描述帶 scrollOwner。描述 table 重用（Focus 每幀讀）
+function FleetWindow:focusTargets(win)
+    local Focus = UI.Focus
+    local auto = Focus and Focus.collectTargets(win) or nil
+    if auto == nil or (self.scrollMax or 0) <= 0 then return auto end
+    local list, pool, n = self.focusList, self.focusPool, 0
+    local function slot()
+        n = n + 1
+        local d = pool[n]
+        if d == nil then d = {}; pool[n] = d end
+        list[n] = d
+        return d
+    end
+    for _, a in ipairs(auto) do
+        local c = a.frame or a.control or (a.controls and a.controls[1])
+        if not self.detailSet[c] then
+            local d = slot()
+            d.kind, d.control, d.controls, d.frame, d.label, d.captionSide, d.scrollOwner =
+                a.kind, a.control, a.controls, a.frame, a.label, a.captionSide, nil
+        end
+    end
+    for _, c in ipairs(self.placed) do
+        local d = slot()
+        if c._entry then
+            d.kind, d.control, d.frame, d.scrollOwner = "entry", c._entry, c, c
+        else
+            d.kind, d.control, d.frame, d.scrollOwner = c._focusKind or "button", c, nil, self.body
+        end
+        d.controls, d.label, d.captionSide = nil, c._focusLabel, c._focusCaptionSide
+    end
+    for k = #list, n + 1, -1 do list[k] = nil end
+    return list
 end
 
 -- 等待 ACK 期間或需要復原時停用所有變更按鈕
@@ -830,57 +1021,20 @@ end
 function FleetWindow:draw(el)
     local fh = self.fh
     local b = self:bucket()
-    local row = self.current
     local x, y = self.detailX, self.detailTop
     theme:fill(el, x, y, self.detailW, self.infoH, "well")
     theme:border(el, x, y, self.detailW, self.infoH, "border")
     x, y = x + 12, y + 10
-    local now = getTimestampMs()
-    if b == nil or b.streamId == nil then
-        text(el, getText("IGUI_MVM_Loading"), x, y, "textMuted")
-    elseif row == nil then
-        local empty = self.query ~= "" and getText("IGUI_MVM_NoMatch", self.query)
-            or getText(self.tab == "ADMIN" and "IGUI_MVM_Admin_Empty" or "IGUI_MVM_Empty")
-        text(el, empty, x, y, "textMuted")
-    elseif row.kind == "PLAYER" then
-        text(el, row.user == "" and getText("IGUI_MVM_Admin_NoOwner") or row.user, x, y, "text", FM)
-        y = y + fontH(FM) + 4
-        local info = row.info
-        if info then
-            text(el, getText("IGUI_MVM_Quota", info.used, info.limit), x, y, "text")
-            y = y + fh + 2
-            local base = getText(info.custom and "IGUI_MVM_Admin_BaseCustom" or "IGUI_MVM_Admin_BaseDefault", info.base)
-            if info.limit > info.base then
-                base = base .. getText("IGUI_MVM_Sep") .. getText("IGUI_MVM_Admin_Paid", info.limit - info.base)
-            end
-            text(el, base, x, y, "textMuted")
-            y = y + fh + 2
-        end
-        text(el, row.summary, x, y, "textMuted")
-    else
-        text(el, F.displayName(row), x, y, "text", FM)
-        y = y + fontH(FM) + 4
-        if F.renamed(row) then
-            text(el, getText("IGUI_MVM_ModelName", F.modelName(row)), x, y, "textMuted")
-            y = y + fh + 2
-        end
-        text(el, F.stateText(row, now), x, y, stateToken(row))
-        y = y + fh + 2
-        text(el, F.locationText(row, now), x, y, "textMuted")
-        y = y + fh + 2
-        local share = self.tab == "ADMIN" and getText("IGUI_MVM_AdminOwner", row.owner or getText("IGUI_MVM_Admin_NoOwner"))
-            or F.shareText(row)
-        text(el, share, x, y, "textMuted")
-        if row.role == "MEMBER" or row.role == "FACTION" then
-            text(el, getText("IGUI_MVM_YourActions", F.actionsText(row.myBits)), x, y + fh + 2, "textMuted")
-        end
+    for _, l in ipairs(self.card or {}) do
+        text(el, l.text, x, y, l.token, l.big and FM or FS)
+        y = y + (l.big and fontH(FM) + 4 or fh + 2)
     end
-    for _, h in ipairs(self.headings) do text(el, h.text, self.detailX, h.y, "textMuted") end
-    if self.tab == "ADMIN" and (self.adminScrollMax or 0) > 0 then -- 捲軸：提示詳情區下面還有內容（滾輪捲動）
+    for _, h in ipairs(self.headings) do text(el, h.text, self.detailX, h.y, "text") end
+    if (self.scrollMax or 0) > 0 then -- 捲軸：提示詳情區下面還有內容（滾輪捲動）
         local top, bottom = self.detailTop + self.infoH + PAD, self.listTop + self.listH
         local vh = bottom - top
-        local th = math.max(16, math.floor(vh * vh / (vh + self.adminScrollMax)))
-        local ty = top + math.floor((vh - th) * (self.adminScroll or 0) / self.adminScrollMax)
+        local th = math.max(16, math.floor(vh * vh / (vh + self.scrollMax)))
+        local ty = top + math.floor((vh - th) * (self.scroll or 0) / self.scrollMax)
         local tc, tt = COL.hover, COL.textFaint
         el:drawRect(self.detailX + self.detailW - 4, top, 4, vh, tc.a, tc.r, tc.g, tc.b)
         el:drawRect(self.detailX + self.detailW - 4, ty, 4, th, tt.a, tt.r, tt.g, tt.b)
@@ -902,13 +1056,13 @@ function FleetWindow:draw(el)
         end
     end
     if quota then text(el, quota, PAD, fy + 6, "text") end
-    text(el, self.disclosure, self.detailX, fy + 6, "textFaint")
+    text(el, self.disclosure, self.detailX, fy + 6, "textMuted")
     if self.pending then
-        text(el, getText("IGUI_MVM_Pending"), PAD, fy + 8 + fh, "accent")
+        text(el, getText("IGUI_MVM_Pending"), PAD, fy + 8 + fh, "textMuted")
     elseif b and b.status == "RECOVERY_REQUIRED" then
         text(el, getText("IGUI_MVM_Recovery"), PAD, fy + 8 + fh, "errorText")
     elseif self.message then
-        text(el, self.message, PAD, fy + 8 + fh, self.messageBad and "errorText" or "accent")
+        text(el, self.message, PAD, fy + 8 + fh, self.messageBad and "errorText" or "text")
     end
     if MVM.clientOverride(0) then text(el, self.overrideActive, self.detailX, fy + 8 + fh, "errorText") end
 end
@@ -932,17 +1086,20 @@ function FleetWindow:send(command, args, okText)
     end)
 end
 
--- 確認框：框架 Dialog（模態、只回呼一次）；self.modal 留給 E2E 以 UI.Dialog.close 按確認。arg 可以是兩個參數的 table
-function FleetWindow:confirm(textKey, arg, fn)
+-- 確認框：框架 Dialog（模態、只回呼一次）；self.modal 留給 E2E 以 UI.Dialog.close 按確認。arg 可以是兩個參數的 table。
+-- opts.ok＝確認鈕的文字鍵（寫出會發生什麼）；opts.danger＝破壞性動作（紅色）；opts.input＝輸入框 { text, placeholder }，
+-- 確認時 fn(self, 輸入文字)
+function FleetWindow:confirm(textKey, arg, fn, opts)
+    opts = opts or {}
     local body = type(arg) == "table" and getText(textKey, arg[1], arg[2]) or getText(textKey, arg)
-    self.modal = UI.Dialog.show({ title = getText("IGUI_MVM_FleetTitle"), text = body, theme = theme,
-        confirmText = getText("UI_Ok"), cancelText = getText("UI_Cancel"), danger = true,
-        onResult = function(ok) self.modal = nil; if ok then fn(self) end end })
+    self.modal = UI.Dialog.show({ title = getText("IGUI_MVM_FleetTitle"), text = body, theme = theme, input = opts.input,
+        confirmText = getText(opts.ok or "UI_Ok"), cancelText = getText("UI_Cancel"), danger = opts.danger == true,
+        onResult = function(ok, input) self.modal = nil; if ok then fn(self, input) end end })
 end
 
 function FleetWindow:onTab(id)
     self.tab = id
-    self.selectedOid, self.current = nil, nil
+    self.selectedOid, self.current, self.scroll = nil, nil, 0
     self.dirty = true
     if id == "ADMIN" then C.request(getSpecificPlayer(0), "adminList", {}) end
 end
@@ -953,40 +1110,73 @@ function FleetWindow:checkedBits()
     return F.listToBits(list)
 end
 
+-- 改名：對話框裡改（清空＝恢復原始車名）
 function FleetWindow:onRename()
     local row = self.current; if not row then return end
-    self:send("rename", { expectedOid = row.oid, expectedEpoch = row.epoch, name = self.nameEntry:getText() or "" })
+    self:confirm("IGUI_MVM_RenamePrompt", F.modelName(row), function(w, name)
+        w:send("rename", { expectedOid = row.oid, expectedEpoch = row.epoch, name = name or "" })
+    end, { ok = "IGUI_MVM_Btn_Rename", input = { text = row.name or "", placeholder = F.modelName(row) } })
+end
+
+-- 分享送出成功就清空權限開關（和帳號欄）：它們是「這次要給的權限」，留著會被當成這台車現在的分享
+function FleetWindow:sendShare(command, args)
+    self:send(command, args, function()
+        for _, cb in ipairs(self.checks) do cb:setChecked(false, true) end
+        if command == "addMember" then self.userEntry:setText("") end
+        return getText("IGUI_MVM_Done")
+    end)
 end
 
 function FleetWindow:onAddMember()
     local row = self.current; if not row then return end
     local user, bits = self.userEntry:getText() or "", self:checkedBits()
     if user == "" or bits == 0 then return self:say("IGUI_MVM_NeedUserAndActions") end
-    self:send("addMember", { expectedOid = row.oid, username = user, actionBits = bits })
+    self:sendShare("addMember", { expectedOid = row.oid, username = user, actionBits = bits })
 end
 
+-- 陣營：開啟用勾選的權限；已開時再按＝改成勾選的權限
 function FleetWindow:onFaction()
     local row = self.current; if not row then return end
-    local enable = not row.factionShare
-    local bits = enable and self:checkedBits() or 0
-    if enable and bits == 0 then return self:say("IGUI_MVM_NeedActions") end
-    self:send("setFactionShare", { expectedOid = row.oid, expectedEpoch = row.epoch, enabled = enable, actionBits = bits })
+    local bits = self:checkedBits()
+    if bits == 0 then return self:say("IGUI_MVM_NeedActions") end
+    self:sendShare("setFactionShare", { expectedOid = row.oid, expectedEpoch = row.epoch, enabled = true, actionBits = bits })
+end
+
+function FleetWindow:onFactionOff()
+    local row = self.current; if not row then return end
+    self:send("setFactionShare", { expectedOid = row.oid, expectedEpoch = row.epoch, enabled = false, actionBits = 0 })
+end
+
+-- 公開給所有人：只帶得了公開允許的動作；先確認（陌生人也能用）
+function FleetWindow:onPublic()
+    local row = self.current; if not row then return end
+    local bits = F.publicBits(self:checkedBits())
+    if bits == 0 then return self:say("IGUI_MVM_NeedPublicActions") end
+    self:confirm("IGUI_MVM_ConfirmPublic", F.actionsText(bits), function(w)
+        w:sendShare("setPublicShare", { expectedOid = row.oid, expectedEpoch = row.epoch, actionBits = bits })
+    end, { ok = "IGUI_MVM_Btn_PublicOn" })
+end
+
+function FleetWindow:onPublicOff()
+    local row = self.current; if not row then return end
+    self:send("setPublicShare", { expectedOid = row.oid, expectedEpoch = row.epoch, actionBits = 0 })
 end
 
 function FleetWindow:onRemoveMember(button)
     local row = self.current; if not row then return end
-    self:send("removeMember", { expectedOid = row.oid, username = button.internal })
+    local user = button.internal
+    self:send("removeMember", { expectedOid = row.oid, username = user }, function() return getText("IGUI_MVM_MemberRemoved", user) end)
 end
 
+-- 轉讓：對話框裡輸入對方帳號（車要在身邊）
 function FleetWindow:onTransfer()
     local row = self.current; if not row then return end
-    local user = self.userEntry:getText() or ""
-    if user == "" then return self:say("IGUI_MVM_NeedUser") end
     local v = F.findLoaded(row)
     if v == nil then return self:say("IGUI_MVM_Reason_TOO_FAR") end
-    self:confirm("IGUI_MVM_ConfirmTransfer", user, function(w)
+    self:confirm("IGUI_MVM_ConfirmTransfer", F.displayName(row), function(w, user)
+        if user == nil or user == "" then return w:say("IGUI_MVM_NeedUser") end
         w:send("transfer", { vehicleId = v:getId(), expectedOid = row.oid, expectedEpoch = row.epoch, recipient = user })
-    end)
+    end, { ok = "IGUI_MVM_Btn_Transfer", danger = true, input = { placeholder = getText("IGUI_MVM_UserHint") } })
 end
 
 function FleetWindow:onUnclaim()
@@ -995,12 +1185,13 @@ function FleetWindow:onUnclaim()
     if v == nil then return self:say("IGUI_MVM_Reason_TOO_FAR") end
     self:confirm("IGUI_MVM_ConfirmUnclaim", F.displayName(row), function(w)
         w:send("unclaim", { vehicleId = v:getId(), expectedOid = row.oid, expectedEpoch = row.epoch })
-    end)
+    end, { ok = "IGUI_MVM_Btn_Unclaim", danger = true })
 end
 
 function FleetWindow:onReportLost()
     local row = self.current; if not row then return end
-    self:confirm("IGUI_MVM_ConfirmReportLost", F.displayName(row), function(w) w:send("reportLost", { expectedOid = row.oid }) end)
+    self:confirm("IGUI_MVM_ConfirmReportLost", F.displayName(row), function(w) w:send("reportLost", { expectedOid = row.oid }) end,
+        { ok = "IGUI_MVM_Btn_ReportLost", danger = true })
 end
 
 function FleetWindow:onCancelRelease()
@@ -1017,12 +1208,14 @@ end
 
 function FleetWindow:onDismiss()
     local row = self.current; if not row then return end
-    self:confirm("IGUI_MVM_ConfirmDismiss", F.displayName(row), function(w) w:send("dismissRecord", { expectedOid = row.oid }) end)
+    self:confirm("IGUI_MVM_ConfirmDismiss", F.displayName(row), function(w) w:send("dismissRecord", { expectedOid = row.oid }) end,
+        { ok = "IGUI_MVM_Btn_Dismiss", danger = true })
 end
 
 function FleetWindow:onLeave()
     local row = self.current; if not row then return end
-    self:confirm("IGUI_MVM_ConfirmLeave", F.displayName(row), function(w) w:send("leaveShared", { expectedOid = row.oid }) end)
+    self:confirm("IGUI_MVM_ConfirmLeave", F.displayName(row), function(w) w:send("leaveShared", { expectedOid = row.oid }) end,
+        { ok = "IGUI_MVM_Btn_Leave", danger = true })
 end
 
 function FleetWindow:onMap()
@@ -1047,7 +1240,7 @@ function FleetWindow:onAdminRelease()
     local row = self.current; if not row or row.kind == "PLAYER" then return end
     self:confirm("IGUI_MVM_ConfirmAdminRelease", row.owner or getText("IGUI_MVM_Admin_NoOwner"), function(w)
         w:adminSend("adminRecover", { expectedOid = row.oid, op = "RELEASE" })
-    end)
+    end, { ok = "IGUI_MVM_Btn_AdminRelease", danger = true })
 end
 
 -- 名額欄的整數；超出範圍或不是整數回 nil
@@ -1093,7 +1286,7 @@ function FleetWindow:batch(amount, textKey)
         w:adminSend("adminSetQuota", { usernames = users, amount = amount }, function(ack)
             return getText("IGUI_MVM_BatchDone", ack.count or #users)
         end)
-    end)
+    end, { ok = "IGUI_MVM_Btn_Apply" })
 end
 
 function FleetWindow:onBatchQuota()
@@ -1111,12 +1304,19 @@ function FleetWindow:onDefaultQuota()
     self:adminSend("adminSetDefaultQuota", { amount = n }, function(ack) return getText("IGUI_MVM_DefaultQuotaSaved", ack.amount) end)
 end
 
+-- 閒置解除天數＝沙盒 InactivityReleaseDays（0–365，0＝不解除）；伺服器存檔成功才回 ok
+function FleetWindow:onReleaseDays()
+    local n = wholeIn(self.releaseEntry, 0, 365)
+    if n == nil then return self:say("IGUI_MVM_NeedReleaseRange") end
+    self:adminSend("adminSetReleaseDays", { amount = n }, function(ack) return getText("IGUI_MVM_ReleaseDaysSaved", ack.amount) end)
+end
+
 function FleetWindow:onImportMVCK()
     self:confirm("IGUI_MVM_ConfirmImportMVCK", nil, function(w)
         w:adminSend("adminMigration", { op = "IMPORT" }, function(ack)
             return getText("IGUI_MVM_MVCKImported", ack.imported or 0, ack.rebound or 0, ack.pending or 0)
         end)
-    end)
+    end, { ok = "IGUI_MVM_Btn_Import" })
 end
 
 -- 身分匯入：向伺服器要帳號清單（requestUsers 需 SeeNetworkUsers：RequestNetworkUsersPacket.java:15；沒有能力送出，
@@ -1130,7 +1330,7 @@ function FleetWindow:onImportIdentity()
     self:confirm("IGUI_MVM_ConfirmImportIdentity", nil, function(w)
         w.wantUsersAt = getTimestampMs()
         requestUsers()
-    end)
+    end, { ok = "IGUI_MVM_Btn_Import" })
 end
 
 -- 事件是全域的（原版管理面板也會要清單）：只接自己 30 秒內要的那一次
@@ -1165,7 +1365,7 @@ function FleetWindow:onRebindIdentity()
     local list = table.concat(shown, ", ") .. (#names > 10 and ", ..." or "")
     self:confirm("IGUI_MVM_ConfirmRebindIdentity", { #names, list }, function(w)
         w:adminSend("adminIdentity", { op = "REBIND" }, function(ack) return getText("IGUI_MVM_IdentityRebound", ack.rebound or 0) end)
-    end)
+    end, { ok = "IGUI_MVM_Btn_Rebind", danger = true })
 end
 
 function FleetWindow:onSlots()

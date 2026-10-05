@@ -16,8 +16,17 @@ local function ui()
 end
 MVM.ui = ui
 
--- 玩家通知走框架 Toast；只有能力缺席（離線 harness、舊框架）才退回原版頭頂文字
+-- 玩家通知走框架 Toast；只有能力缺席（離線 harness、舊框架）才退回原版頭頂文字。錯誤停留久一點（含怎麼辦，要讀得完）。
+-- 車隊視窗開著時通知讓開（框架 rev 12 避開區，Toast 每幀問一次矩形）：錯誤通知停 8 秒，常常蓋到剛打開的視窗右上角
 local toastColors = nil
+local BAD_HOLD_MS = 8000
+local avoidSet = false
+local function fleetRect()
+    local f = MVM.FleetWindow and MVM.FleetWindow.instance
+    local w = f and f.win
+    if w ~= nil and w:getIsVisible() then return w:getAbsoluteX(), w:getAbsoluteY(), w.width, w.height end
+    return nil
+end
 function MVM.notify(player, text, bad)
     local UI = ui()
     if UI and UI.CAPABILITIES.toast and UI.Toast then
@@ -25,7 +34,11 @@ function MVM.notify(player, text, bad)
             local c = UI.Theme.create().colors
             toastColors = { good = { border = c.accent, text = c.text }, bad = { border = c.errorText, text = c.text } }
         end
-        UI.Toast.show({ message = text, colors = bad and toastColors.bad or toastColors.good, maxLines = 3 })
+        if not avoidSet and (UI.API_REVISION or 0) >= 12 and UI.CAPABILITIES.toastAvoid then
+            avoidSet = pcall(UI.Toast.setAvoid, "MinidoracatVehicleManagerFor42", fleetRect)
+        end
+        UI.Toast.show({ message = text, colors = bad and toastColors.bad or toastColors.good, maxLines = 3,
+            holdMs = bad and BAD_HOLD_MS or nil })
     elseif player then
         if bad then HaloTextHelper.addBadText(player, text) else HaloTextHelper.addGoodText(player, text) end
     end
@@ -81,11 +94,16 @@ local function accessChanged()
     if ISInventoryPage and ISInventoryPage.dirtyUI then ISInventoryPage.dirtyUI() end
 end
 
--- 伺服器存好新的全服預設名額後通知（沒有原版 Lua 廣播）：本機沙盒選項跟著改並投影到 SandboxVars，
--- 否則之後從原版沙盒 UI 存檔會把舊值整份送回伺服器（GameServer.java:1694-1708）
-local function syncDefaultQuota(amount)
-    getSandboxOptions():set("MinidoracatVehicleManager.ClaimsPerPlayer", amount)
-    getSandboxOptions():toLua()
+-- 伺服器存好新的全服預設名額或閒置天數後通知（沒有原版 Lua 廣播）：本機沙盒選項跟著改並投影到 SandboxVars，
+-- 否則之後從原版沙盒 UI 存檔會把舊值整份送回伺服器（GameServer.java:1694-1708）。不是整數的欄位不動
+local SYNCED = { claimsPerPlayer = "MinidoracatVehicleManager.ClaimsPerPlayer",
+    releaseDays = "MinidoracatVehicleManager.InactivityReleaseDays" }
+local function syncSandbox(payload)
+    local opts, any = getSandboxOptions(), false
+    for key, option in pairs(SYNCED) do
+        if MVM.isInt(payload[key]) then opts:set(option, payload[key]); any = true end
+    end
+    if any then opts:toLua() end
 end
 
 -- 管理員總表分段（Server.lua S.sendAdminParts：引擎送出緩衝區固定 1 MB）。同一 id 收齊全部段才一次回傳 meta（第 1 段）
@@ -118,6 +136,11 @@ function MVM.clientReceive(command, payload)
         b.streamId, b.seq, b.rows, b.track = payload.streamId, payload.seq, {}, {}
         for _, row in ipairs(payload.rows or {}) do b.rows[row.oid] = row end
         b.quotaUsed, b.quotaLimit, b.quota, b.status = payload.quotaUsed, payload.quotaLimit, payload.quota, payload.status
+        b.pub, b.releaseDays = type(payload.pub) == "table" and payload.pub or {}, payload.releaseDays
+    elseif command == "publicDelta" then
+        if type(payload.oid) ~= "string" then return end
+        b.pub = b.pub or {}
+        b.pub[payload.oid] = MVM.isInt(payload.bits) and payload.bits > 0 and payload.bits or nil
     elseif command == "fleetDelta" then
         -- 跳號或換 stream：丟棄並要求完整快照（keyed replace，不 append）
         if b.streamId ~= payload.streamId or payload.seq ~= (b.seq or -1) + 1 then return resync(payload.to) end
@@ -156,20 +179,20 @@ function MVM.clientReceive(command, payload)
         b.admin = ok and rows or nil
         b.adminPlayers = ok and players or nil
         b.adminDefaultQuota = ok and meta.defaultQuota or nil
+        b.adminReleaseDays = ok and meta.releaseDays or nil
         b.migrationAvailable = ok and meta.migrationAvailable == true
         b.adminOverride = ok and meta.override == true
         b.identitySteam = ok and meta.identitySteam == true
         b.identityImported = ok and meta.identityImported == true
         b.identityConflicts = ok and type(meta.identityConflicts) == "table" and meta.identityConflicts or nil
     elseif command == "sandboxSync" then
-        if not MVM.isInt(payload.claimsPerPlayer) then return end
-        local ok, err = pcall(syncDefaultQuota, payload.claimsPerPlayer)
+        local ok, err = pcall(syncSandbox, payload)
         if not ok then MVM.log("sandbox sync failed: " .. tostring(err)) end
     elseif MVM.clientHandlers and MVM.clientHandlers[command] then
         MVM.clientHandlers[command](payload)
     end
     b.rev = (b.rev or 0) + 1
-    if command == "fleetSnapshot" or command == "fleetDelta" or command == "adminSnapshot" then accessChanged() end
+    if command == "fleetSnapshot" or command == "fleetDelta" or command == "adminSnapshot" or command == "publicDelta" then accessChanged() end
     if MVM.onFleetChanged and command ~= "trackDelta" then MVM.onFleetChanged(payload.to, command, payload) end
 end
 
@@ -177,7 +200,7 @@ Events.OnServerCommand.Add(function(module, command, args)
     if module == MVM.MODULE then MVM.clientReceive(command, args) end
 end)
 
--- 車上的零件見證只給 oid，用來對到自己的投影列；他人的車只知道「已被綁定」。
+-- 車上的零件見證只給 oid，用來對到自己的投影列；他人的車只知道「已被綁定」，以及公開表裡的公開動作。
 -- 宿主可能是任一零件（server 找不到 Engine 等時用第 0 個），要掃全部零件（≤128 個）。
 -- 物品欄刷新時每個車上容器都會問一次（canAccessContainer），所以每台車的結果快取 1 秒；投影變動時整批清掉
 local WITNESS_TTL_MS = 1000
@@ -202,13 +225,20 @@ local function witnessOid(vehicle)
     return oid
 end
 
+-- 這台車公開給所有人的動作（伺服器公開表；沒有＝0）
+function MVM.clientPublicBits(playerNum, oid)
+    local who = principal(playerNum)
+    local b = who and C.buckets[who]
+    return b and b.pub and b.pub[oid] or 0
+end
+
 function MVM.clientProjection(playerNum, vehicle)
     local who = principal(playerNum)
     if who == nil or vehicle == nil then return nil end
     local oid = witnessOid(vehicle)
     if oid == nil then return nil end
     local row = bucket(who).rows[oid]
-    return row or { oid = oid, role = "OTHER" }
+    return row or { oid = oid, role = "OTHER", publicBits = MVM.clientPublicBits(playerNum, oid) }
 end
 
 -- 本機玩家在 server 開著管理員越權（adminSnapshot 與 setAdminOverride ACK；重新登入後 client 狀態也歸零）
@@ -218,15 +248,19 @@ function MVM.clientOverride(playerNum)
     return b ~= nil and b.adminOverride == true and MVM.clientIsAdmin(getSpecificPlayer(playerNum or 0))
 end
 
--- 與 server 的 O.canUse 同順序：車主 → 分享（MANAGE 除外）→ 越權；QUARANTINED 只有越權能用
+-- 與 server 的 O.canUse 同順序：車主 → 分享／公開（MANAGE 除外）→ 越權；QUARANTINED 只有越權能用
 function MVM.clientCanUse(actor, vehicle, action)
-    local row = MVM.clientProjection(actor:getPlayerNum(), vehicle)
+    local n = actor:getPlayerNum()
+    local row = MVM.clientProjection(n, vehicle)
     if row == nil then return true, "UNCLAIMED" end
     if row.state ~= "QUARANTINED" then
         if row.role == "OWNER" then return true, "OWNER" end
-        if action ~= "MANAGE" and row.myBits and MVM.bitsAllow(row.myBits, action) then return true, row.role end
+        if action ~= "MANAGE" then
+            if row.myBits and MVM.bitsAllow(row.myBits, action) then return true, row.role end
+            if MVM.bitsAllow(MVM.clientPublicBits(n, row.oid), action) then return true, "PUBLIC" end
+        end
     end
-    if MVM.clientOverride(actor:getPlayerNum()) then return true, "ADMIN" end
+    if MVM.clientOverride(n) then return true, "ADMIN" end
     return false, "NOT_AUTHORIZED"
 end
 
@@ -318,10 +352,21 @@ local function startClaim(player, vehicle)
         onResult = function(ok) if ok then C.claim(player, vehicle) end end })
 end
 
+-- 右鍵解除綁定：和車隊視窗一樣先確認（解除後任何人都能綁走這台車）
 local function unclaim(player, vehicle, row)
-    C.request(player, "unclaim", { vehicleId = vehicle:getId(), expectedOid = row.oid, expectedEpoch = row.epoch }, function(ack)
-        if ack.ok then MVM.notify(player, getText("IGUI_MVM_Unclaimed")) end
-    end)
+    local UI = ui()
+    if not (UI and UI.CAPABILITIES.dialog) then
+        MVM.notify(player, getText("IGUI_MVM_NeedFramework"), true)
+        return
+    end
+    UI.Dialog.show({ title = getText("ContextMenu_MVM_Menu"), text = getText("IGUI_MVM_ConfirmUnclaim", MVM.FleetUI.displayName(row)),
+        confirmText = getText("IGUI_MVM_Btn_Unclaim"), cancelText = getText("UI_Cancel"), danger = true,
+        onResult = function(ok)
+            if not ok then return end
+            C.request(player, "unclaim", { vehicleId = vehicle:getId(), expectedOid = row.oid, expectedEpoch = row.epoch }, function(ack)
+                if ack.ok then MVM.notify(player, getText("IGUI_MVM_Unclaimed")) end
+            end)
+        end })
 end
 
 local function reissue(player, vehicle, row)
@@ -353,8 +398,18 @@ function ISVehicleMenu.FillMenuOutsideVehicle(playerNum, context, vehicle, test)
         sub:addOption(getText("ContextMenu_MVM_Unclaim"), player, unclaim, vehicle, row)
         if row.state == "WITNESS_STALE" then sub:addOption(getText("ContextMenu_MVM_Reissue"), player, reissue, vehicle, row) end
     else
-        local o = sub:addOption(getText("ContextMenu_MVM_ClaimedByOther"), nil, nil)
-        o.notAvailable = true
+        -- 別人的車：被分享或公開的寫出你能做什麼（灰字資訊列，ISContextMenu 的 isDisabled），其餘說是別人的車
+        -- （紅字 notAvailable＝不能用）
+        local bits = row.role == "OTHER" and MVM.clientPublicBits(playerNum, row.oid) or (row.myBits or 0)
+        local o
+        if bits > 0 then
+            o = sub:addOption(getText(row.role == "OTHER" and "ContextMenu_MVM_PublicVehicle" or "IGUI_MVM_YourActions",
+                MVM.FleetUI.actionsText(bits)), nil, nil)
+            o.isDisabled = true
+        else
+            o = sub:addOption(getText("ContextMenu_MVM_ClaimedByOther"), nil, nil)
+            o.notAvailable = true
+        end
     end
     for _, hook in ipairs(MVM.clientMenuHooks or {}) do hook(player, sub, vehicle, row) end
     return result

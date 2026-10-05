@@ -25,7 +25,7 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [*] [b]Protection[/b]: players without permission cannot drive, siphon fuel, strip parts or tow
 [*] [b]Claim the trailer too[/b]: claimed vehicles can only be loaded onto a claimed trailer or tow truck, which also uses a claim slot
 [*] [b]Virtual key[/b]: owners can unlock, open doors and start the car without a physical key (servers can turn this off)
-[*] [b]Per-action sharing[/b]: share with specific players or your faction; private by default
+[*] [b]Per-action sharing[/b]: share with specific players, your faction or everyone; private by default
 [*] [b]Fleet window[/b]: view your own and shared cars, then rename, transfer or report them lost
 [*] [b]Minimap tracking[/b] (optional): your cars and shared cars you may locate show on the map
 [*] [b]Move from MVCK[/b]: admins import existing MVCK claims in one click

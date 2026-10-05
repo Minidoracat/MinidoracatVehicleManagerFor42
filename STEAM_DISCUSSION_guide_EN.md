@@ -25,7 +25,8 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [h2]🤝 Sharing[/h2]
 [list]
 [*] Share with specific players or your faction and pick each permission: ride, drive, trunk, fuel, install/repair, remove parts, tow, see location
-[*] Private by default; nothing is shared automatically
+[*] [b]Share with everyone[/b]: any player can use what you tick, limited to ride, drive, trunk, fuel and install/repair (remove parts, tow and see location cannot be public); other players see what everyone can do in the car's right-click menu
+[*] Private by default; nothing is shared automatically. Current shares are listed one per row, and one click stops each
 [*] Only the owner can rename, share, unclaim or transfer, and these rights cannot be shared
 [*] If the faction is renamed, disbanded or gets a new leader, faction sharing pauses until the owner confirms again
 [/list]
@@ -36,6 +37,7 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [*] See your cars, cars shared with you and where they were last seen
 [*] Rename, share, transfer or unclaim
 [*] [b]Report lost[/b]: the claim is released after a waiting period; the car stays protected meanwhile, and if the server sees it again soon the release is cancelled
+[*] [b]Kept until[/b]: if the owner does not log in for the number of days the server sets (30 by default), their cars are unclaimed automatically. Vehicle details show the date, which moves forward every time you play; time the server is down does not count
 [/list]
 
 [h2]🗺️ Minimap tracking (optional)[/h2]
@@ -43,7 +45,8 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 
 [h2]🛠️ Admin tools[/h2]
 [list]
-[*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin
+[*] The Admin tab of the fleet window lists players with their claimed count and limit; click a player to expand their cars, adjust their basic slots, or unclaim a problem vehicle as admin. Player details show when they were last online
+[*] The Admin tab also edits the default slots for all players and the auto-unclaim days (0 = never); both are the same settings as the sandbox options
 [*] By default admins are blocked like any other player. To use someone else's car, turn on "Override: use any vehicle" in the Admin tab: every use is logged, the steering wheel button gets a red frame while it is on, and it turns off automatically when you log in again or the server restarts
 [*] In vanilla, split-screen players type their own name and the server does not verify it, while vanilla safehouses and factions trust names, so other players can be impersonated. If your server does not need split-screen, set AllowCoop to false in the server settings (this mod already gives split-screen players no vehicle access)
 [/list]
@@ -64,7 +67,7 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 [*] You can press it again; it only picks up claims made in MVCK since, without duplicates, and never deletes MVCK data
 [*] Once you are happy, remove MVCK from the server yourself. While both mods run, both protections apply, and vehicles claimed in MVCK cannot be claimed with this mod; the import moves them to their owners
 [/olist]
-MVCK sharing permissions (including public ones such as letting everyone ride) are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default).
+MVCK public permissions become "Share with everyone": allowing everyone to ride, drive, open the trunk, siphon fuel or inflate tires maps to ride, drive, trunk, fuel and install/repair. Other public permissions (taking parts, deflating, smashing windows and so on) and per-player permissions are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default).
 
 [h2]❓ FAQ[/h2]
 [b]Q: My character died. Is the car still mine?[/b]
@@ -84,6 +87,9 @@ A: Only people you gave the "see location" permission. By default nobody can.
 
 [b]Q: I lost my car. What now?[/b]
 A: Check where it was last seen in the fleet window. If it is really gone, press "Report lost"; the claim is released after a waiting period so you can claim another car.
+
+[b]Q: What happens to my cars if I stop playing for a while?[/b]
+A: After the number of days the server sets (30 by default) without logging in, your cars are unclaimed and others can claim them. Vehicle details in the fleet window show the "kept until" date; time the server is down does not count.
 
 [b]Q: Does it work in singleplayer?[/b]
 A: Yes, but it is made for multiplayer; the second split-screen player is not supported.

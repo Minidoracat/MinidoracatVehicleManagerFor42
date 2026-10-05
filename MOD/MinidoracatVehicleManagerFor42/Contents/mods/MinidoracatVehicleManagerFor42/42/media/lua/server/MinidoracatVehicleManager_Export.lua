@@ -112,8 +112,8 @@ end
 
 -- ---------------------------------------------------------------- export ---
 -- 移出世界（拖車裝走、被移除）的車不給 sqlId：舊號重啟後會被別台車回收，改給 outOfWorldSince（接回後恢復新 sqlId）
-local VEHICLE_FIELDS = { "owner", "name", "model", "state", "claimedAt", "lastKnown", "sharedWith", "faction", "oid", "sqlId",
-    "outOfWorldSince" }
+local VEHICLE_FIELDS = { "owner", "name", "model", "state", "claimedAt", "lastKnown", "sharedWith", "faction", "public", "oid",
+    "sqlId", "outOfWorldSince" }
 
 local function actionsOf(bits)
     local out = arr({})
@@ -140,6 +140,7 @@ function X.document()
                 z = math.floor(rec.lastKnownZ or 0), at = X.utc(rec.lastKnownAtMs) }) or nil,
             faction = rec.factionShare and obj({ "name", "state", "actions" }, { name = rec.factionName, state = rec.factionState,
                 actions = actionsOf(rec.factionActionBits) }) or nil,
+            public = (rec.publicBits or 0) > 0 and actionsOf(rec.publicBits) or nil,
         })
         vehicles[#vehicles + 1] = row
         keys[row] = tostring(rec.ownerUser) .. "\t" .. tostring(row.name or row.model) .. "\t" .. oid

@@ -68,6 +68,7 @@ function S.row(rec, who)
         base.lastKnownX, base.lastKnownY, base.lastKnownZ, base.lastKnownAtMs =
             rec.lastKnownX, rec.lastKnownY, rec.lastKnownZ, rec.lastKnownAtMs
         base.releaseDueAtMs = rec.releaseDueAtMs
+        base.publicBits = rec.publicBits or 0
         return base
     end
     if not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED" then return nil end
@@ -124,7 +125,37 @@ function S.push(recipients, rec, removed)
     end
 end
 
-O.onRecordChanged = function(rec) S.push(S.audience(rec), rec, false) end
+-- 公開分享表（oid → 動作位元）：陌生人的客戶端靠它判斷能不能用，所以給所有線上玩家（快照帶整張、變動時送 publicDelta）。
+-- 只有隨機 oid 與位元，不含車主、位置、車名；授權仍只看 O.allowsRecord。R.pub 是已送出的內容，開機時從帳本建一次
+local function publicOf(rec)
+    if not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED" then return 0 end
+    return rec.publicBits or 0
+end
+
+function S.publicTable()
+    if R.pub == nil then
+        R.pub = {}
+        for oid, rec in pairs(O.state().recordsByOid) do
+            local bits = publicOf(rec)
+            if bits > 0 then R.pub[oid] = bits end
+        end
+    end
+    return R.pub
+end
+
+function S.pushPublic(rec)
+    local pub, bits = S.publicTable(), publicOf(rec)
+    if (pub[rec.oid] or 0) == bits then return end
+    pub[rec.oid] = bits > 0 and bits or nil
+    for who, p in pairs(S.online()) do
+        if R.streams[who] then S.send(p, "publicDelta", { oid = rec.oid, bits = bits }) end
+    end
+end
+
+O.onRecordChanged = function(rec)
+    S.push(S.audience(rec), rec, false)
+    S.pushPublic(rec)
+end
 
 -- 改變收件者集合的突變（分享、陣營）：先記下舊集合；第三方車身標記（可拖曳名單）跟著更新
 local function change(rec, fn)
@@ -135,7 +166,8 @@ local function change(rec, fn)
 end
 
 -- quota：used／base（基本）／permanent／rental／paid（Economy 可用名額）／total，
--- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client
+-- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client。
+-- pub＝公開分享表；releaseDays＝閒置釋放天數（0＝關閉；玩家在線時期限是「現在＋天數」，客戶端自己換算日期）
 function S.snapshot(player, who)
     local st = { streamId = getRandomUUID(), seq = 0 }
     R.streams[who] = st
@@ -156,7 +188,7 @@ function S.snapshot(player, who)
     -- 約 1000 列（每列 0.4–1 KB）會碰到 1 MB 封包上限（見 S.sendAdminParts 的註解）。真有大陣營時照 sendAdminParts 分段
     S.send(player, "fleetSnapshot", { streamId = st.streamId, seq = 0, rows = rows,
         quotaUsed = quota and quota.used or 0, quotaLimit = quota and quota.total or 0, quota = quota,
-        status = O.R.status })
+        status = O.R.status, pub = ledger and S.publicTable() or nil, releaseDays = S.releaseDays() })
 end
 
 -- 名額規則變了：重送這些線上玩家的快照（名額顯示即時更新）；users＝nil 表示全部線上玩家
@@ -169,25 +201,51 @@ function S.resnapshot(users)
     for _, who in ipairs(users) do if online[who] then S.snapshot(online[who], who) end end
 end
 
--- 全服預設名額＝沙盒 ClaimsPerPlayer（唯一真相，帳本不另存）。R.defaultQuota 是上次看到的值：
--- 原版沙盒 UI 送回整份選項（GameServer.java:1694-1708）會直接改掉它，每分鐘比對一次，變了就重送快照
+-- 全服預設名額＝沙盒 ClaimsPerPlayer、閒置釋放天數＝沙盒 InactivityReleaseDays（唯一真相，帳本不另存）。
+-- R.sandboxSeen 是上次看到的值：原版沙盒 UI 送回整份選項（GameServer.java:1694-1708）會直接改掉它們，
+-- 每分鐘比對一次，變了就重送快照（名額與期限顯示即時更新）
 local DEFAULT_QUOTA_OPTION = "MinidoracatVehicleManager.ClaimsPerPlayer"
+local RELEASE_DAYS_OPTION = "MinidoracatVehicleManager.InactivityReleaseDays"
 function S.defaultQuota() return MVM.sandbox("ClaimsPerPlayer", 3) end
+function S.releaseDays() return MVM.sandbox("InactivityReleaseDays", 30) end
 
-function S.watchDefaultQuota()
-    local q, old = S.defaultQuota(), R.defaultQuota
-    R.defaultQuota = q
-    if old == nil or old == q then return end
-    O.audit("WARN", "ADMIN_QUOTA", { actor = "SANDBOX", role = "ADMIN", reason = "DEFAULT " .. tostring(old) .. "->" .. q })
+function S.watchSandbox()
+    local now2 = { quota = S.defaultQuota(), days = S.releaseDays() }
+    local old = R.sandboxSeen
+    R.sandboxSeen = now2
+    if old == nil or (old.quota == now2.quota and old.days == now2.days) then return end
+    if old.quota ~= now2.quota then
+        O.audit("WARN", "ADMIN_QUOTA", { actor = "SANDBOX", role = "ADMIN", reason = "DEFAULT " .. tostring(old.quota) .. "->" .. now2.quota })
+    end
+    if old.days ~= now2.days then
+        O.audit("WARN", "ADMIN_RELEASE_DAYS", { actor = "SANDBOX", role = "ADMIN", reason = tostring(old.days) .. "->" .. now2.days })
+    end
     S.resnapshot(nil)
 end
 
 -- SandboxOptions.set／toLua／saveServerLuaFile（SandboxOptions.java:572-582,279-285,683-685）：
 -- 存檔是 FileWriter，I/O 錯誤時回 false（:862-962），只有回 true 才算寫入
-local function writeDefaultQuota(opts, amount)
-    opts:set(DEFAULT_QUOTA_OPTION, amount)
+local function writeSandbox(opts, option, value)
+    opts:set(option, value)
     opts:toLua()
     return opts:saveServerLuaFile(getServerName())
+end
+
+-- 管理頁改全服設定：寫沙盒並存伺服器沙盒檔。失敗時記憶體與檔案都盡力改回原值、回 false（呼叫端回 SAVE_FAILED、不廣播）。
+-- 成功才通知線上客戶端同步 SandboxVars（伺服器沒有原版 Lua 廣播；客戶端副本舊了，原版沙盒 UI 存檔會蓋回舊值）並重送快照
+local function saveSandbox(option, value, old)
+    local opts = getSandboxOptions()
+    local ok, saved = pcall(writeSandbox, opts, option, value)
+    if ok and saved == true then
+        R.sandboxSeen = { quota = S.defaultQuota(), days = S.releaseDays() }
+        local sync = { claimsPerPlayer = R.sandboxSeen.quota, releaseDays = R.sandboxSeen.days }
+        for _, p in pairs(S.online()) do S.send(p, "sandboxSync", sync) end
+        S.resnapshot(nil)
+        return true
+    end
+    pcall(writeSandbox, opts, option, old)
+    MVM.log(option .. " save failed: " .. tostring(saved))
+    return false
 end
 
 -- 管理員總表分段送出。每條連線的送出緩衝區固定 1,000,000 bytes、不會擴充（UdpConnection.java:40-41），
@@ -239,14 +297,15 @@ function S.adminSnapshot(player)
     local players = {}
     for user, n in pairs(used) do
         local base = O.quotaBase(user)
+        local act = st.ownerActivity[user]
         players[#players + 1] = { user = user, used = n, base = base, limit = base + (O.paidSlots and O.paidSlots(user) or 0),
-            custom = MVM.isInt(st.quotaOverrides[user]) }
+            custom = MVM.isInt(st.quotaOverrides[user]), lastSeenAtMs = act and act.lastSuccessfulLoginAtMs or nil }
     end
     O.audit("INFO", "ADMIN_VIEW", { actor = O.principal(player), role = "ADMIN", count = #rows })
     local migrationAvailable = MVM.Migration ~= nil and MVM.Migration.available()
     local conflicts = O.R.identityConflicts
     S.sendAdminParts(player, { ok = true, status = O.R.status, migrationAvailable = migrationAvailable,
-        override = O.overrideActive(player), defaultQuota = S.defaultQuota(), identitySteam = O.steamMode(),
+        override = O.overrideActive(player), defaultQuota = S.defaultQuota(), releaseDays = S.releaseDays(), identitySteam = O.steamMode(),
         identityImported = st.identityImportedAtMs ~= nil, identityConflicts = conflicts and conflicts.names or nil }, rows, players)
 end
 
@@ -259,10 +318,12 @@ local TYPES = {
     token = validToken,
     bool = function(v) return type(v) == "boolean" end,
     bits = MVM.validShareBits,
+    publicBits = MVM.validPublicBits,
     user = function(v) return type(v) == "string" and #v >= 1 and #v <= 50 and not v:find("%c") end,
     text = function(v) return type(v) == "string" and #v <= 256 end,
     amount = function(v) return MVM.isInt(v) and v >= -1 and v <= 100 end,
     defaultAmount = function(v) return MVM.isInt(v) and v >= 0 and v <= 20 end, -- 同沙盒 ClaimsPerPlayer 範圍
+    releaseDays = function(v) return MVM.isInt(v) and v >= 0 and v <= 365 end, -- 同沙盒 InactivityReleaseDays 範圍
     op = function(v) return v == "RELEASE" or v == "ACTIVATE" end,
     migrationOp = function(v) return v == "IMPORT" end,
     identityOp = function(v) return v == "IMPORT" or v == "REBIND" end,
@@ -317,6 +378,7 @@ local SCHEMA = {
     reissueWitness = { vehicleId = "id", expectedOid = "uuid" },
     rename = { expectedOid = "uuid", expectedEpoch = "uuid", name = "text" },
     setFactionShare = { expectedOid = "uuid", expectedEpoch = "uuid", enabled = "bool", actionBits = "bits" },
+    setPublicShare = { expectedOid = "uuid", expectedEpoch = "uuid", actionBits = "publicBits" },
     addMember = { expectedOid = "uuid", username = "user", actionBits = "bits" },
     removeMember = { expectedOid = "uuid", username = "user" },
     leaveShared = { expectedOid = "uuid" },
@@ -324,6 +386,7 @@ local SCHEMA = {
     dismissRecord = { expectedOid = "uuid" },
     adminSetQuota = { usernames = "users", amount = "amount" },
     adminSetDefaultQuota = { amount = "defaultAmount" },
+    adminSetReleaseDays = { amount = "releaseDays" },
     adminRecover = { expectedOid = "uuid", op = "op", ["vehicleId?"] = "id" },
     fleetSubscribe = {},
     fleetResync = {},
@@ -582,6 +645,17 @@ H.setFactionShare = function(player, who, a)
     return { ok = true }
 end
 
+-- 公開給所有人（actionBits＝0 關閉）：只能是 MVM.PUBLIC_MASK 內的動作（TYPES.publicBits）。陌生人經公開表得知
+H.setPublicShare = function(player, who, a)
+    local rec, reason = ownManageable(who, a)
+    if rec == nil then return fail(reason) end
+    change(rec, function() rec.publicBits = a.actionBits; O.bump(rec) end)
+    S.pushPublic(rec)
+    O.audit("INFO", "ACL_CHANGE", { actor = who, oid = rec.oid, owner = who,
+        reason = a.actionBits > 0 and ("PUBLIC " .. a.actionBits) or "PUBLIC_OFF" })
+    return { ok = true }
+end
+
 H.addMember = function(player, who, a)
     local rec, reason = ownManageable(who, a)
     if rec == nil then return fail(reason) end
@@ -672,22 +746,21 @@ H.adminSetQuota = function(player, who, a)
     return { ok = true, count = #a.usernames }
 end
 
--- 全服預設名額：寫沙盒並存伺服器沙盒檔。存檔失敗：記憶體與檔案都盡力改回原值、回 SAVE_FAILED、不廣播。
--- 成功才通知線上客戶端同步 SandboxVars（伺服器沒有原版 Lua 廣播；客戶端副本舊了，原版沙盒 UI 存檔會蓋回舊值）
+-- 全服預設名額（沙盒 ClaimsPerPlayer）：存檔成功才回 ok（saveSandbox）
 H.adminSetDefaultQuota = function(player, who, a)
     if not O.isAdmin(player) then return fail("NOT_ADMIN") end
-    local opts = getSandboxOptions()
     local old = S.defaultQuota()
-    local ok, saved = pcall(writeDefaultQuota, opts, a.amount)
-    if not ok or saved ~= true then
-        pcall(writeDefaultQuota, opts, old)
-        MVM.log("default quota save failed: " .. tostring(saved))
-        return fail("SAVE_FAILED")
-    end
-    R.defaultQuota = a.amount
+    if not saveSandbox(DEFAULT_QUOTA_OPTION, a.amount, old) then return fail("SAVE_FAILED") end
     O.audit("WARN", "ADMIN_QUOTA", { actor = who, role = "ADMIN", reason = "DEFAULT " .. tostring(old) .. "->" .. a.amount })
-    for _, p in pairs(S.online()) do S.send(p, "sandboxSync", { claimsPerPlayer = a.amount }) end
-    S.resnapshot(nil)
+    return { ok = true, amount = a.amount }
+end
+
+-- 閒置釋放天數（沙盒 InactivityReleaseDays，0＝關閉）：存檔成功才回 ok；下一次維護（每分鐘）就用新值
+H.adminSetReleaseDays = function(player, who, a)
+    if not O.isAdmin(player) then return fail("NOT_ADMIN") end
+    local old = S.releaseDays()
+    if not saveSandbox(RELEASE_DAYS_OPTION, a.amount, old) then return fail("SAVE_FAILED") end
+    O.audit("WARN", "ADMIN_RELEASE_DAYS", { actor = who, role = "ADMIN", reason = tostring(old) .. "->" .. a.amount })
     return { ok = true, amount = a.amount }
 end
 
@@ -845,7 +918,7 @@ function S.minute()
     for name, at in pairs(R.unverified) do if t - at >= 60000 then R.unverified[name] = nil end end
     O.maintain(false)
     O.scanLoaded(false)
-    S.watchDefaultQuota()
+    S.watchSandbox()
 end
 
 Events.EveryOneMinute.Add(S.minute)
