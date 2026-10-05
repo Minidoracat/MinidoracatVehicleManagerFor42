@@ -48,10 +48,17 @@ function S.online()
     return out
 end
 
--- 給車主的通知（notice：{ key, oid?, who?, n?, atMs?, bad }）；不在線就不送
+-- 給車主的通知（notice：{ key, oid?, who?, n?, atMs?, bad }）：一律記進通知紀錄（Notices.lua），車主不在線也查得到；
+-- 在線就即時送，帶這則的編號、時間、次數、是否離線收到（併進離線時的那則會是 false）與紀錄當下的車名
+-- （客戶端用同一則更新「紀錄」分頁）
 function S.notify(who, payload)
     local p = S.online()[who]
-    if p then S.send(p, "notice", payload) end
+    local e = MVM.Notices and MVM.Notices.add(who, payload, p ~= nil)
+    if p == nil then return end
+    if e then
+        payload.id, payload.t, payload.c, payload.live, payload.name, payload.script = e.id, e.t, e.c, e.live, e.name, e.script
+    end
+    S.send(p, "notice", payload)
 end
 
 -- -------------------------------------------------------------- projection ---
@@ -181,7 +188,7 @@ end
 -- quota：used／base（基本）／permanent／rental／paid（Economy 可用名額）／total，
 -- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client。
 -- pub＝公開分享表；releaseDays＝閒置釋放天數（0＝關閉；玩家在線時期限是「現在＋天數」，客戶端自己換算日期）；
--- guard＝停車保全名額分項（MVM.Parked.counts）
+-- guard＝停車保全名額分項（MVM.Parked.counts）；notices／noticeRead＝通知紀錄（舊到新）與已讀到的時間（Notices.lua）
 function S.snapshot(player, who)
     local st = { streamId = getRandomUUID(), seq = 0 }
     R.streams[who] = st
@@ -200,10 +207,12 @@ function S.snapshot(player, who)
     end
     -- ponytail: 單一封包送出，列數＝自己的車＋被分享的車＋陣營分享車＋MVCK 待轉列，後兩者沒有上限；
     -- 約 1000 列（每列 0.4–1 KB）會碰到 1 MB 封包上限（見 S.sendAdminParts 的註解）。真有大陣營時照 sendAdminParts 分段
+    local notices, noticeRead = nil, nil
+    if MVM.Notices then notices, noticeRead = MVM.Notices.list(who) end
     S.send(player, "fleetSnapshot", { streamId = st.streamId, seq = 0, rows = rows,
         quotaUsed = quota and quota.used or 0, quotaLimit = quota and quota.total or 0, quota = quota,
         status = O.R.status, pub = ledger and S.publicTable() or nil, releaseDays = S.releaseDays(),
-        guard = ledger and MVM.Parked and MVM.Parked.counts(who) or nil })
+        guard = ledger and MVM.Parked and MVM.Parked.counts(who) or nil, notices = notices, noticeRead = noticeRead })
 end
 
 -- 名額規則變了：重送這些線上玩家的快照（名額顯示即時更新）；users＝nil 表示全部線上玩家
@@ -374,6 +383,7 @@ local TYPES = {
     product = function(v) return v == MVM.ECON_PRODUCT or v == MVM.GUARD_PRODUCT end,
     guardMode = function(v) return MVM.isInt(v) and v >= MVM.GUARD.OFF and v <= MVM.GUARD.SLOTS end, -- 同沙盒 ParkedGuard
     legacyRow = function(v) return type(v) == "string" and #v <= 40 and v:match("^legacy%-%d+$") ~= nil end, -- MVCK 待轉列 oid
+    ms = function(v) return MVM.isInt(v) and v >= 0 and v <= 1e15 end, -- 毫秒時間戳
 }
 -- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
 S.BATCH_MAX = 500
@@ -445,6 +455,7 @@ local SCHEMA = {
     adminSetGuardMode = { mode = "guardMode" },
     adminSetGuardSlots = { amount = "defaultAmount" }, -- 同沙盒 GuardSlotsPerPlayer 範圍 0..20
     adminSetGuardQuota = { usernames = "users", amount = "amount" },
+    noticesRead = { upToMs = "ms" },
 }
 -- 不帶 requestId、不回 ACK 的命令
 local QUERIES = { fleetSubscribe = true, fleetResync = true, prepareAction = true, adminList = true }
@@ -659,6 +670,12 @@ H.cancelRelease = function(player, who, a)
     if rec == nil then return fail(reason) end
     if rec.recordState ~= "PENDING_RELEASE" then return fail("INVALID_STATE") end
     O.setState(rec, "ACTIVE", "RELEASE_CANCELLED", { actor = who })
+    return { ok = true }
+end
+
+-- 車主看過通知紀錄（車隊視窗「紀錄」分頁）：已讀到 upToMs（伺服器夾到現在、不倒退）。只動自己的紀錄
+H.noticesRead = function(player, who, a)
+    if MVM.Notices then MVM.Notices.markRead(who, a.upToMs) end
     return { ok = true }
 end
 

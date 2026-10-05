@@ -166,6 +166,14 @@ function MVM.clientReceive(command, payload)
         b.quotaUsed, b.quotaLimit, b.quota, b.status = payload.quotaUsed, payload.quotaLimit, payload.quota, payload.status
         b.pub, b.releaseDays = type(payload.pub) == "table" and payload.pub or {}, payload.releaseDays
         b.guard = type(payload.guard) == "table" and payload.guard or nil -- 停車保全模式與保全名額（MVM.Parked.counts）
+        -- 通知紀錄（舊到新）與已讀到的時間；登入後第一份快照有離線時的通知就提示一次
+        b.notices = type(payload.notices) == "table" and payload.notices or {}
+        b.noticeRead = MVM.isInt(payload.noticeRead) and payload.noticeRead or 0
+        if not C.noticeHinted and principal(0) == payload.to then
+            C.noticeHinted = true
+            local n, p = MVM.noticeUnread(b), getSpecificPlayer(0)
+            if n > 0 and p then MVM.notify(p, getText("IGUI_MVM_Notice_Offline", n), true) end
+        end
     elseif command == "publicDelta" then
         if type(payload.oid) ~= "string" then return end
         b.pub = b.pub or {}
@@ -231,21 +239,54 @@ Events.OnServerCommand.Add(function(module, command, args)
     if module == MVM.MODULE then MVM.clientReceive(command, args) end
 end)
 
--- 伺服器通知（停車保全、租用名額到期）：譯文參數只放有的、依序是車名（自己車隊的列，同車隊視窗的名稱；
--- 對不到用 IGUI_MVM_FloatFallback）、對方帳號、數量、日期時間（本機時區）
+-- 伺服器通知（停車保全、租用名額到期）的文字：譯文參數只放有的、依序是車名、對方帳號、數量、日期時間（本機時區）。
+-- 車名先找自己車隊的列（同車隊視窗的名稱），車已不在車隊時用紀錄當下記的車名／車型，都沒有用 IGUI_MVM_FloatFallback。
+-- 同一台車短時間內重複的通知伺服器會併成一則（c 次）。即時通知與車隊視窗「紀錄」分頁共用
+function MVM.noticeText(b, e)
+    local args = {}
+    if type(e.oid) == "string" then
+        local F, row = MVM.FleetUI, b and b.rows and b.rows[e.oid]
+        if row == nil and (e.name or e.script) then row = { name = e.name or "", script = e.script } end
+        args[#args + 1] = row and F and F.displayName(row) or getText("IGUI_MVM_FloatFallback")
+    end
+    if type(e.who) == "string" then args[#args + 1] = e.who end
+    if MVM.isInt(e.n) then args[#args + 1] = e.n end
+    if type(e.at) == "number" then args[#args + 1] = MVM.dateTimeText(e.at) end
+    local s = getText(e.key, args[1], args[2], args[3], args[4])
+    if MVM.isInt(e.c) and e.c > 1 then s = s .. getText("IGUI_MVM_Notice_Times", e.c) end
+    return s
+end
+
+-- 未讀＝車主不在線時記下（live=false）、比已讀時間新的通知；在線時跳過的即時通知不算
+function MVM.noticeUnread(b)
+    local n = 0
+    for _, e in ipairs(b and b.notices or {}) do
+        if not e.live and (e.t or 0) > (b.noticeRead or 0) then n = n + 1 end
+    end
+    return n
+end
+
+function MVM.noticeUnreadLocal()
+    local who = principal(0)
+    return who and MVM.noticeUnread(C.buckets[who]) or 0
+end
+
+-- 即時通知：跳通知，並把同一則（伺服器的編號）寫進紀錄：合併的更新原本那則，新的接在最後
 MVM.clientHandlers = MVM.clientHandlers or {}
 MVM.clientHandlers.notice = function(payload)
     local p = getSpecificPlayer(0)
     if p == nil or principal(0) ~= payload.to or type(payload.key) ~= "string" then return end
-    local args = {}
-    if type(payload.oid) == "string" then
-        local row = bucket(payload.to).rows[payload.oid]
-        args[#args + 1] = row and MVM.FleetUI and MVM.FleetUI.displayName(row) or getText("IGUI_MVM_FloatFallback")
+    local b = bucket(payload.to)
+    local e = { id = payload.id, t = payload.t, key = payload.key, oid = payload.oid, who = payload.who, n = payload.n,
+        at = payload.atMs, bad = payload.bad == true, live = payload.live ~= false, c = payload.c, name = payload.name,
+        script = payload.script }
+    if MVM.isInt(e.id) then
+        b.notices = b.notices or {}
+        local at = #b.notices + 1
+        for i, old in ipairs(b.notices) do if old.id == e.id then at = i end end
+        b.notices[at] = e
     end
-    if type(payload.who) == "string" then args[#args + 1] = payload.who end
-    if MVM.isInt(payload.n) then args[#args + 1] = payload.n end
-    if type(payload.atMs) == "number" then args[#args + 1] = MVM.dateTimeText(payload.atMs) end
-    MVM.notify(p, getText(payload.key, args[1], args[2], args[3], args[4]), payload.bad == true)
+    MVM.notify(p, MVM.noticeText(b, e), e.bad)
 end
 
 -- 車上的零件見證只給 oid，用來對到自己的投影列；他人的車只知道「已被綁定」，以及公開表裡的公開動作。

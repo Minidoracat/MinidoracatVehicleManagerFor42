@@ -349,6 +349,7 @@ require("MinidoracatVehicleManager_ActionGuards")
 require("MinidoracatVehicleManager_Tracking")
 require("MinidoracatVehicleManager_Migration")
 require("MinidoracatVehicleManager_Export")
+require("MinidoracatVehicleManager_Notices")
 require("MinidoracatVehicleManager_Economy")
 require("MinidoracatVehicleManager_PaidSlots")
 require("MinidoracatVehicleManager_ClaimTags")
@@ -5027,6 +5028,122 @@ check(offText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_1" and allText ==
     and slotText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_3(1,3)" and localText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_1",
     "綁定確認：風險行依伺服器模式（SLOTS 帶保全名額已用／總數），還沒收到快照用本機沙盒")
 isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
+end)();
+
+(function()
+out("情境 N1：車主通知紀錄（離線也記、合併、上限與保留天數、已讀、檔案、快照與即時通知帶編號、客戶端未讀與紀錄分頁）")
+boot()
+local N, P = MVM.Notices, MVM.Parked
+for k in pairs(N.cache) do N.cache[k] = nil end
+SB.ParkedGuard = MVM.GUARD.ALL
+local OW, A1, A2 = player("nown", 1, 1), player("natk", 1, 1), player("natk2", 1, 1)
+local v = GH.car(181)
+local r = rec(claim(OW, v).oid)
+r.customName = "Blue\tVan\n%41" -- 車名可含 TAB、換行（TYPES.text）與 %：檔案逐欄編碼
+GH.tick()
+local function offline(p) for i = #online, 1, -1 do if online[i] == p then table.remove(online, i) end end end
+local function back(p) online[#online + 1] = p end
+offline(OW)
+local sent0 = GH.count(OW, "notice")
+P.onAttack(A1, r.oid)
+local list = N.list("nown")
+local e = list[1]
+check(GH.count(OW, "notice") == sent0 and #list == 1 and e.key == "IGUI_MVM_Attack_Guarded" and e.oid == r.oid and e.who == "natk"
+    and e.live == false and e.c == 1 and e.name == "Blue\tVan\n%41" and e.script == r.vehicleScript,
+    "車主不在線被攻擊：不送通知，記一筆（哪台車、誰、當時的車名與車型、離線收到）")
+nowMs = nowMs + P.NOTICE_MS
+P.onAttack(A1, r.oid)
+list = N.list("nown")
+check(#list == 1 and list[1].c == 2 and list[1].t == nowMs, "同一台車、同一攻擊者 10 分鐘內再攻擊：併成一則（2 次），時間改成最近一次")
+nowMs = nowMs + P.NOTICE_MS
+P.onAttack(A2, r.oid)
+list = N.list("nown")
+check(#list == 2 and list[2].who == "natk2" and list[2].c == 1, "換一個攻擊者：另記一則")
+nowMs = nowMs + N.MERGE_MS + 1
+P.onAttack(A2, r.oid)
+list = N.list("nown")
+check(#list == 3 and list[3].c == 1 and list[3].id == list[2].id + 1, "隔了 10 分鐘以上：另記一則，編號接續")
+for k in pairs(N.cache) do N.cache[k] = nil end
+local again = N.list("nown")
+check(#again == 3 and again[1].c == 2 and again[1].name == "Blue\tVan\n%41" and again[1].live == false and again[3].id == list[3].id,
+    "伺服器重開（清快取）從檔案讀回：次數、車名（TAB、換行、%）、離線旗標、編號都在")
+back(OW)
+cmd(OW, "fleetSubscribe", {}, false)
+local snap = lastOf(OW, "fleetSnapshot")
+check(#snap.notices == 3 and snap.noticeRead == 0 and snap.notices[1].who == "natk", "上線：快照帶自己的通知紀錄（舊到新）與已讀時間")
+cmd(A1, "fleetSubscribe", {}, false)
+check(#lastOf(A1, "fleetSnapshot").notices == 0, "別人的快照不帶這位車主的紀錄")
+local n1 = GH.count(OW, "notice")
+nowMs = nowMs + P.NOTICE_MS
+P.onAttack(A1, r.oid)
+local live = lastOf(OW, "notice")
+list = N.list("nown")
+check(GH.count(OW, "notice") == n1 + 1 and live.id == list[#list].id and live.t == nowMs and live.c == 1 and live.live == true
+    and live.name == "Blue\tVan\n%41" and list[#list].live == true,
+    "車主在線：即時送通知並記一筆，通知帶紀錄的編號、時間、次數與車名（紀錄分頁同一則）")
+offline(OW)
+nowMs = nowMs + P.NOTICE_MS
+P.onAttack(A1, r.oid)
+list = N.list("nown")
+check(#list == 4 and list[4].c == 2 and list[4].live == false, "在線看過的那則之後離線又被同一人攻擊：併進同一則，改成離線收到（算未讀）")
+back(OW)
+local bad1 = cmd(OW, "noticesRead", { upToMs = -1 })
+local bad2 = cmd(OW, "noticesRead", { upToMs = "1" })
+local bad3 = cmd(OW, "noticesRead", { upToMs = 5, extra = 1 })
+check(bad1.reason == "BAD_ARGS" and bad2.reason == "BAD_ARGS" and bad3.reason == "BAD_ARGS" and N.cache.nown.read == 0,
+    "noticesRead：只收非負整數毫秒，不收多的欄位")
+local ok1 = cmd(OW, "noticesRead", { upToMs = nowMs + 3600000 })
+check(ok1.ok and N.cache.nown.read == nowMs, "已讀時間夾到伺服器現在（不能先把之後的通知標成已讀）")
+local readAt = N.cache.nown.read
+cmd(OW, "noticesRead", { upToMs = 1 })
+check(N.cache.nown.read == readAt, "已讀時間不倒退")
+for k in pairs(N.cache) do N.cache[k] = nil end
+check(select(2, N.list("nown")) == readAt, "已讀時間存在檔案裡")
+player("ncap", 1, 1)
+offline(online[#online])
+for i = 1, N.MAX + 5 do S.notify("ncap", { key = "IGUI_MVM_Rent_Unlocked", n = i, bad = false }) end
+list = N.list("ncap")
+check(#list == N.MAX and list[1].n == 6 and list[#list].n == N.MAX + 5, "最多留 " .. N.MAX .. " 則：最舊的先刪（沒有車的通知不合併）")
+nowMs = nowMs + N.KEEP_MS + 1
+check(#N.list("ncap") == 0, "超過保留天數的通知不再列出")
+check(N.fileName("Alice") ~= N.fileName("alice") and N.fileName("a/b:c\\d"):match("^%x+$") ~= nil,
+    "檔名：大小寫不同的帳號不同檔（Windows 檔名不分大小寫），沒有路徑或保留字元")
+
+local savedIsClient, savedBad, savedGood = isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText
+isClient = function() return true end
+local toasts = {}
+HaloTextHelper.addBadText = function(_, s) toasts[#toasts + 1] = s end
+HaloTextHelper.addGoodText = function(_, s) toasts[#toasts + 1] = s end
+online = {}
+player("ncl", 1, 1)
+MVM.Client.noticeHinted = nil
+local NS = { { id = 1, t = 100, key = "IGUI_MVM_Attack_Guarded", oid = "gone", who = "x", live = false, c = 3, name = "Old Car" },
+    { id = 2, t = 200, key = "IGUI_MVM_Guard_Repaired", oid = "here", live = true, c = 1 },
+    { id = 3, t = 300, key = "IGUI_MVM_Rent_Unlocked", n = 1, live = false, c = 1 } }
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n1", seq = 0,
+    rows = { { oid = "here", role = "OWNER", state = "ACTIVE", name = "Mine" } }, notices = NS, noticeRead = 150 })
+local b = MVM.Client.buckets.ncl
+check(MVM.noticeUnread(b) == 1 and MVM.noticeUnreadLocal() == 1 and #toasts == 1 and toasts[1] == "IGUI_MVM_Notice_Offline(1)",
+    "登入快照：離線時收到、比已讀時間新的才算未讀（在線看過的不算），提示一次")
+check(MVM.noticeText(b, NS[1]) == "IGUI_MVM_Attack_Guarded(Old Car,x)IGUI_MVM_Notice_Times(3)"
+    and MVM.noticeText(b, NS[2]) == "IGUI_MVM_Guard_Repaired(Mine)"
+    and MVM.noticeText(b, { key = "K", oid = "gone2", script = "Base.Van" }) == "K(Van)",
+    "紀錄文字：車還在車隊用現在的名稱，不在了用當時記的車名或車型；併過的加次數")
+local notice = MVM.clientHandlers.notice
+notice({ to = "ncl", id = 3, t = 400, key = "IGUI_MVM_Rent_Unlocked", n = 1, c = 2, live = false })
+notice({ to = "ncl", id = 4, t = 500, key = "IGUI_MVM_Guard_Repaired", oid = "here", c = 1, live = true })
+check(#b.notices == 4 and b.notices[3].c == 2 and b.notices[3].t == 400 and b.notices[4].id == 4
+    and toasts[#toasts] == "IGUI_MVM_Guard_Repaired(Mine)",
+    "即時通知：同編號（伺服器併過）更新原本那則，新的接在最後，照樣跳通知")
+local F = MVM.FleetUI
+local items = F.noticeItems(b, "", 150)
+check(#items == 4 and items[1].e.id == 4 and items[4].e.id == 1 and items[2].unread == true and items[4].unread == false
+    and items[1].unread == false, "紀錄分頁：新到舊；打開分頁當時的已讀時間之後、離線時收到的標未讀")
+check(#F.noticeItems(b, "old car", 0) == 1, "紀錄分頁：搜尋比對通知文字（不分大小寫）")
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n2", seq = 0, rows = {}, notices = NS, noticeRead = 0 })
+check(#toasts == 3, "之後的快照不再提示離線通知")
+isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
+SB.ParkedGuard = MVM.GUARD.ALL
 end)();
 out("")
 if failures > 0 then

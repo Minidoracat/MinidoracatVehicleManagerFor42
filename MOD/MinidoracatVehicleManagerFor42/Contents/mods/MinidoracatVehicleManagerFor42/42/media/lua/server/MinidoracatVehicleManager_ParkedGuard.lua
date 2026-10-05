@@ -279,7 +279,7 @@ function P.discover(v)
     R.tracked[id], R.byOid[rec.oid] = e, e
 end
 
--- 指令防火牆拒絕砸窗時呼叫：回這台車目前是否布防中；車主在線就通知（同一台車＋同一攻擊者 NOTICE_MS 一次）
+-- 指令防火牆拒絕砸窗時呼叫：回這台車目前是否布防中；通知車主（同一台車＋同一攻擊者 NOTICE_MS 一次；不在線也記進通知紀錄）
 function P.onAttack(attacker, oid)
     local e = oid and R.byOid[oid]
     local guarded = e ~= nil and e.base ~= nil

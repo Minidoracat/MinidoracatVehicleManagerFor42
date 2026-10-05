@@ -14,6 +14,9 @@ MVM.GUARD_PRODUCT = "guard_slot"
 MVM.PRODUCTS = { MVM.ECON_PRODUCT, MVM.GUARD_PRODUCT }
 -- 停車保全模式（沙盒 ParkedGuard）：OFF＝關閉、ALL＝所有綁定的車、SLOTS＝依保全名額（車主逐台開啟）
 MVM.GUARD = { OFF = 1, ALL = 2, SLOTS = 3 }
+-- 車主通知紀錄（server Notices.lua）：每人保留最近幾則、幾天內；車隊視窗「紀錄」分頁的說明也用這兩個數
+MVM.NOTICE_MAX = 50
+MVM.NOTICE_KEEP_DAYS = 30
 -- 付費名額方案 12 欄，設定檔（paid-slots.json）的順序：key＝Economy 方案欄位（翻譯 IGUI_MVM_Paid_Name_<key>），
 -- file＝設定檔鍵（群組.鍵），kind＝bool／int／currency。server 讀寫設定檔與 client 設定視窗共用這一份
 MVM.PAID_FIELDS = {

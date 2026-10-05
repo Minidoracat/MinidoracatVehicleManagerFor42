@@ -9,7 +9,7 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [list]
 [*] [b]Required:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3789836701]Minidoracat UI Library[/url]
 [*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] (track your cars on the map)
-[*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url] (buy or rent extra claim slots and parked guard slots with in-game money, if the server sells them)
+[*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url] (buy or rent extra claim slots and damage guard slots with in-game money, if the server sells them)
 [*] Made for multiplayer (singleplayer works, but the second split-screen player is not supported)
 [/list]
 
@@ -24,11 +24,11 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [list]
 [*] [b]Account-bound claims[/b]: you keep your cars even when your character dies
 [*] [b]Protection[/b]: players without permission cannot drive, siphon fuel, strip parts or tow
-[*] [b]Parked guard[/b]: while no one is inside, weapons cannot damage a claimed car, and damage and broken windows are repaired; you are notified when someone attacks it (the server picks the mode)
+[*] [b]Damage guard[/b]: while no one is inside, weapons cannot damage a claimed car, and damage and broken windows are repaired; you are notified when someone attacks it, even while offline (the server picks the mode)
 [*] [b]Claim the trailer too[/b]: claimed vehicles can only be loaded onto a claimed trailer or tow truck, which also uses a claim slot
 [*] [b]Virtual key[/b]: owners can unlock, open doors and start the car without a physical key (servers can turn this off)
 [*] [b]Per-action sharing[/b]: share with specific players, your faction or everyone; private by default
-[*] [b]Fleet window[/b]: view your own and shared cars, then rename, transfer, or unclaim a lost car to free its slot
+[*] [b]Fleet window[/b]: view your own and shared cars, then rename, transfer, or unclaim a lost car to free its slot; the Notices tab records attacks and other changes to your cars, even while you are offline
 [*] [b]Minimap tracking[/b] (optional): your cars and shared cars you may locate show on the map
 [*] [b]Move from MVCK[/b]: admins import existing MVCK claims in one click
 [/list]

@@ -71,9 +71,9 @@ local function newestFirst(list)
     return MVM.sortByKey(list, keys)
 end
 
+-- 走 S.notify：一律記進通知紀錄（車主不在線時寬限、解除也查得到），在線才即時送
 local function notify(owner, key, n, atMs, bad)
-    local player = S.online()[owner]
-    if player then S.send(player, "notice", { key = key, n = n, atMs = atMs, bad = bad }) end
+    S.notify(owner, { key = key, n = n, atMs = atMs, bad = bad })
 end
 
 -- 重算一位車主的租約鎖定。deficit＝已用 −（基本＋可用付費 − 寬限中）；鎖定數＝deficit 夾在 0 到寬限＋到期名額之間

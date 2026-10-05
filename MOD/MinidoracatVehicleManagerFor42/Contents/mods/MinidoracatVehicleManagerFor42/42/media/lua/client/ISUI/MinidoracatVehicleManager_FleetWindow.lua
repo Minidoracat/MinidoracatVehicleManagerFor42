@@ -166,7 +166,14 @@ function F.cardLines(row, tab, b, query, now)
         if query ~= "" then add(getText("IGUI_MVM_NoMatch", query))
         elseif tab == "ADMIN" then add(getText("IGUI_MVM_Admin_Empty"))
         elseif tab == "SHARED" then add(getText("IGUI_MVM_EmptyShared"), "text")
+        elseif tab == "LOG" then
+            add(getText("IGUI_MVM_Notice_Empty", MVM.NOTICE_KEEP_DAYS, MVM.NOTICE_MAX), "text")
+            lines[#lines].wrap = true
         else add(getText("IGUI_MVM_Empty"), "text"); add(getText("IGUI_MVM_EmptyHint")) end
+    elseif row.kind == "NOTICE" then -- 通知紀錄：時間＋全文（layoutDetail 依詳情寬度換行）
+        add(MVM.dateTimeText(row.e.t or now), "text", true)
+        add(row.text, "text")
+        lines[#lines].wrap = true
     elseif row.kind == "PLAYER" then
         add(row.user == "" and getText("IGUI_MVM_Admin_NoOwner") or row.user, "text", true)
         local info = row.info
@@ -244,6 +251,22 @@ function F.playerSummary(g)
     add(c.HISTORY or 0, "IGUI_MVM_Admin_History")
     if #parts == 0 then return getText("IGUI_MVM_Admin_NoVehicles") end
     return table.concat(parts, getText("IGUI_MVM_Sep"), 1, #parts)
+end
+
+-- 「紀錄」分頁：通知新到舊（伺服器給舊到新），搜尋比對通知文字。readAt＝打開分頁當時的已讀時間：
+-- 看的這段期間，離線時收到的通知照樣標成未讀（伺服器已讀時間在打開分頁時就往前推）
+function F.noticeItems(b, query, readAt)
+    local out, list = {}, b and b.notices or {}
+    local q = query and query:lower() or ""
+    for i = #list, 1, -1 do
+        local e = list[i]
+        local s = MVM.noticeText(b, e)
+        if q == "" or s:lower():find(q, 1, true) then
+            out[#out + 1] = { kind = "NOTICE", oid = "notice:" .. tostring(e.id), e = e, text = s,
+                unread = not e.live and (e.t or 0) > (readAt or 0) }
+        end
+    end
+    return out
 end
 
 -- 管理頁清單：玩家列（kind＝PLAYER）後面接展開時的車輛列。名額以 server 的 players 為準；沒有車主的紀錄
@@ -358,6 +381,7 @@ local function text(el, s, x, y, token, font)
 end
 
 -- 超出寬度就截斷並加 "..."（完整文字在右側詳情）；只在綁定時量字寬，不在每幀。Kahlua 字串以字元計，中文不會切半
+local function measure(s, font) return getTextManager():MeasureStringX(font, s) end
 local function fit(s, w)
     local tm = getTextManager()
     if tm:MeasureStringX(FS, s) <= w then return s end
@@ -406,6 +430,13 @@ function Cell:render()
     end
     text(self, self.title, x + 36, math.floor(h / 2) - fh - 1, self.titleToken)
     text(self, self.sub, x + 36, math.floor(h / 2) + 1, "textMuted")
+    -- 防破壞中的車：副標右側盾牌＋字，清單上一眼看得到（寬度在 build 量好）
+    if self.tag then
+        local f, y = self.fleet, math.floor(h / 2) + 1
+        local tx = self.width - 10 - f.guardTagW
+        UI.Icons.draw(self, "shieldCheck", tx, y + math.floor((fh - 14) / 2), 14, COL.text, 1)
+        text(self, f.guardTag, tx + 18, y, "text")
+    end
 end
 
 -- 內容區：每幀 tick（搜尋、走近車輛、資料變更），並畫詳情卡、段落標題與頁尾
@@ -483,12 +514,15 @@ function FleetWindow:build()
     self.body = body
     local fh = fontH(FS)
     self.fh, self.ch = fh, fh + 10
+    self.guardTag = getText("IGUI_MVM_Guard_Tag")
+    self.guardTagW = 18 + measure(self.guardTag, FS)
     local W, H = body.width, body.height
 
     self.tabs = UI.Tabs.new({ x = PAD, y = PAD, height = self.ch, theme = theme, target = self, onSelect = FleetWindow.onTab,
         selected = "OWNED", items = {
             { id = "OWNED", label = getText("IGUI_MVM_Tab_OWNED") },
             { id = "SHARED", label = getText("IGUI_MVM_Tab_SHARED") },
+            { id = "LOG", label = getText("IGUI_MVM_Tab_LOG") },
             { id = "ADMIN", label = getText("IGUI_MVM_Tab_ADMIN") } } })
     self.tabs:setItemVisible("ADMIN", false)
     body:addChild(self.tabs)
@@ -519,6 +553,7 @@ function FleetWindow:build()
             c.player = row.kind == "PLAYER"
             c.box = self.tab == "ADMIN" and F.pickable(row)
             c.indent = (self.tab == "ADMIN" and not c.player) and INDENT or 0
+            c.tag = nil
             local w = c.width - c.indent - 36 - 10 - (c.box and BOX_W or 0)
             if c.player then
                 local info = row.info
@@ -526,12 +561,21 @@ function FleetWindow:build()
                 c.countW = getTextManager():MeasureStringX(FS, c.count)
                 c.title = fit(row.user == "" and getText("IGUI_MVM_Admin_NoOwner") or row.user, w - c.countW - GAP)
                 c.sub, c.titleToken = fit(row.summary, w), "text"
+            elseif row.kind == "NOTICE" then
+                -- 通知：圓點強調色＝未讀（離線時收到、打開分頁前沒看過），錯誤色＝車被攻擊
+                local sub = F.agoText(row.e.t or 0, getTimestampMs())
+                if not row.e.live then sub = sub .. getText("IGUI_MVM_Sep") .. getText("IGUI_MVM_Notice_WhileOffline") end
+                c.icon, c.color = nil, nil
+                c.title, c.sub = fit(row.text, w), fit(sub, w)
+                c.token = row.unread and "accent" or (row.e.bad and "errorText" or "textFaint")
+                c.titleToken = "text"
             else
                 c.color, c.icon = MVM.Appearance.get(row)
                 -- 狀態在前：清單寬度不夠時被截掉的是原始車名，不是狀態
                 local sub = F.stateText(row, getTimestampMs())
                 if F.renamed(row) then sub = sub .. getText("IGUI_MVM_Sep") .. F.modelName(row) end
-                c.title, c.sub = fit(F.displayName(row), w), fit(sub, w)
+                c.tag = row.guard == "ON"
+                c.title, c.sub = fit(F.displayName(row), w), fit(sub, c.tag and w - self.guardTagW - GAP or w)
                 c.token, c.titleToken = F.stateToken(row), F.isHistory(row) and "textMuted" or "text"
             end
         end,
@@ -764,9 +808,14 @@ function FleetWindow:rebuild()
         local t = { players = 0, bound = 0 }
         for _, p in ipairs(b.adminPlayers or {}) do t.players, t.bound = t.players + 1, t.bound + p.used end
         self.totals = t
+    elseif self.tab == "LOG" then
+        rows = F.noticeItems(b, self.query, self.logReadAt)
+        self:markNoticesRead(b)
     else
         rows = F.filter(b and b.rows, self.tab, self.query)
     end
+    local unread = MVM.noticeUnread(b)
+    self.tabs:setItemLabel("LOG", unread > 0 and getText("IGUI_MVM_Tab_LOG_N", unread) or getText("IGUI_MVM_Tab_LOG"))
     local keep = nil
     for i, row in ipairs(rows) do if row.oid == self.selectedOid then keep = i end end
     if keep == nil and #rows > 0 then keep = 1 end
@@ -775,6 +824,19 @@ function FleetWindow:rebuild()
     self.current = keep and rows[keep] or nil
     self.selectedOid = self.current and self.current.oid or nil
     self:layoutDetail()
+end
+
+-- 「紀錄」分頁打開時：已讀到最新一則（伺服器時間；合併的通知會更新最後一則的時間）。同一個時間只送一次，
+-- ACK 成功才改本機的已讀時間（不樂觀更新）
+function FleetWindow:markNoticesRead(b)
+    local list = b and b.notices or {}
+    local t = list[#list] and list[#list].t or 0
+    if t <= (b and b.noticeRead or 0) or t == self.readSent then return end
+    self.readSent = t
+    C.request(getSpecificPlayer(0), "noticesRead", { upToMs = t }, function(ack)
+        if ack.ok and (b.noticeRead or 0) < t then b.noticeRead = t end
+        self.dirty = true
+    end)
 end
 
 local function place(ctrl, x, y) ctrl:setX(x); ctrl:setY(y); ctrl:setVisible(true); return x + ctrl.width + GAP end
@@ -999,6 +1061,7 @@ end
 
 function FleetWindow:layoutBody(row, b, y)
     if self.tab == "ADMIN" then return self:layoutAdmin(row, b, y) end
+    if self.tab == "LOG" then return y end
     if row == nil then return y end
     if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正；車找不到（例：拖車裝卸後舊編號消失）時車主可以放棄、釋出名額
         local acts = {}
@@ -1023,7 +1086,18 @@ local PARK_X = -100000
 function FleetWindow:layoutDetail()
     local row, b = self.current, self:bucket()
     local recovery = b ~= nil and b.status == "RECOVERY_REQUIRED"
-    self.card = F.cardLines(row, self.tab, b, self.query, getTimestampMs())
+    -- 長文字（通知內容、紀錄分頁的說明）依詳情寬度換行
+    local card = {}
+    for _, l in ipairs(F.cardLines(row, self.tab, b, self.query, getTimestampMs())) do
+        if l.wrap then
+            local parts = {}
+            MVM.BillingUI.wrap(parts, l.text, self.detailW - 24, FS, measure)
+            for _, s in ipairs(parts) do card[#card + 1] = { text = s, token = l.token } end
+        else
+            card[#card + 1] = l
+        end
+    end
+    self.card = card
     local mode = MVM.guardModeFor(b)
     if mode ~= self.disclosureMode then self.disclosureMode, self.disclosure = mode, getText("IGUI_MVM_Disclosure_" .. mode) end
     local h = 20
@@ -1237,6 +1311,10 @@ function FleetWindow:onTab(id)
     self.selectedOid, self.current, self.scroll = nil, nil, 0
     self.dirty = true
     if id == "ADMIN" then C.request(getSpecificPlayer(0), "adminList", {}) end
+    if id == "LOG" then
+        local b = self:bucket()
+        self.logReadAt = b and b.noticeRead or 0
+    end
 end
 
 function FleetWindow:checkedBits()
@@ -1788,6 +1866,7 @@ local docked = CAPS.dock and UI.Dock and UI.Dock.register({
     onClick = FleetWindow.toggle,
     isActive = function() local f = FleetWindow.instance; return f ~= nil and f.win:getIsVisible() end,
     getState = function() if MVM.clientOverride(0) then return "warn" end end, -- 越權中：紅框常駐提醒
+    getBadge = function() return MVM.noticeUnreadLocal() end, -- 離線時收到、還沒在「紀錄」分頁看過的通知
     getStatus = function() if MVM.clientOverride(0) then return getText("IGUI_MVM_Override_Active") end end,
 })
 if not docked then
