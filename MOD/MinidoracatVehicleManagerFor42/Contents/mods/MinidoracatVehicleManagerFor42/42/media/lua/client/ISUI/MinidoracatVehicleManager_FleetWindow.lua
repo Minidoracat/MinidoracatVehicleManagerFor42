@@ -945,12 +945,16 @@ function FleetWindow:layoutOwner(row, b, y)
     acts[#acts + 1] = self.btnRename
     if not pending then
         if near then acts[#acts + 1] = self.btnTransfer end
+        -- 車不在身邊（客戶端沒載入這台車，F.findLoaded）時是「車已遺失，解除綁定」：等沙盒 ReleaseFinalizeHours 才解除
+        -- （期間伺服器看到車就取消），提示寫清楚不會通知管理員
+        if not near then self.btnReport:setTooltip(getText("IGUI_MVM_ReportLost_Tip", MVM.sandbox("ReleaseFinalizeHours", 24))) end
         acts[#acts + 1] = near and self.btnUnclaim or self.btnReport
     end
     y = self:flow(acts, y) + PAD
-    -- 停車保全：開＝這台車占一個保全名額（伺服器的列 guard 有值＝已開，含名額不夠暫停的）；保全名額視窗在 Economy 可用時才給
+    -- 停車保全：勾＝這台現在有保全（伺服器的列 guard＝ON）；名額不夠的車（OVER）不勾，勾下去＝把名額移到這台。
+    -- 保全名額視窗在 Economy 可用時才給
     if MVM.guardModeFor(b) == MVM.GUARD.SLOTS and GUARDABLE[row.state] then
-        self.guardBox:setChecked(row.guard ~= nil, true)
+        self.guardBox:setChecked(row.guard == "ON", true)
         local g = { self.guardBox }
         if b.guard and b.guard.economy == "READY" then g[2] = self.btnGuardSlots end
         y = self:flow(g, y) + PAD
@@ -996,8 +1000,11 @@ end
 function FleetWindow:layoutBody(row, b, y)
     if self.tab == "ADMIN" then return self:layoutAdmin(row, b, y) end
     if row == nil then return y end
-    if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正，沒有可用操作
-        return row.lastKnownX and self:flow({ self.btnMap }, y) or y
+    if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正；車找不到（例：拖車裝卸後舊編號消失）時車主可以放棄、釋出名額
+        local acts = {}
+        if row.lastKnownX then acts[1] = self.btnMap end
+        acts[#acts + 1] = self.btnUnclaim
+        return self:flow(acts, y)
     elseif row.role ~= "OWNER" then
         local acts = {}
         if row.lastKnownX then acts[#acts + 1] = self.btnMap end
@@ -1309,6 +1316,11 @@ end
 
 function FleetWindow:onUnclaim()
     local row = self.current; if not row then return end
+    if row.state == "PENDING_REBIND" then
+        return self:confirm("IGUI_MVM_ConfirmCancelRebind", F.displayName(row), function(w)
+            w:send("cancelRebind", { expectedOid = row.oid })
+        end, { ok = "IGUI_MVM_Btn_Unclaim", danger = true })
+    end
     local v = F.findLoaded(row)
     if v == nil then return self:say("IGUI_MVM_Reason_TOO_FAR") end
     self:confirm("IGUI_MVM_ConfirmUnclaim", F.displayName(row), function(w)
@@ -1318,8 +1330,8 @@ end
 
 function FleetWindow:onReportLost()
     local row = self.current; if not row then return end
-    self:confirm("IGUI_MVM_ConfirmReportLost", F.displayName(row), function(w) w:send("reportLost", { expectedOid = row.oid }) end,
-        { ok = "IGUI_MVM_Btn_ReportLost", danger = true })
+    self:confirm("IGUI_MVM_ConfirmReportLost", { F.displayName(row), MVM.sandbox("ReleaseFinalizeHours", 24) },
+        function(w) w:send("reportLost", { expectedOid = row.oid }) end, { ok = "IGUI_MVM_Btn_ReportLost", danger = true })
 end
 
 function FleetWindow:onCancelRelease()

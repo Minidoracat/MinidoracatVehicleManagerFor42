@@ -220,7 +220,7 @@ function M.hasPending()
     return false
 end
 
--- 待轉列（只讀，沒有可用操作）：車主快照只給自己的；who＝nil 給管理員總表全部
+-- 待轉列（車主唯一的操作是放棄：cancelRebind → M.cancel）：車主快照只給自己的；who＝nil 給管理員總表全部
 function M.pendingRows(who)
     local rows = {}
     local st = O.state()
@@ -231,6 +231,24 @@ function M.pendingRows(who)
         end
     end
     return rows
+end
+
+-- 車主放棄一筆待轉項：刪掉、釋出名額、寫稽核。之後那台車被看到也不再轉給他（車還在就是沒綁定的車，誰都能綁）。
+-- 2026-10-06 使用者裁定：W900 貨櫃裝卸後舊編號消失、轉不了正的車主不用等 RebindDeadlineDays。回 nil＝成功，否則原因碼
+function M.cancel(who, rowOid)
+    local st = O.state()
+    for id, e in pairs(st and st.pendingRebindByLegacyKey or {}) do
+        if M.rowId(id) == rowOid then
+            if e.ownerUser ~= who then return "NOT_OWNER" end
+            O.mapSet("pendingRebindByLegacyKey", id, nil)
+            O.audit("INFO", "MIGRATE", { actor = who, owner = who, reason = "REBIND_CANCELLED legacy=" .. M.intStr(id)
+                .. " script=" .. tostring(e.vehicleScript) })
+            S.push({ [who] = true }, { oid = rowOid }, true)
+            O.bump(nil)
+            return nil
+        end
+    end
+    return "NO_SUCH_RECORD"
 end
 
 -- 逾期未對上車的待轉項刪除並寫入報告（audit）

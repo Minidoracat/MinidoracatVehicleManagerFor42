@@ -36,8 +36,8 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [list]
 [*] Open it with the steering wheel icon in the family toolbar; press "." to expand the toolbar when it is collapsed
 [*] See your cars, cars shared with you and where they were last seen; click the coordinates in vehicle details to copy them and paste them to others
-[*] Rename, share, transfer or unclaim; when the server uses guard slots, turn on "Parked guard" for each car in its details, which also show the guard status and how many guard slots you use
-[*] [b]Report lost[/b]: the claim is released after a waiting period; the car stays protected meanwhile, and if the server sees it again soon the release is cancelled
+[*] Rename, share, transfer or unclaim; when the server uses guard slots, they go to your earliest claimed cars automatically. To guard a different car, tick "Parked guard" in its details, which also show the guard status and how many guard slots you use
+[*] [b]Unclaim lost vehicle[/b]: for a car that was destroyed, disappeared or can't be found when you can't get to it. It is unclaimed after a waiting period (24 hours by default) and frees your slot; the car stays protected meanwhile, and if the server sees it in that time this is cancelled. Admins are not notified
 [*] [b]Kept until[/b]: if the owner does not log in for the number of days the server sets (30 by default), their cars are unclaimed automatically. Vehicle details show the date, which moves forward every time you play; time the server is down does not count
 [/list]
 
@@ -81,7 +81,7 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 [*] You can press it again; it only picks up claims made in MVCK since, without duplicates, and never deletes MVCK data
 [*] Once you are happy, remove MVCK from the server yourself. While both mods run, both protections apply, and vehicles claimed in MVCK cannot be claimed with this mod; the import moves them to their owners
 [/olist]
-MVCK public permissions become "Share with everyone": allowing everyone to ride, drive, open the trunk, siphon fuel or inflate tires maps to ride, drive, trunk, fuel and install/repair. Other public permissions (taking parts, deflating, smashing windows and so on) and per-player permissions are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default).
+MVCK public permissions become "Share with everyone": allowing everyone to ride, drive, open the trunk, siphon fuel or inflate tires maps to ride, drive, trunk, fuel and install/repair. Other public permissions (taking parts, deflating, smashing windows and so on) and per-player permissions are not imported, so owners need to share again. Pending imports whose vehicle never shows up are cleared after the number of days set in sandbox options (30 by default); owners can also press "Unclaim vehicle" on such a row to free the slot right away.
 
 [h2]❓ FAQ[/h2]
 [b]Q: My character died. Is the car still mine?[/b]
@@ -100,7 +100,7 @@ A: Yes. MiniMap only shows your cars on the map; claiming, protection, sharing a
 A: Only people you gave the "see location" permission. By default nobody can.
 
 [b]Q: I lost my car. What now?[/b]
-A: Check where it was last seen in the fleet window. If it is really gone, press "Report lost"; the claim is released after a waiting period so you can claim another car.
+A: Check where it was last seen in the fleet window. If it is really gone, press "Unclaim lost vehicle"; the claim is released after a waiting period so you can claim another car. For a car imported from the old mod that never moved over, press "Unclaim vehicle" directly.
 
 [b]Q: What happens to my cars if I stop playing for a while?[/b]
 A: After the number of days the server sets (30 by default) without logging in, your cars are unclaimed and others can claim them. Vehicle details in the fleet window show the "kept until" date; time the server is down does not count.

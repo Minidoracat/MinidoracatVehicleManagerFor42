@@ -1673,6 +1673,24 @@ local removedPending = false
 for _, m in ipairs(outbox.alice) do if m.command == "fleetDelta" then for _, r in ipairs(m.payload.removes) do if r == "legacy-1700000000102" then removedPending = true end end end end
 check(removedPending, "車主收到撤掉待轉列的 delta")
 check(O.canUse(player("eve", 1, 1), van, "DRIVE") == false, "轉正後他人被拒")
+-- 車主放棄待轉項（使用者 2026-10-06：W900 貨櫃裝卸後舊編號消失、轉不了正的車主不用等 RebindDeadlineDays）
+O.mapSet("pendingRebindByLegacyKey", 1700000000777, { legacyVehicleId = 1700000000777, ownerUser = "alice", vehicleScript = "Base.Van",
+    importedAtMs = nowMs })
+local used7, log7 = O.quotaUsed("alice"), #logLines
+check(cmd(player("eve", 1, 1), "cancelRebind", { expectedOid = "legacy-1700000000777" }).reason == "NOT_OWNER"
+    and O.state().pendingRebindByLegacyKey[1700000000777] ~= nil, "別人不能放棄這筆待轉項：NOT_OWNER，待轉項還在")
+check(cmd(A5, "cancelRebind", { expectedOid = "legacy-12x" }).reason == "BAD_ARGS"
+    and cmd(A5, "cancelRebind", { expectedOid = r5.oid }).reason == "BAD_ARGS", "待轉列 oid 格式不對（含一般紀錄的 UUID）：BAD_ARGS")
+check(cmd(A5, "cancelRebind", { expectedOid = "legacy-1700000000778" }).reason == "NO_SUCH_RECORD", "沒有這筆待轉項：NO_SUCH_RECORD")
+local cr = cmd(A5, "cancelRebind", { expectedOid = "legacy-1700000000777" })
+local dropped, audited = false, false
+for _, m in ipairs(outbox.alice) do if m.command == "fleetDelta" then for _, r in ipairs(m.payload.removes) do if r == "legacy-1700000000777" then dropped = true end end end end
+for i = log7 + 1, #logLines do if logLines[i]:find("REBIND_CANCELLED legacy=1700000000777", 1, true) then audited = true end end
+check(cr.ok and O.state().pendingRebindByLegacyKey[1700000000777] == nil and O.quotaUsed("alice") == used7 - 1 and dropped and audited,
+    "車主放棄待轉項：刪掉、名額立刻少 1、車主收到撤列 delta、稽核 REBIND_CANCELLED")
+local late = vehicle(9, 777, 7777, "Base.Van", 1, 1)
+late:getModData().SQLID = 1700000000777
+check(O.lookup(late) == "UNCLAIMED", "放棄後那台車才出現：不再轉給原車主（是沒綁定的車）")
 -- 逾期
 SB.RebindDeadlineDays = 1
 nowMs = nowMs + 2 * 86400000
@@ -4440,19 +4458,28 @@ SB.ParkedGuard, SB.GuardSlotsPerPlayer = MVM.GUARD.SLOTS, 1
 local ADM, OW, ST, MB = player("sadm", 1, 1, { admin = true }), player("sown", 1, 1), player("sstr", 1, 1), player("smem", 1, 1)
 cmd(OW, "fleetSubscribe", {}, false)
 local c1, c2, c3 = GH.car(91), GH.car(92), GH.car(93)
-local r1, r2, r3 = rec(claim(OW, c1).oid), rec(claim(OW, c2).oid), rec(claim(OW, c3).oid)
+local r1 = rec(claim(OW, c1).oid); nowMs = nowMs + 1000
+local r2 = rec(claim(OW, c2).oid); nowMs = nowMs + 1000
+local r3 = rec(claim(OW, c3).oid)
 GH.tick()
-check(not GH.armed(c1) and P.state(r1) == nil, "SLOTS：車主沒開保全的車不布防")
+check(P.state(r1) == "ON" and P.state(r2) == "OVER" and P.state(r3) == "OVER" and r1.guard == nil
+    and GH.armed(c1) and not GH.armed(c2) and not GH.armed(c3),
+    "SLOTS 預設：沒選過的車照綁定時間用名額，最早綁定的那台布防、其餘 OVER（車主不必設定）")
 local snaps = GH.count(OW, "fleetSnapshot")
-local on1 = cmd(OW, "setGuard", { expectedOid = r1.oid, enabled = true })
+local on3 = cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = true })
 local g = lastOf(OW, "fleetSnapshot").guard
-check(on1.ok and on1.enabled == true and r1.guard == true and r1.guardAtMs == nowMs and GH.count(OW, "fleetSnapshot") == snaps + 1
+check(on3.ok and on3.enabled == true and r3.guard == true and r3.guardAtMs == nowMs and GH.count(OW, "fleetSnapshot") == snaps + 1
+    and P.state(r3) == "ON" and P.state(r1) == "OVER"
     and g.mode == MVM.GUARD.SLOTS and g.used == 1 and g.base == 1 and g.total == 1 and g.custom == false,
-    "setGuard 開：rec.guard、guardAtMs，ACK enabled，重送車主快照帶 guard（模式、已用／總數）")
+    "車主開一台：排到沒選過的車前面（名額移過來）；ACK enabled，重送車主快照帶 guard（已用＝正在保全的台數）")
 GH.tick()
-check(GH.armed(c1) and not GH.armed(c2) and P.state(r1) == "ON", "開了保全的車布防，其他車不動")
+check(GH.armed(c3) and not GH.armed(c1) and c1.parts.Engine.dur == 5, "名額移走的車解除布防、durability 寫回，開的那台布防")
 check(cmd(ST, "setGuard", { expectedOid = r2.oid, enabled = true }).reason == "NOT_OWNER" and r2.guard == nil, "別人的車：NOT_OWNER")
-check(cmd(OW, "setGuard", { expectedOid = r2.oid, enabled = true }).reason == "GUARD_FULL" and r2.guard == nil, "名額用滿再開：GUARD_FULL")
+check(cmd(OW, "setGuard", { expectedOid = r2.oid, enabled = true }).reason == "GUARD_FULL" and r2.guard == nil,
+    "名額都被車主手動開的車用掉再開：GUARD_FULL")
+local at3 = r3.guardAtMs
+nowMs = nowMs + 1000
+check(cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = true }).ok and r3.guardAtMs == at3, "已在保全的車再開：不變（順序不往後排）")
 local l0 = #logLines
 check(cmd(OW, "adminSetGuardQuota", { usernames = { "sown" }, amount = 2 }).reason == "NOT_ADMIN"
     and O.state().guardOverrides.sown == nil, "非管理員不能設個人保全名額")
@@ -4460,32 +4487,54 @@ local q = cmd(ADM, "adminSetGuardQuota", { usernames = { "sown" }, amount = 2 })
 check(q.ok and q.count == 1 and O.state().guardOverrides.sown == 2 and lastOf(OW, "fleetSnapshot").guard.total == 2
     and lastOf(OW, "fleetSnapshot").guard.custom == true and GH.logged(l0, "ADMIN_GUARD", "USER DEFAULT->2", "sadm"),
     "管理員設個人保全名額：guardOverrides、重送該玩家快照、稽核 ADMIN_GUARD")
-check(cmd(OW, "setGuard", { expectedOid = r2.oid, enabled = true }).ok and P.state(r2) == "ON", "名額變 2：第二台開啟成功")
+check(P.state(r3) == "ON" and P.state(r1) == "ON" and P.state(r2) == "OVER", "名額變 2：手動開的那台＋最早綁定的那台，自動補上")
 GH.tick()
-check(GH.armed(c1) and GH.armed(c2), "兩台都布防")
+check(GH.armed(c1) and GH.armed(c3) and not GH.armed(c2), "兩台布防")
 local n0 = GH.count(OW, "notice")
 cmd(ADM, "adminSetGuardQuota", { usernames = { "sown" }, amount = 1 })
-check(P.state(r1) == "ON" and P.state(r2) == "OVER" and r2.guard == true, "名額調降：依開啟時間排序，先開的 ON、後開的 OVER（旗標保留）")
+check(P.state(r3) == "ON" and P.state(r1) == "OVER" and r1.guard == nil, "名額調降：手動開的留著，沒選過的先讓出")
 check(GH.count(OW, "notice") == n0 + 1 and lastOf(OW, "notice").key == "IGUI_MVM_Guard_Paused" and lastOf(OW, "notice").n == 1,
-    "OVER 變多：通知車主 IGUI_MVM_Guard_Paused（台數）")
+    "名額變少讓 OVER 變多：通知車主 IGUI_MVM_Guard_Paused（這次多出來的台數）")
 GH.tick()
-check(GH.armed(c1) and not GH.armed(c2) and c2.parts.Engine.dur == 5, "OVER 的車解除布防、durability 寫回")
-check(cmd(OW, "addMember", { expectedOid = r1.oid, username = "smem", actionBits = MVM.ACTIONS.PASSENGER }).ok
-    and cmd(OW, "addMember", { expectedOid = r2.oid, username = "smem", actionBits = MVM.ACTIONS.PASSENGER }).ok, "分享兩台給成員")
-check(S.row(r2, "sown").guard == "OVER" and S.row(r1, "sown").guard == "ON" and S.row(r1, "smem").guard == "ON"
-    and S.row(r2, "smem").guard == nil and S.row(r3, "sown").guard == nil, "列：車主看 ON／OVER，成員只看 ON，沒開的車 nil")
-check(cmd(OW, "setGuard", { expectedOid = r1.oid, enabled = false }).ok and r1.guard == nil and r1.guardAtMs == nil
-    and P.state(r2) == "ON", "關掉先開的那台：OVER 的車轉 ON")
+check(GH.armed(c3) and not GH.armed(c1) and c1.parts.Engine.dur == 5, "OVER 的車解除布防、durability 寫回")
+nowMs = nowMs + 1000
+O.mapSet("quotaOverrides", "sown", 5)
+local c4 = GH.car(94)
+local r4 = rec(claim(OW, c4).oid)
 GH.tick()
-check(not GH.armed(c1) and GH.armed(c2), "關掉的車解除，轉 ON 的車布防")
-check(cmd(OW, "setGuard", { expectedOid = r1.oid, enabled = true }).reason == "GUARD_FULL", "重開（排到最後）：名額不夠 GUARD_FULL")
+check(P.state(r4) == "OVER" and GH.count(OW, "notice") == n0 + 1, "新綁的車排不進名額：OVER，不通知（名額沒變少）")
+check(cmd(OW, "addMember", { expectedOid = r3.oid, username = "smem", actionBits = MVM.ACTIONS.PASSENGER }).ok
+    and cmd(OW, "addMember", { expectedOid = r1.oid, username = "smem", actionBits = MVM.ACTIONS.PASSENGER }).ok, "分享兩台給成員")
+check(S.row(r1, "sown").guard == "OVER" and S.row(r3, "sown").guard == "ON" and S.row(r3, "smem").guard == "ON"
+    and S.row(r1, "smem").guard == nil, "列：車主看 ON／OVER，成員只看 ON")
+check(cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = false }).ok and r3.guard == false and r3.guardAtMs == nil
+    and P.state(r3) == nil and S.row(r3, "sown").guard == nil and P.state(r1) == "ON",
+    "關掉手動開的那台：記成關掉（false）不保全，名額讓給最早綁定的車")
+GH.tick()
+check(not GH.armed(c3) and GH.armed(c1), "關掉的車解除，接手的車布防")
+nowMs = nowMs + 1000
+GH.tick()
+check(P.state(r3) == nil and not GH.armed(c3), "關掉的車之後也不會被自動排回名額")
+check(cmd(OW, "setGuard", { expectedOid = r2.oid, enabled = true }).ok and P.state(r2) == "ON" and P.state(r1) == "OVER",
+    "沒選過、排不進名額的車開啟：排到前面，原本用名額的預設車讓出")
 SB.ParkedGuard = MVM.GUARD.ALL
-check(cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = true }).reason == "GUARD_NOT_SLOTS" and r3.guard == nil,
+check(cmd(OW, "setGuard", { expectedOid = r4.oid, enabled = true }).reason == "GUARD_NOT_SLOTS" and r4.guard == nil,
     "模式不是 SLOTS：GUARD_NOT_SLOTS")
+check(P.state(r3) == "ON" and P.state(r4) == "ON", "所有綁定的車：不看保全開關，每台都有保全")
 SB.ParkedGuard = MVM.GUARD.SLOTS
-cmd(ADM, "adminRecover", { expectedOid = r3.oid, op = "RELEASE" })
-check(r3.recordState == "RELEASED" and cmd(OW, "setGuard", { expectedOid = r3.oid, enabled = true }).reason == "INVALID_STATE",
+cmd(ADM, "adminRecover", { expectedOid = r4.oid, op = "RELEASE" })
+check(r4.recordState == "RELEASED" and cmd(OW, "setGuard", { expectedOid = r4.oid, enabled = true }).reason == "INVALID_STATE",
     "已結束的紀錄：INVALID_STATE")
+-- 使用者 2026-10-06 問「免費改成付費，玩家要重新設定嗎」：不用。所有綁定的車模式下綁的車，切到依保全名額後
+-- 最早綁定的直接用名額
+local FR = player("sfree", 1, 1)
+SB.ParkedGuard = MVM.GUARD.ALL
+local f1 = rec(claim(FR, GH.car(95)).oid); nowMs = nowMs + 1000
+local f2 = rec(claim(FR, GH.car(96)).oid)
+check(P.state(f1) == "ON" and P.state(f2) == "ON", "所有綁定的車：兩台都有保全")
+SB.ParkedGuard = MVM.GUARD.SLOTS
+check(P.state(f1) == "ON" and P.state(f2) == "OVER" and f1.guard == nil and f2.guard == nil,
+    "改成依保全名額（免費 1 台）：不必重新設定，最早綁定的那台直接有保全")
 check(cmd(ADM, "adminSetGuardQuota", { usernames = { "sown" }, amount = -1 }).ok and O.state().guardOverrides.sown == nil,
     "個人保全名額 -1：恢復全服預設")
 
@@ -4518,8 +4567,8 @@ local meta = lastOf(ADM, "adminSnapshot")
 local pl = {}
 for _, p in ipairs(meta.players) do pl[p.user] = p end
 check(meta.guardMode == MVM.GUARD.SLOTS and meta.guardSlots == 4 and pl.sown.guardBase == 4 and pl.sown.guardCustom == false
-    and pl.sown.guardUsed == 1 and pl.sown.guardLimit == 4 and pl.smem.guardBase == 0 and pl.smem.guardCustom == true,
-    "管理員總表：模式、免費名額；SLOTS 時每位玩家帶保全名額（基本、個人設定、已用、上限）")
+    and pl.sown.guardUsed == 2 and pl.sown.guardLimit == 4 and pl.smem.guardBase == 0 and pl.smem.guardCustom == true,
+    "管理員總表：模式、免費名額；SLOTS 時每位玩家帶保全名額（基本、個人設定、已用＝正在保全的台數：預設 1＋手動開 1，關掉與已結束的不算）")
 SB.ParkedGuard = MVM.GUARD.ALL
 cmd(ADM, "adminList", {}, false)
 meta = lastOf(ADM, "adminSnapshot")

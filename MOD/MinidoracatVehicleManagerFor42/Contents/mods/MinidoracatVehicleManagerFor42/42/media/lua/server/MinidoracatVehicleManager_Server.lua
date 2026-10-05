@@ -373,6 +373,7 @@ local TYPES = {
     paidPlan = function(v) return MVM.PaidSlots ~= nil and MVM.PaidSlots.validPlan(v) end,
     product = function(v) return v == MVM.ECON_PRODUCT or v == MVM.GUARD_PRODUCT end,
     guardMode = function(v) return MVM.isInt(v) and v >= MVM.GUARD.OFF and v <= MVM.GUARD.SLOTS end, -- 同沙盒 ParkedGuard
+    legacyRow = function(v) return type(v) == "string" and #v <= 40 and v:match("^legacy%-%d+$") ~= nil end, -- MVCK 待轉列 oid
 }
 -- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
 S.BATCH_MAX = 500
@@ -416,6 +417,7 @@ local SCHEMA = {
     claim = { claimAttemptId = "uuid" },
     unclaim = { vehicleId = "id", expectedOid = "uuid", expectedEpoch = "uuid" },
     reportLost = { expectedOid = "uuid" },
+    cancelRebind = { expectedOid = "legacyRow" },
     cancelRelease = { expectedOid = "uuid" },
     reissueWitness = { vehicleId = "id", expectedOid = "uuid" },
     rename = { expectedOid = "uuid", expectedEpoch = "uuid", name = "text" },
@@ -642,6 +644,16 @@ H.reportLost = function(player, who, a)
     return { ok = true, releaseDueAtMs = rec.releaseDueAtMs }
 end
 
+-- MVCK 待轉項：車主放棄（車找不到、舊編號消失而轉不了正）→ 刪掉、釋出名額（Migration.lua M.cancel）。
+-- 待轉列的 oid 是 legacy-<舊 ID>，不是 UUID；車不在世界上，不看距離
+H.cancelRebind = function(player, who, a)
+    if MVM.Migration == nil then return fail("NO_SUCH_RECORD") end
+    local bad = MVM.Migration.cancel(who, a.expectedOid)
+    if bad then return fail(bad) end
+    if MVM.RentLock then MVM.RentLock.evaluate(who) end
+    return { ok = true }
+end
+
 H.cancelRelease = function(player, who, a)
     local rec, reason = ownRecord(who, a.expectedOid)
     if rec == nil then return fail(reason) end
@@ -705,19 +717,22 @@ H.setPublicShare = function(player, who, a)
     return { ok = true }
 end
 
--- 停車保全開關（只在 SLOTS 模式，車主逐台開）：開啟時已用滿上限 → GUARD_FULL。排名依 guardAtMs，關掉再開會排到最後；
--- 一台關掉時原本 OVER 的車可能轉 ON，所以重送車主整份快照
+-- 停車保全開關（只在 SLOTS 模式）。沒選過的車照綁定時間自動用名額（ParkedGuard.lua ranked），開關只是改順序：
+-- 開＝這台排到沒選過的車前面（把名額移過來），車主手動開的車已佔滿名額 → GUARD_FULL（含名額調降後超出的那台再按一次）；
+-- 關＝rec.guard=false，名額讓給下一台。一台的變動會讓別台 ON／OVER 互換，所以重送車主整份快照
 H.setGuard = function(player, who, a)
     if MVM.Parked == nil or MVM.guardMode() ~= MVM.GUARD.SLOTS then return fail("GUARD_NOT_SLOTS") end
     local rec, reason = ownRecord(who, a.expectedOid)
     if rec == nil then return fail(reason) end
     if not MVM.Parked.GUARDABLE[rec.recordState] then return fail("INVALID_STATE") end
-    if a.enabled == (rec.guard == true) then return { ok = true, enabled = a.enabled } end
     if a.enabled then
-        local base, paid, _, used = MVM.Parked.slots(who)
-        if used >= base + paid then return fail("GUARD_FULL") end
+        if MVM.Parked.state(rec) == "ON" then return { ok = true, enabled = true } end
+        local base, paid, _, _, explicit = MVM.Parked.slots(who)
+        if explicit - (rec.guard == true and 1 or 0) >= base + paid then return fail("GUARD_FULL") end
+    elseif rec.guard == false then
+        return { ok = true, enabled = false }
     end
-    rec.guard, rec.guardAtMs = a.enabled or nil, a.enabled and now() or nil
+    rec.guard, rec.guardAtMs = a.enabled, a.enabled and now() or nil
     O.bump(rec)
     O.audit("INFO", "GUARD_SET", { actor = who, oid = rec.oid, owner = who, reason = a.enabled and "ON" or "OFF" })
     S.push(S.audience(rec), rec, false)

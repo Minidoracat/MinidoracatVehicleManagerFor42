@@ -6,8 +6,8 @@
 --      車窗原件不見了換一片同型新玻璃（清掉布防後才出現的碎玻璃）、
 --      其他換件改認目前的為基準；durability 被重設（車重新載入、換件）就再拉高。油、電、貨物一律不補
 --   3. 解除（有授權者上車、被拖、紀錄結束、模式不保全）：把拉高的 durability 寫回原值
--- 模式（沙盒 ParkedGuard）每次檢查重讀：OFF 不保全、ALL 所有綁定車、SLOTS 車主逐台開（rec.guard），
--- 依開啟時間排序只有前 limit 台生效（ON），其餘 OVER（暫停、旗標保留）。limit＝基本（guardOverrides 或沙盒）＋付費。
+-- 模式（沙盒 ParkedGuard）每次檢查重讀：OFF 不保全、ALL 所有綁定車、SLOTS 依保全名額：車主沒關掉的車（rec.guard ~= false）
+-- 依順序前 limit 台生效（ON），其餘 OVER。limit＝基本（guardOverrides 或沙盒）＋付費；順序見 ranked。
 -- 追蹤：生車、綁定成功、每 SCAN_MS 掃已載入車（O.R.bySqlId 先篩）→ discover；授權突變後 touch → 下次檢查重記基準。
 -- 實機 API 驗證：E2E weapon-mp（vm-weapon-1005b，scenarios/weapon-mp/E2EScenarioServer.lua 的 snapshot／wpBoost／wpRestore）
 if isClient() then return end
@@ -54,47 +54,58 @@ local function limitOf(owner)
     return custom and o or MVM.guardSlotsDefault(), paid, custom
 end
 
--- OVER 台數變多（付費到期、管理員調降）就通知車主；第一次看到只記基準
-local function noteOver(owner, n)
+-- 名額變少（付費到期、管理員調降）讓 OVER 變多才通知車主（台數＝這次多出來的）；新綁的車排不進名額不算。第一次看到只記基準
+local function noteOver(owner, n, limit)
     local old = R.overSeen[owner]
-    R.overSeen[owner] = n
-    if old ~= nil and n > old then notify(owner, { key = "IGUI_MVM_Guard_Paused", n = n, bad = true }) end
+    R.overSeen[owner] = { n = n, limit = limit }
+    if old ~= nil and n > old.n and limit < old.limit then
+        notify(owner, { key = "IGUI_MVM_Guard_Paused", n = n - old.n, bad = true })
+    end
 end
 
--- SLOTS：車主開啟保全的可保全紀錄依 guardAtMs（同時以 oid）排序，前 limit 台生效。
--- sortByKey 是穩定排序：先排 oid 再排時間＝(guardAtMs, oid) 字典序
+-- SLOTS 的順序：先排車主手動開的（guard==true，依 guardAtMs），再排沒選過的（guard==nil，依綁定時間 claimedAtMs）；
+-- 車主關掉的（guard==false）不排。免費改成依保全名額、新綁的車、買到名額都不必玩家設定（最早綁定的車先用名額），
+-- 車主手動開一台＝排到沒選過的前面（把名額移過來），關掉＝讓給下一台。
+-- sortByKey 是穩定排序：先排 oid、再排時間、最後排群組＝(群組, 時間, oid) 字典序
 local function ranked(owner)
     local hit = R.memo and R.memo[owner]
     if hit then return hit end
-    local list, byOid, byAt = {}, {}, {}
+    local list, byOid, byAt, byGroup, explicit = {}, {}, {}, {}, 0
     for _, rec in ipairs(O.R.byOwner[owner] or {}) do
-        if rec.guard == true and GUARDABLE[rec.recordState] then
+        if rec.guard ~= false and GUARDABLE[rec.recordState] then
+            local mine = rec.guard == true
             list[#list + 1] = rec
-            byOid[rec], byAt[rec] = rec.oid, rec.guardAtMs or 0
+            if mine then explicit = explicit + 1 end
+            byOid[rec], byGroup[rec] = rec.oid, mine and 0 or 1
+            byAt[rec] = (mine and rec.guardAtMs or rec.claimedAtMs) or 0
         end
     end
-    list = MVM.sortByKey(MVM.sortByKey(list, byOid), byAt)
+    list = MVM.sortByKey(MVM.sortByKey(MVM.sortByKey(list, byOid), byAt), byGroup)
     local base, paid = limitOf(owner)
-    local out = { n = #list, on = {} }
-    for i, rec in ipairs(list) do out.on[rec.oid] = i <= base + paid end
-    noteOver(owner, math.max(0, #list - base - paid))
+    local limit = base + paid
+    local out = { n = math.min(#list, limit), explicit = explicit, on = {} }
+    for i, rec in ipairs(list) do out.on[rec.oid] = i <= limit end
+    noteOver(owner, math.max(0, #list - limit), limit)
     if R.memo then R.memo[owner] = out end
     return out
 end
 
--- "ON"／"OVER"／nil（不保全：模式 OFF、紀錄不可保全、SLOTS 沒開）
+-- "ON"／"OVER"／nil（不保全：模式 OFF、紀錄不可保全、SLOTS 車主關掉）
 function P.state(rec)
     local mode = MVM.guardMode()
     if mode == MVM.GUARD.OFF or rec == nil or rec.ownerUser == nil or not GUARDABLE[rec.recordState] then return nil end
     if mode == MVM.GUARD.ALL then return "ON" end
-    if rec.guard ~= true then return nil end
+    if rec.guard == false then return nil end
     return ranked(rec.ownerUser).on[rec.oid] and "ON" or "OVER"
 end
 
--- 名額：base, paid, custom（有個人設定）, used（SLOTS 下開啟保全的可保全紀錄數，其他模式 0）。管理頁逐人用，不碰 Economy 摘要
+-- 名額：base, paid, custom（有個人設定）, used（SLOTS 下正在保全的台數，其他模式 0）, explicit（車主手動開的台數）。
+-- 管理頁逐人用，不碰 Economy 摘要
 function P.slots(owner)
     local base, paid, custom = limitOf(owner)
-    return base, paid, custom, MVM.guardMode() == MVM.GUARD.SLOTS and ranked(owner).n or 0
+    if MVM.guardMode() ~= MVM.GUARD.SLOTS then return base, paid, custom, 0, 0 end
+    local r = ranked(owner)
+    return base, paid, custom, r.n, r.explicit
 end
 
 -- 快照用的名額分項。paid 用實際生效的 guardPaid（Economy 短暫讀不到時沿用上次值），其餘分項來自 Economy 摘要
