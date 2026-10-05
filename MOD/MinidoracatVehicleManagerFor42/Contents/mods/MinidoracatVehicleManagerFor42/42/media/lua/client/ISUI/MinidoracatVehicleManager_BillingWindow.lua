@@ -97,45 +97,117 @@ function BU.money(E, amount, currency) return getText("IGUI_MVM_Slots_Money", am
 -- 數量步進器的值夾在 1..hi
 function BU.clamp(v, hi) return math.max(1, math.min(hi, math.floor(tonumber(v) or 1))) end
 
--- 避頭：這些全形標點不放行首。Kahlua 字串是 UTF-16，string.byte 回碼元；標準 Lua 回位元組，比不到、無副作用
-local NO_LINE_START = { [12289] = true, [12290] = true, [65292] = true, [65307] = true, [65306] = true, [65281] = true,
-    [65311] = true, [65289] = true, [12301] = true, [12303] = true, [12305] = true, [12299] = true }
-local function wordChar(b) return b ~= nil and ((b >= 48 and b <= 57) or (b >= 65 and b <= 90) or (b >= 97 and b <= 122)) end
+-- 換行：規則同框架 MinidoracatUI/TextWrap.lua（內部模組、不對外，所以這裡照抄規則）。二分找最長放得下的前綴；
+-- 截點兩側任一是空白、或任一是中日韓字（含全形標點）就在截點斷，否則往回找最近的斷點；整段都沒有斷點才硬切，
+-- 硬切也不拆開英數字串（14 不會變成 1／4；整段都是英數字才照字切）。行首不放 UAX #14 CL／CP／EX／IS／NS 與
+-- 收尾引號，行尾不放 OP 與起始引號。框架之外多兩條：數字和後面的中日文單位（7 日、7日）不拆開；片假名詞
+-- 像英文單字一樣整個換行（サバイバーコイン 不會切成 コイ／ン）。中日文夾數字時不再退回最後一個空白斷，行不會
+-- 只用到一半。字元邊界：Kahlua 字串是 UTF-16 code unit（string.byte 回碼元），harness 的標準 Lua 是 UTF-8
+-- 位元組；本檔只能寫 ASCII 字面值，字一律寫碼位
+local charOK, char256 = pcall(string.char, 256)
+local UTF16 = charOK and string.byte(char256) == 256
+local ASTRAL = 0x10000 -- 補充平面字（surrogate pair／4 位元組 UTF-8）一律當表意字
+local function codeSet(codes)
+    local t = {}
+    for _, c in ipairs(codes) do t[c] = true end
+    return t
+end
+local NO_START = codeSet({ 0x21, 0x29, 0x2C, 0x2E, 0x3A, 0x3B, 0x3F, 0x5D, 0x7D, 0x2019, 0x201D, 0x2026,
+    0x3001, 0x3002, 0x3005, 0x3009, 0x300B, 0x300D, 0x300F, 0x3011, 0x3015, 0x3017, 0x3019, 0x301B, 0x301C,
+    0x309B, 0x309C, 0x309D, 0x309E, 0x30A0, 0x30FB, 0x30FD, 0x30FE,
+    0xFF01, 0xFF09, 0xFF0C, 0xFF0E, 0xFF1A, 0xFF1B, 0xFF1F, 0xFF3D, 0xFF5D, 0xFF61, 0xFF63, 0xFF64 })
+local NO_END = codeSet({ 0x28, 0x5B, 0x7B, 0x2018, 0x201C, 0x3008, 0x300A, 0x300C, 0x300E, 0x3010, 0x3014,
+    0x3016, 0x3018, 0x301A, 0x301D, 0xFF08, 0xFF3B, 0xFF5B, 0xFF62 })
+local function ideographic(c)
+    return (c >= 0x2E80 and c <= 0x9FFF) or (c >= 0xAC00 and c <= 0xD7AF) or (c >= 0xF900 and c <= 0xFAFF)
+        or (c >= 0xFE30 and c <= 0xFE4F) or (c >= 0xFF00 and c <= 0xFFEF) or c >= ASTRAL
+end
+local function digit(c) return c ~= nil and c >= 48 and c <= 57 end
+local function alnum(c) return digit(c) or (c ~= nil and ((c >= 65 and c <= 90) or (c >= 97 and c <= 122))) end
+-- 片假名（含長音ー）與半形片假名
+local function katakana(c) return c ~= nil and ((c >= 0x30A1 and c <= 0x30FA) or c == 0x30FC or (c >= 0xFF66 and c <= 0xFF9F)) end
 
--- 貪婪換行：量字寬（measure(s, font)）找最長可放前綴，有空白就在最後一個空白斷（中日文沒有空白就照字切）。
--- 不從英數字串中間斷（14 不會變成 1／4）；數字和後面的中日文單位（7 日、7 天，中間的空白也算）一起換到下一行；
--- 整行都是英數字才照字切
+-- n 退到字元邊界：前 n 個 unit 不切開一個字
+local function boundary(s, n)
+    if UTF16 then
+        local u = n > 0 and s:byte(n) or 0
+        if u >= 0xD800 and u <= 0xDBFF then n = n - 1 end -- 前綴結尾是 high surrogate
+        return n
+    end
+    while n > 0 do
+        local u = s:byte(n + 1)
+        if not u or u < 128 or u >= 192 then break end
+        n = n - 1 -- 下一個位元組是 continuation：退到字元開頭
+    end
+    return n
+end
+
+-- 從第 i 個 unit 開始的那個字的碼位（超出字串回 nil）。2 位元組 UTF-8 回首位元組：只需要知道它不是空白、數字、
+-- 表意字或禁則字
+local function codeAt(s, i)
+    local u = s:byte(i)
+    if u == nil or UTF16 then
+        if u and u >= 0xD800 and u <= 0xDFFF then return ASTRAL end
+        return u
+    end
+    if u < 0xE0 then return u end
+    if u >= 0xF0 then return ASTRAL end
+    local b2, b3 = s:byte(i + 1, i + 2)
+    return (u - 0xE0) * 4096 + ((b2 or 0x80) - 0x80) * 64 + ((b3 or 0x80) - 0x80)
+end
+
+-- 第 n 個 unit 之後（n 是字元邊界、後面還有字）左右兩個字的碼位，與左邊那個字的起點
+local function around(s, n)
+    local li = boundary(s, n - 1) + 1
+    return codeAt(s, li), codeAt(s, n + 1), li
+end
+
+local function breakable(s, n)
+    local left, right, li = around(s, n)
+    -- 數字和後面的中日文單位黏在一起：7|日、7| 日、7 |日 都不斷
+    if digit(left) and ideographic((right == 32 and codeAt(s, n + 2)) or right or 0) then return false end
+    if left == 32 and li > 1 and ideographic(right or 0) and digit(codeAt(s, boundary(s, li - 2) + 1)) then return false end
+    if left == 32 or right == 32 then return true end
+    if katakana(left) and katakana(right) then return false end
+    return (ideographic(left) or ideographic(right)) and not NO_START[right] and not NO_END[left]
+end
+
+-- 一行：回 line, rest（line 去掉行尾空白、rest 去掉開頭空白）；連一個字都放不下時照樣放一個字
+local function cutLine(text, width, font, measure)
+    if measure(text, font) <= width then return text, "" end
+    local low, high, best = 1, #text, 0
+    while low <= high do
+        local mid = math.floor((low + high) / 2)
+        local n = boundary(text, mid)
+        if n >= 1 and measure(text:sub(1, n), font) <= width then best, low = n, mid + 1 else high = mid - 1 end
+    end
+    local n = best
+    if best == 0 then
+        repeat n = n + 1 until boundary(text, n) == n
+    else
+        while n > 0 and not breakable(text, n) do n = boundary(text, n - 1) end
+        if n == 0 then -- 沒有斷點：硬切，但退到英數字串外
+            n = best
+            while n > 0 do
+                local left, right = around(text, n)
+                if not (alnum(left) and alnum(right)) then break end
+                n = boundary(text, n - 1)
+            end
+            if n == 0 then n = best end
+        end
+    end
+    return (text:sub(1, n):gsub("%s+$", "")), (text:sub(n + 1):gsub("^%s+", ""))
+end
+
+-- 貪婪換行：measure(s, font) 量字寬；每段（\n 分段）各自換行，空段留一行空白
 function BU.wrap(out, s, width, font, measure)
     for para in (s .. "\n"):gmatch("(.-)\n") do
         local rest = para
         if rest == "" then out[#out + 1] = "" end
         while rest ~= "" do
-            local n = #rest
-            if measure(rest, font) > width then
-                local lo, hi = 1, n
-                while lo < hi do
-                    local mid = math.floor((lo + hi + 1) / 2)
-                    if measure(rest:sub(1, mid), font) <= width then lo = mid else hi = mid - 1 end
-                end
-                local space = rest:sub(1, lo):find(" [^ ]*$")
-                n = (space and space > lo / 2) and space or lo
-                local cut = n
-                local unit = rest:byte(cut + 1)
-                if rest:byte(cut) == 32 and unit ~= nil and unit > 127 then
-                    local d = rest:byte(cut - 1)
-                    if d ~= nil and d >= 48 and d <= 57 then
-                        cut = cut - 1
-                        while cut > 1 and wordChar(rest:byte(cut)) do cut = cut - 1 end
-                    end
-                end
-                while cut > 1 and (NO_LINE_START[rest:byte(cut + 1)]
-                    or (wordChar(rest:byte(cut)) and rest:byte(cut + 1) ~= 32)) do
-                    cut = cut - 1
-                end
-                if cut > 1 then n = cut end
-            end
-            out[#out + 1] = (rest:sub(1, n):gsub("%s+$", ""))
-            rest = (rest:sub(n + 1):gsub("^%s+", ""))
+            local line
+            line, rest = cutLine(rest, width, font, measure)
+            out[#out + 1] = line
         end
     end
 end

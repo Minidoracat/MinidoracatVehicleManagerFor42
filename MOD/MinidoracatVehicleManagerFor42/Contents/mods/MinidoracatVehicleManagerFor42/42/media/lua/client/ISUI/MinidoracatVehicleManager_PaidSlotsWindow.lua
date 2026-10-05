@@ -594,22 +594,27 @@ function P:layoutForm(d)
     self:fieldRow("rentalDays")
     self:fieldRow("rentalLimit")
 
-    -- 進階設定：收起時一行摘要（有改過也標色條）
+    -- 進階設定：收起時按鈕右邊一段摘要，放不下就在按鈕右邊換行（英文一行放不下）；有改過也標色條
     self.y = self.y + GAP
-    local rowY, rowH = self.y, self.ch
+    local rowY = self.y
     self.btnAdvanced:setTitle(getText(self.advanced and "IGUI_MVM_Paid_AdvancedHide" or "IGUI_MVM_Paid_Advanced"))
+    local x, parts, lh = PAD + 8 + self.btnAdvanced.width + GAP, {}, fontH(FS) + 2
+    if not self.advanced then
+        local draft = self.draft
+        BU.wrap(parts, getText("IGUI_MVM_Paid_AdvancedSummary", draft.graceHours, draft.reminderHours,
+            getText(draft.autoRenewAllowed and "IGUI_MVM_Paid_Name_autoRenewAllowed" or "IGUI_MVM_Paid_AutoNotAllowed")),
+            PAD + self.innerW - x, FS, measure)
+    end
+    local textH = #parts * lh - 2
+    local rowH = math.max(self.ch, textH)
     if not self.advanced then
         for _, k in ipairs(ADVANCED) do
             if self:changed(k) then self:markRow(rowY, rowH); break end
         end
     end
-    local x = self:put(self.btnAdvanced, PAD + 8, rowY, rowH)
-    if not self.advanced then
-        local draft = self.draft
-        self:textAt(getText("IGUI_MVM_Paid_AdvancedSummary", draft.graceHours, draft.reminderHours,
-            getText(draft.autoRenewAllowed and "IGUI_MVM_Paid_Name_autoRenewAllowed" or "IGUI_MVM_Paid_AutoNotAllowed")),
-            x, rowY + math.floor((rowH - fontH(FS)) / 2), "textMuted")
-    end
+    self:put(self.btnAdvanced, PAD + 8, rowY, rowH)
+    local ty = rowY + math.floor((rowH - textH) / 2)
+    for i, t in ipairs(parts) do self:textAt(t, x, ty + (i - 1) * lh, "textMuted") end
     self.y = rowY + rowH + GAP
     if self.advanced then
         self:fieldRow("graceHours")

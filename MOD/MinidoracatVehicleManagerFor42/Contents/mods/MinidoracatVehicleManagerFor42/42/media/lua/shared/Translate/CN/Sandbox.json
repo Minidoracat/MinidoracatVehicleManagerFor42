@@ -25,5 +25,5 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "记录并警告玩家",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "把玩家移出车外",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 迁移：未对上的绑定保留天数",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "从 Mysterious Vehicle Claim Key 导入的绑定，会在服务器第一次看到该车时转为正式绑定。超过此天数仍未对上的导入项会删除并写入审核记录。"
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "从 Mysterious Vehicle Claim Key 导入的绑定，会在服务器第一次看到该车时转为正式绑定。超过此天数仍未对上的导入项会删除并写入审计记录。"
 }

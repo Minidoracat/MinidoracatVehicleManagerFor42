@@ -2431,6 +2431,14 @@ wrapped = {}
 BU.wrap(wrapped, "------\227\128\129" .. "7 \230\151\165\233\150\147", 12, nil, function(s) return #s end)
 check(wrapped[1] == "------\227\128\129" and wrapped[2] == "7 \230\151\165\233\150\147",
     "名額視窗換行：數字和後面的中日文單位（中間有空白）一起換到下一行")
+wrapped = {}
+BU.wrap(wrapped, "租金調為每期 300 倖存幣（原 250 倖存幣）", 48, nil, function(s) return #s end)
+check(wrapped[1] == "租金調為每期 300 倖存幣（原 250 倖" and wrapped[2] == "存幣）" and wrapped[3] == nil,
+    "名額視窗換行：中文夾數字時在放得下的最後一個字斷，不退回最後一個空白（舊版只排到「（原」，行只用到一半）")
+wrapped = {}
+BU.wrap(wrapped, "あいうサバイバーコイン", 30, nil, function(s) return #s end)
+check(wrapped[1] == "あいう" and wrapped[2] == "サバイバーコイン" and wrapped[3] == nil,
+    "名額視窗換行：片假名詞像英文單字一樣整個換到下一行，不切成「サバイバーコイ／ン」")
 
 -- 付費名額設定視窗純邏輯：變更清單、整份送出、草稿 rebase、影響說明
 isClient = function() return true end
