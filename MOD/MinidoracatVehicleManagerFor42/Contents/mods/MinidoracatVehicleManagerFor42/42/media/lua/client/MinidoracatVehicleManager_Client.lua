@@ -17,6 +17,7 @@ end
 MVM.ui = ui
 
 -- 玩家通知走框架 Toast；只有能力缺席（離線 harness、舊框架）才退回原版頭頂文字。錯誤停留久一點（含怎麼辦，要讀得完）。
+-- 最多 4 行：Toast 寬度固定（文字 284px），英文「發生什麼＋怎麼辦」一行約 36 字，3 行會把怎麼辦截成省略號（E2E admin-layout toasts）
 -- 車隊視窗開著時通知讓開（框架 rev 12 避開區，Toast 每幀問一次矩形）：錯誤通知停 8 秒，常常蓋到剛打開的視窗右上角
 local toastColors = nil
 local BAD_HOLD_MS = 8000
@@ -43,7 +44,7 @@ function MVM.notify(player, text, bad)
         local now = getTimestampMs()
         if text == lastToast and now - lastToastAt < (bad and BAD_HOLD_MS or GOOD_HOLD_MS) then return end
         lastToast, lastToastAt = text, now
-        UI.Toast.show({ message = text, colors = bad and toastColors.bad or toastColors.good, maxLines = 3,
+        UI.Toast.show({ message = text, colors = bad and toastColors.bad or toastColors.good, maxLines = 4,
             holdMs = bad and BAD_HOLD_MS or nil })
     elseif player then
         if bad then HaloTextHelper.addBadText(player, text) else HaloTextHelper.addGoodText(player, text) end
