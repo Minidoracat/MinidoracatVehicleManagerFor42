@@ -1578,10 +1578,21 @@ local function createFloat()
     ISLayoutManager.RegisterWindow("MinidoracatVehicleManagerFloat", FloatLayout, F.float)
 end
 
-Events.OnGameStart.Add(createFloat)
-Events.OnResolutionChange.Add(function()
-    if F.float then
-        F.float:setPosition(floatDefault())
-        ISLayoutManager.TryRestore("MinidoracatVehicleManagerFloat")
-    end
-end)
+-- 家族工具列（框架 rev 13 Dock）：登記成功就不建浮鈕；舊框架或登記失敗照舊用浮鈕。回呼每幀可能被呼叫，不建 table
+local docked = CAPS.dock and UI.Dock and UI.Dock.register({
+    id = "vehiclemanager", order = 40, iconKey = "steeringwheel",
+    label = function() return getText("IGUI_MVM_FleetTitle") end,
+    onClick = FleetWindow.toggle,
+    isActive = function() local f = FleetWindow.instance; return f ~= nil and f.win:getIsVisible() end,
+    getState = function() if MVM.clientOverride(0) then return "warn" end end, -- 越權中：紅框常駐提醒
+    getStatus = function() if MVM.clientOverride(0) then return getText("IGUI_MVM_Override_Active") end end,
+})
+if not docked then
+    Events.OnGameStart.Add(createFloat)
+    Events.OnResolutionChange.Add(function()
+        if F.float then
+            F.float:setPosition(floatDefault())
+            ISLayoutManager.TryRestore("MinidoracatVehicleManagerFloat")
+        end
+    end)
+end

@@ -4151,6 +4151,66 @@ local tr = cmd(OWp, "transfer", { vehicleId = car.id, expectedOid = r.oid, expec
 local fresh = tr.ok and rec(tr.oid)
 check(fresh and fresh.publicBits == 0 and lastOf(STp, "publicDelta").oid == r.oid and lastOf(STp, "publicDelta").bits == 0,
     "轉讓：舊紀錄的公開撤掉，新車主從私人開始")
+end)();
+
+(function()
+out("情境 DK：家族工具列（框架 rev 13 Dock）與舊框架浮鈕退回")
+local saved = { UI = MinidoracatUI, panel = ISPanel, font = UIFont, core = getCore, layout = ISLayoutManager,
+    override = MVM.clientOverride, win = MVM.FleetWindow, fui = MVM.FleetUI, changed = MVM.onFleetChanged, hooks = MVM.clientMenuHooks }
+local regs, floats = {}, {}
+local function loadFleet(capabilities, accept)
+    MinidoracatUI = { v1 = { API_MAJOR = 1, API_REVISION = 13, CAPABILITIES = capabilities,
+        Theme = { create = function(options) return options end },
+        FloatButton = { new = function(opts) floats[#floats + 1] = opts; return opts end },
+        Dock = { register = function(spec) regs[#regs + 1] = spec; return accept end } } }
+    MVM.clientMenuHooks = {}
+    local n = {}
+    for _, ev in ipairs({ "OnGameStart", "OnResolutionChange", "OnNetworkUsersReceived" }) do
+        handlers[ev] = handlers[ev] or {}; n[ev] = #handlers[ev]
+    end
+    isClient = function() return true end
+    assert(loadfile(MEDIA .. "/client/ISUI/MinidoracatVehicleManager_FleetWindow.lua"))()
+    isClient = function() return false end
+    local added = { start = #handlers.OnGameStart - n.OnGameStart, res = #handlers.OnResolutionChange - n.OnResolutionChange }
+    for i = n.OnGameStart + 1, #handlers.OnGameStart do handlers.OnGameStart[i]() end -- 進遊戲
+    for ev, k in pairs(n) do while #handlers[ev] > k do table.remove(handlers[ev]) end end
+    return added
+end
+ISPanel = { derive = function() return {} end }
+UIFont = { Small = 1, Medium = 2, Large = 3 }
+getCore = function() return { getScreenWidth = function() return 1920 end, getScreenHeight = function() return 1080 end } end
+ISLayoutManager = { RegisterWindow = function() end, TryRestore = function() end, OnPostSave = function() end }
+local function caps(dock) return { window = true, controls = true, dialog = true, virtualList = true, floatButton = true, dock = dock } end
+
+local docked = loadFleet(caps(true), true)
+local spec = regs[1]
+check(#regs == 1 and #floats == 0 and docked.start == 0 and docked.res == 0 and MVM.FleetUI.float == nil,
+    "有 Dock：只登記一個入口，進遊戲不建浮鈕、不掛換解析度處理")
+check(spec.id == "vehiclemanager" and spec.order == 40 and spec.iconKey == "steeringwheel" and spec.label() == "IGUI_MVM_FleetTitle",
+    "Dock 入口：id、排序 40、方向盤圖示、名稱是車隊視窗標題")
+local W = MVM.FleetWindow
+check(spec.isActive() == false, "車隊視窗還沒建立：入口不是開啟中")
+local shown = true
+W.instance = { win = { getIsVisible = function() return shown end, setVisible = function(_, v) shown = v end } }
+check(spec.isActive() == true, "車隊視窗開著：入口顯示開啟中")
+spec.onClick({})
+check(shown == false and spec.isActive() == false, "點入口：切換車隊視窗（開著就關）")
+MVM.clientOverride = function() return false end
+check(spec.getState() == nil and spec.getStatus() == nil, "沒越權：入口無警示、無狀態行")
+MVM.clientOverride = function(n) return n == 0 end
+check(spec.getState() == "warn" and spec.getStatus() == "IGUI_MVM_Override_Active", "越權中：入口紅框警示，提示寫越權中")
+
+regs = {}
+local old = loadFleet(caps(nil), true)
+check(#regs == 0 and #floats == 1 and old.start == 1 and old.res == 1 and MVM.FleetUI.float == floats[1] and floats[1].size == 40,
+    "舊框架（沒有 dock 能力）：不登記，照舊建浮鈕並處理換解析度")
+regs, floats = {}, {}
+local refused = loadFleet(caps(true), false)
+check(#regs == 1 and #floats == 1 and refused.res == 1, "Dock 拒絕登記：退回浮鈕")
+
+MinidoracatUI, ISPanel, UIFont, getCore, ISLayoutManager = saved.UI, saved.panel, saved.font, saved.core, saved.layout
+MVM.clientOverride, MVM.FleetWindow, MVM.FleetUI, MVM.onFleetChanged, MVM.clientMenuHooks =
+    saved.override, saved.win, saved.fui, saved.changed, saved.hooks
 end)()
 
 out("")
