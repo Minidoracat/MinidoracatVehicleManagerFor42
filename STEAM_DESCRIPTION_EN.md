@@ -24,7 +24,7 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [list]
 [*] [b]Account-bound claims[/b]: you keep your cars even when your character dies
 [*] [b]Protection[/b]: players without permission cannot drive, siphon fuel, strip parts or tow
-[*] [b]Damage guard[/b]: while no one is inside, weapons cannot damage a claimed car, and damage and broken windows are repaired; you are notified when someone hits its windows, even while offline (the server picks the mode)
+[*] [b]Damage guard[/b]: while no one is inside, weapons cannot damage a claimed car, and damage and broken windows are repaired; you are notified when someone attacks it, even while offline (the server picks the mode)
 [*] [b]Claim the trailer too[/b]: claimed vehicles can only be loaded onto a claimed trailer or tow truck, which also uses a claim slot
 [*] [b]Virtual key[/b]: owners can unlock, open doors and start the car without a physical key (servers can turn this off)
 [*] [b]Per-action sharing[/b]: share with specific players, your faction or everyone; private by default

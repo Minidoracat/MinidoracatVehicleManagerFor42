@@ -5,7 +5,8 @@
 -- 就安靜結束。伺服器上的 sendClientCommand 直接觸發本機 OnClientCommand（LuaManager.java:8936-8938）：TimedAction 的
 -- complete 回送（ATAISLoadVehicle.lua:45、ISOpenTent.lua:46）也經過這裡，判定與 adapter 相同（同一人、同一台車）。
 -- 沒有規則的指令立刻放行；目標都不受保護照原版；受保護的目標要有權限、送指令的人要在附近。
--- 放行後通知停車保全目標車是授權改的（MVM.Parked.touch）；拒絕砸窗時問停車保全這台車有沒有布防（提示攻擊者、通知車主）
+-- 放行後通知停車保全目標車是授權改的（MVM.Parked.touch）；拒絕砸窗與客戶端回報打到車（CG.onHit）時問停車保全這台車有沒有布防
+-- （提示攻擊者、通知車主）
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Actions"
 
@@ -258,7 +259,7 @@ function CG.neutralize(module, args)
     for _, k in ipairs(NEG_IDS[module] or {}) do args[k] = -1 end
 end
 
--- guard：拒絕砸窗時這台車是否在停車保全布防中（客戶端據此顯示「保全擋下」或「別人的車」）
+-- guard：武器打車被擋（砸窗、CG.onHit）時這台車是否在停車保全布防中（客戶端據此顯示「保全擋下」或「別人的車」）
 local function notify(player, label, reason, oid, guard)
     local S = MVM.Srv
     if S == nil or not instanceof(player, "IsoPlayer") then return end
@@ -288,6 +289,23 @@ function CG.onCommand(module, command, player, args)
     local guard = nil
     if label == "CMD:vehicle.damageWindow" then guard = MVM.Parked and MVM.Parked.onAttack(player, oid) or false end
     notify(player, label, reason, oid, guard)
+end
+
+-- 打到沒有車窗的零件（引擎蓋、後車廂、車燈、輪胎、窗已破或搖下的門）時原版不送任何指令，伺服器處理 PlayerHitVehicle
+-- 也沒有 Lua 事件（guards.md「攻擊通知」）：攻擊者客戶端看到自己的預測傷害就送 hitReport（ClientGuards）。
+-- 範圍＝武器射程＋CG.NEAR（距離量到車身中心，長車的車尾離中心可達 7 格）
+function CG.hitReach(weapon) return CG.NEAR + weapon:getMaxRange() end
+
+-- hitReport 只能報自己（通知寫的是送的人）：手上有武器、車在範圍內同一樓層、是綁定的車而自己不能拆零件（同 damageWindow
+-- 的 SALVAGE）才算數。之後照砸窗被擋處理：車主通知（ParkedGuard 節流）、提示攻擊者
+function CG.onHit(player, vehicleId)
+    local O, v, w = MVM.Own, getVehicleById(vehicleId), player:getPrimaryHandItem()
+    if v == nil or O.state() == nil or not instanceof(w, "HandWeapon") or not near(player, v, CG.hitReach(w)) then return end
+    local _, rec = O.lookup(v)
+    if rec == nil then return end
+    local ok, reason = O.allowsRecord(player, rec, "SALVAGE")
+    if ok then return end
+    notify(player, "HIT", reason, rec.oid, MVM.Parked and MVM.Parked.onAttack(player, rec.oid) or false)
 end
 
 -- 只在伺服器註冊一次：Lua 重載時換掉 MVM.CommandGate，已註冊的轉接呼叫新版

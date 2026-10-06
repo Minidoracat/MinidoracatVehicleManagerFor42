@@ -2,7 +2,7 @@
 --   1. 排入受保護類別的 timed action 時送 prepareAction（server 以連線身分記 intent）
 --   2. 上車／換座／拖掛／MSW 拖車裝卸是 client 端判定的動作：依投影快取在 isValid 擋下（U 級；server watchdog 事後偵測）
 --   3. 虛擬鑰匙入口：無實體鑰匙的授權者可從選單發動、解鎖
---   4. 顯示 server 送來的 enforcement
+--   4. 顯示 server 送來的 enforcement；武器打到別人的車時回報 hitReport（server 據此通知車主）
 --   5. 車上容器（後車廂、座位、置物箱…）依權限決定列不列出
 -- 動作授權由 server 判定；容器限制僅作用於玩家端 Lua 存取入口，不是 server 搬物品權限驗證。
 require "MinidoracatVehicleManager_API"
@@ -173,13 +173,60 @@ MVM.clientHandlers.enforcement = function(payload)
     if p == nil or payload.to ~= (isClient() and p:getUsername() or "local:0") then return end
     local text = getText("IGUI_MVM_Refused")
     if payload.reason == "RENT_LOCKED" then text = MVM.reasonText(payload.reason)
-    -- 武器打車窗被擋：停車保全中說「打不壞」，否則說「已被綁定、車主在線會收到通知」（車窗可能照樣破，見 guards.md）
-    elseif payload.action == "CMD:vehicle.damageWindow" then
+    -- 武器打車被擋（砸窗、hitReport）：停車保全中說「打不壞」，否則說「已被綁定、車主會收到通知」（車照樣會壞，見 guards.md）
+    elseif payload.guard ~= nil then
         text = getText(payload.guard == true and "IGUI_MVM_Guard_Hit" or "IGUI_MVM_Attack_Owned")
     elseif payload.reason == "NOT_AUTHORIZED" then text = MVM.protectedText(p)
     elseif payload.reason == "CARRIER_UNBOUND" then text = getText("IGUI_MVM_Reason_CARRIER_UNBOUND") end
     MVM.notify(p, text, true)
     MVM.log("enforcement " .. tostring(payload.action) .. " " .. tostring(payload.reason))
+end
+
+-- ------------------------------------------------------------ hit report ---
+-- 打到沒有車窗的零件（引擎蓋、後車廂、車燈、輪胎、窗已破或搖下的門）原版不送任何指令、伺服器也沒有事件；攻擊者客戶端在同一次
+-- 攻擊裡先自己扣零件耐久（BaseVehicle.applyDamageToPart 的 client 分支），伺服器之後改回（guards.md「攻擊通知」）。攻擊當下記下
+-- 範圍內、自己不能拆零件的綁定車的零件耐久，下一個 tick 有下降就回報；同一台車 2 秒一次（連射別撐爆伺服器限流）。
+-- 改機客戶端可以不送：只是盡力通知，防破壞本身在伺服器
+local swing, reported = nil, {}
+local first = MVM.hitWatch == nil
+MVM.hitWatch = {}
+function MVM.hitWatch.swing(owner, weapon)
+    if not isClient() or not instanceof(owner, "IsoPlayer") or not owner:isLocalPlayer() or not instanceof(weapon, "HandWeapon") then return end
+    local CG, cars = MVM.CommandGate, {}
+    local reach = CG.hitReach(weapon)
+    local it = getCell():getVehicles():iterator()
+    while it:hasNext() do
+        local v = it:next()
+        if CG.within(v, owner:getX(), owner:getY(), owner:getZ(), reach) and not MVM.clientCanUse(owner, v, "SALVAGE") then
+            local conds = {}
+            for i = 0, v:getPartCount() - 1 do conds[i] = v:getPartByIndex(i):getCondition() end
+            cars[#cars + 1] = { v = v, conds = conds }
+        end
+    end
+    swing = cars[1] and { owner = owner, cars = cars } or nil
+end
+function MVM.hitWatch.tick()
+    if swing == nil then return end
+    local s, t = swing, getTimestampMs()
+    swing = nil
+    for _, c in ipairs(s.cars) do
+        local id = c.v:getId()
+        for i, before in pairs(c.conds) do
+            local part = c.v:getPartByIndex(i)
+            if part and part:getCondition() < before then
+                if t - (reported[id] or 0) >= 2000 then
+                    reported[id] = t
+                    sendClientCommand(s.owner, MVM.MODULE, "hitReport", { protocol = MVM.PROTOCOL, vehicleId = id })
+                end
+                break
+            end
+        end
+    end
+end
+-- Lua 重載只換函式、不重複註冊（同 CommandGate）
+if first then
+    Events.OnWeaponSwingHitPoint.Add(function(owner, weapon) MVM.hitWatch.swing(owner, weapon) end)
+    Events.OnTick.Add(function() MVM.hitWatch.tick() end)
 end
 
 -- ------------------------------------------------------- vehicle storage ---

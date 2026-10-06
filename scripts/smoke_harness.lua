@@ -186,6 +186,7 @@ local function player(name, x, y, opts)
     function p:getZ() return self.z end
     function p:getPlayerNum() return self.num end
     function p:getVehicle() return self.vehicle end
+    function p:getPrimaryHandItem() return self.hand end
     function p:sendObjectChange(kind) self.objectChanges = (self.objectChanges or 0) + 1; self.lastChange = kind end
     function p:getInventory() return { haveThisKeyId = function() return self.hasKey == true end } end
     outbox[name] = outbox[name] or {}
@@ -3598,6 +3599,38 @@ check(queued == 1 and sentFor[63] == "ATAISLoadVehicle" and sentFor[64] == nil a
 clientSent = {}
 ISTimedActionQueue.add(A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = looseC }))
 check(#clientSent == 1 and clientSent[1].args.vehicleId == 62, "未綁定的車不送 intent，只送拖車的")
+-- 打到車回報（hitReport）：揮擊當下記下範圍內、自己不能拆零件的綁定車，下一個 tick 零件耐久下降才送；同一台車 2 秒一次
+function me:isLocalPlayer() return true end
+local gun = { _cls = "HandWeapon", range = 1.5 }
+function gun:getMaxRange() return self.range end
+local function swing(dropCar, who, weapon)
+    clientSent = {}
+    fire("OnWeaponSwingHitPoint", who or me, weapon or gun)
+    if dropCar then dropCar.parts.Engine.cond = dropCar.parts.Engine.cond - 7 end
+    fire("OnTick")
+    local ids = {}
+    for _, m in ipairs(clientSent) do if m.command == "hitReport" then ids[#ids + 1] = m.args.vehicleId end end
+    return ids
+end
+local ids = swing(theirCar)
+check(#ids == 1 and ids[1] == 63 and clientSent[1].args.protocol == MVM.PROTOCOL,
+    "打到別人綁定的車：下一個 tick 看到零件耐久下降，回報 hitReport（那台車）")
+check(#swing(nil) == 0, "沒打到（耐久沒降）：不回報")
+check(#swing(theirCar) == 0, "同一台車 2 秒內：不重複回報")
+nowMs = nowMs + 2000
+check(#swing(myCar) == 0 and #swing(looseC) == 0, "自己的車、沒綁定的車耐久下降：不回報")
+theirCar.x = 1 + MVM.CommandGate.hitReach(gun) + 1
+check(#swing(theirCar) == 0, "超出武器射程＋10 格：不回報")
+gun.range = 30
+check(#swing(theirCar) == 1, "射程遠的武器（槍）：範圍跟著武器射程")
+gun.range, theirCar.x, theirCar.z = 1.5, 1, 1
+nowMs = nowMs + 2000
+check(#swing(theirCar) == 0, "不同樓層：不回報")
+theirCar.z = 0
+local other = player("kow2", 1, 1)
+function other:isLocalPlayer() return false end
+check(#swing(theirCar, other) == 0 and #swing(theirCar, me, { _cls = "InventoryItem" }) == 0, "別人的角色、拿的不是武器：不回報")
+check(#swing(theirCar) == 1, "條件都對：照常回報")
 isClient = savedIsClient
 ISTimedActionQueue, MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil, nil
 for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
@@ -4621,6 +4654,70 @@ check(v.parts.WindowFrontLeft.item == nil and GH.armed(v), "放行的指令 touc
 end)();
 
 (function()
+out("情境 G3b：客戶端回報打到車（hitReport：有武器、範圍內、同樓層、不能拆零件才算；照砸窗提示攻擊者、通知車主）")
+boot()
+local CG = MVM.CommandGate
+for k in pairs(CG.R.notified) do CG.R.notified[k] = nil end
+SB.ParkedGuard = MVM.GUARD.ALL
+local OW, ST, ST2, ST3, MB = player("hown", 1, 1), player("hstr", 1, 1), player("hstr2", 1, 1), player("hstr3", 1, 1), player("hmem", 1, 1)
+local axe = { _cls = "HandWeapon" }
+function axe:getMaxRange() return 1.5 end
+OW.hand, ST.hand, ST2.hand, MB.hand = axe, axe, axe, axe
+local v, loose = GH.car(121), GH.car(122)
+local r = rec(claim(OW, v).oid)
+cmd(OW, "addMember", { expectedOid = r.oid, username = "hmem", actionBits = MVM.ACTIONS.SALVAGE })
+GH.tick()
+local function report(p, id)
+    nowMs = nowMs + CG.NOTIFY_MS
+    fire("OnClientCommand", MVM.MODULE, "hitReport", p, { protocol = MVM.PROTOCOL, vehicleId = id or v.id })
+end
+local function counts() return GH.count(OW, "notice"), GH.count(ST3, "enforcement") end
+report(ST)
+local enf, note = lastOf(ST, "enforcement"), lastOf(OW, "notice")
+check(enf and enf.action == "HIT" and enf.guard == true and enf.oid == r.oid and enf.reason == "NOT_AUTHORIZED",
+    "陌生人回報打到布防中的車：enforcement（HIT、guard = true）")
+check(note and note.key == "IGUI_MVM_Attack_Guarded" and note.oid == r.oid and note.who == "hstr" and note.bad == true,
+    "車主收到 IGUI_MVM_Attack_Guarded（哪台車、誰）")
+local n0, e0 = GH.count(OW, "notice"), GH.count(ST, "enforcement")
+report(ST)
+check(GH.count(OW, "notice") == n0 and GH.count(ST, "enforcement") == e0 + 1, "同一攻擊者 60 秒內再回報：攻擊者照樣提示，車主不重複通知")
+v.seats[0] = OW
+GH.tick()
+report(ST2)
+enf, note = lastOf(ST2, "enforcement"), lastOf(OW, "notice")
+check(enf and enf.guard == false and note.key == "IGUI_MVM_Attack_Unguarded" and note.who == "hstr2" and GH.count(OW, "notice") == n0 + 1,
+    "沒布防（車主在車上）：guard = false，車主收到 IGUI_MVM_Attack_Unguarded")
+v.seats[0] = nil
+GH.tick()
+local eo, em = GH.count(OW, "enforcement"), GH.count(MB, "enforcement")
+report(OW)
+report(MB)
+check(GH.count(OW, "enforcement") == eo and GH.count(MB, "enforcement") == em and GH.count(OW, "notice") == n0 + 1,
+    "車主、有拆零件權限的成員回報：不提示也不算被攻擊")
+local n1, e1 = counts()
+report(ST3)
+ST3.hand = { _cls = "InventoryItem" }
+report(ST3)
+ST3.hand = axe
+local edge = CG.hitReach(axe)
+ST3.x = v.x + edge + 0.5
+report(ST3)
+ST3.x, ST3.z = v.x, 1
+report(ST3)
+ST3.z = 0
+report(ST3, loose.id)
+report(ST3, 999)
+report(ST3, 1.5)
+check(select(1, counts()) == n1 and select(2, counts()) == e1,
+    "不算數：空手、拿的不是武器、超出武器射程＋10 格、不同樓層、沒綁定的車、不存在的車、id 不是整數")
+ST3.x = v.x + edge - 0.5
+report(ST3)
+note = lastOf(OW, "notice")
+check(GH.count(OW, "notice") == n1 + 1 and note.who == "hstr3" and GH.count(ST3, "enforcement") == e1 + 1,
+    "範圍內（武器射程＋10 格以內）：算數")
+end)();
+
+(function()
 out("情境 G4：車上收音機（ISRadioAction adapter：耳機＝置物、其他＝搭乘；手持收音機不管）")
 boot()
 vclass("ISRadioAction", { "complete" })
@@ -4989,16 +5086,19 @@ notice({ to = "someone", key = "IGUI_MVM_Guard_Repaired", oid = "gLock" })
 notice({ to = "gcl", key = 5 })
 check(toast == nil, "通知：不是給本機玩家或沒有 key：不顯示")
 local enf = MVM.clientHandlers.enforcement
-enf({ to = "gcl", action = "CMD:vehicle.damageWindow", reason = "NOT_AUTHORIZED", guard = true })
-local hitText = toast
-enf({ to = "gcl", action = "CMD:vehicle.damageWindow", reason = "NOT_AUTHORIZED", guard = false })
-local ownedText = toast
+local function enfText(payload) toast = nil; nowMs = nowMs + 9000; enf(payload); return toast end -- 跨過 MVM.notify 8 秒去重
+local hitText = enfText({ to = "gcl", action = "CMD:vehicle.damageWindow", reason = "NOT_AUTHORIZED", guard = true })
+local ownedText = enfText({ to = "gcl", action = "CMD:vehicle.damageWindow", reason = "NOT_AUTHORIZED", guard = false })
+local hitText2 = enfText({ to = "gcl", action = "HIT", reason = "NOT_AUTHORIZED", guard = true })
+local ownedText2 = enfText({ to = "gcl", action = "HIT", reason = "NOT_AUTHORIZED", guard = false })
+local plainText = enfText({ to = "gcl", action = "CMD:vehicle.fixPart", reason = "NOT_AUTHORIZED" })
 local realGetText = getText
 getText = function(k, ...) if k == "IGUI_MVM_Reason_RENT_LOCKED" then return "RENT_LOCKED text" end return realGetText(k, ...) end
-enf({ to = "gcl", action = "ISUninstallVehiclePart", reason = "RENT_LOCKED" })
+local lockedText = enfText({ to = "gcl", action = "ISUninstallVehiclePart", reason = "RENT_LOCKED" })
 getText = realGetText
-check(hitText == "IGUI_MVM_Guard_Hit" and ownedText == "IGUI_MVM_Attack_Owned" and toast == "RENT_LOCKED text",
-    "提示：砸窗保全中說打不壞、沒保全說已被綁定；RENT_LOCKED 說怎麼解鎖（IGUI_MVM_Reason_RENT_LOCKED）")
+check(hitText == "IGUI_MVM_Guard_Hit" and ownedText == "IGUI_MVM_Attack_Owned" and hitText2 == hitText and ownedText2 == ownedText
+    and plainText == "IGUI_MVM_Protected" and lockedText == "RENT_LOCKED text",
+    "提示：武器打車（砸窗、hitReport）保全中說打不壞、沒保全說已被綁定；其他拒絕照舊說受保護；RENT_LOCKED 說怎麼解鎖")
 local missing = {}
 local want = { "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_GUARD_FULL", "IGUI_MVM_Reason_GUARD_NOT_SLOTS",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED", "IGUI_MVM_State_LOCKED", "IGUI_MVM_Product_" .. MVM.ECON_PRODUCT,

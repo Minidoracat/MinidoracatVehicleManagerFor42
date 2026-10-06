@@ -456,9 +456,10 @@ local SCHEMA = {
     adminSetGuardSlots = { amount = "defaultAmount" }, -- 同沙盒 GuardSlotsPerPlayer 範圍 0..20
     adminSetGuardQuota = { usernames = "users", amount = "amount" },
     noticesRead = { upToMs = "ms" },
+    hitReport = { vehicleId = "id" },
 }
 -- 不帶 requestId、不回 ACK 的命令
-local QUERIES = { fleetSubscribe = true, fleetResync = true, prepareAction = true, adminList = true }
+local QUERIES = { fleetSubscribe = true, fleetResync = true, prepareAction = true, adminList = true, hitReport = true }
 
 local function validate(command, args)
     local schema = SCHEMA[command]
@@ -1029,6 +1030,7 @@ function S.handle(command, player, args)
         if MVM.Guards then MVM.Guards.onIntent(player, who, args) end
         return
     end
+    if command == "hitReport" then return MVM.CommandGate.onHit(player, args.vehicleId) end
     if command == "adminList" then return S.adminSnapshot(player) end
     if QUERIES[command] then return S.snapshot(player, who) end
     local ready, notReady = O.ready()
