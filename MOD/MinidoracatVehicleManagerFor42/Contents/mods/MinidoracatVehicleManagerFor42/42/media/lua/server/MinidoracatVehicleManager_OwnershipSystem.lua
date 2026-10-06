@@ -500,8 +500,9 @@ local function readWitness(part)
     return w
 end
 
+-- owner（車主帳號）只給玩家端右鍵顯示「車主：…」；授權只看帳本與 oid／epoch，不讀它
 local function writeWitness(vehicle, part, rec)
-    rawset(part:getModData(), WITNESS_KEY, { oid = rec.oid, epoch = rec.epoch })
+    rawset(part:getModData(), WITNESS_KEY, { oid = rec.oid, epoch = rec.epoch, owner = rec.ownerUser })
     vehicle:transmitPartModData(part)
 end
 
@@ -984,12 +985,16 @@ function O.observeLogin(owner)
 end
 
 -- 已載入車輛：reconcile 身分並低頻收斂 lastKnown（§7.3：不存每次 sample）；第三方車身標記也在這裡比對修正
--- （陣營成員變動、client 經 transmitModData 竄改後，下次觀測修回）
+-- （陣營成員變動、client 經 transmitModData 竄改後，下次觀測修回）。見證的 owner 也在這裡補：舊見證沒有這欄
+-- （加入前綁定的車），oid／epoch 對得上就照帳本重寫，不換 epoch、不改狀態
 function O.observeVehicle(vehicle)
     if not O.ready() then return end
     local verdict, rec = O.lookup(vehicle)
     claimTags((verdict == "AUTHORIZED" or verdict == "QUARANTINED") and rec or nil, vehicle)
     if rec == nil or verdict ~= "AUTHORIZED" then return end
+    local host = O.hostPart(vehicle, rec.witnessPartId)
+    local w = readWitness(host)
+    if w ~= nil and w.oid == rec.oid and w.epoch == rec.epoch and w.owner ~= rec.ownerUser then writeWitness(vehicle, host, rec) end
     local x, y = vehicle:getX(), vehicle:getY()
     if math.abs(x - (rec.lastKnownX or 0)) + math.abs(y - (rec.lastKnownY or 0)) >= 2 then
         rec.lastKnownX, rec.lastKnownY, rec.lastKnownZ, rec.lastKnownAtMs = x, y, vehicle:getZ(), now()

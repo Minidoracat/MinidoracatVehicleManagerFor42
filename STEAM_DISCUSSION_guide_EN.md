@@ -18,6 +18,7 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [*] Claims belong to your account, so you keep your cars when your character dies; the server sets how many cars each player can claim
 [*] Players without permission cannot: open or close doors, unlock, get in, start the engine, add or siphon fuel, deflate tires, install or remove parts, repair, smash windows, tow, install/remove AutoDrive GPS and autopilot modules, or take the headphones out of the car radio
 [*] When blocked they see "This vehicle is claimed; you need the owner's share to use it" and the car stays as it was
+[*] To see who owns a car, right-click next to it and open Vehicle Manager: the first line shows the owner's account name; for cars shared with you or with everyone, the next line lists what you can do
 [*] Claims do not stop weapons: to keep a parked car safe from axes and guns, see "Damage guard" below
 [*] Containers follow permissions: the trunk, truck bed, trailers and modded cargo boxes need the "trunk" permission, seats and the glovebox need "ride"; without permission they do not show up in the inventory
 [*] Owners can unlock, open doors (without the alarm) and start the car without a physical key (servers can turn this off)

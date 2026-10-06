@@ -454,7 +454,7 @@ local ack = claim(A, car)
 check(ack and ack.ok and rec(ack.oid).ownerUser == "alice", "claim 成功，owner＝server username")
 check(sysKeys and #sysKeys == 1 and sysKeys[1] == "state", "GOS 只白名單 state")
 check(Ledger.instance:getInitialStateForClient() == nil, "client initial state 為 nil")
-check(witness(car).oid == ack.oid, "見證寫在 Engine 零件 modData")
+check(witness(car).oid == ack.oid and witness(car).owner == "alice", "見證寫在 Engine 零件 modData，帶車主帳號（右鍵顯示用）")
 check(rawget(car, "MinidoracatVehicleManager") == nil, "不寫車身 modData")
 local r1 = rec(ack.oid)
 check(r1.sqlIdHint == 101 and r1.keyIdHint == 5001 and r1.vehicleScript == "Base.CarNormal", "record 記三個 native 欄位")
@@ -552,6 +552,17 @@ check(cmd(A, "reissueWitness", { vehicleId = 1, expectedOid = ack.oid }).ok and 
 -- 車身 modData 被覆寫不影響授權（在 clone 之前測：clone 會依規則 5 把這筆變 ORPHANED）
 car.bodyMd = { MinidoracatVehicleManager = { oid = "x" } }
 check(O.canUse(A, car, "DRIVE") == true and O.canUse(B, car, "DRIVE") == false, "授權不讀車身 modData")
+do -- 見證的車主名只給右鍵顯示：舊見證沒有這欄 → 觀測時補寫（epoch、狀態不變）；被改成別人不影響授權，下次觀測改回
+    local ep = witness(car).epoch
+    rawset(car.parts.Engine.md, "MinidoracatVehicleManager", { oid = ack.oid, epoch = ep })
+    O.observeVehicle(car)
+    check(witness(car).owner == "alice" and witness(car).epoch == ep and rec(ack.oid).recordState == "ACTIVE",
+        "舊見證沒有車主名：觀測時補寫，epoch 與狀態不變")
+    witness(car).owner = "bob"
+    local forgedB, forgedA = O.canUse(B, car, "DRIVE"), O.canUse(A, car, "DRIVE")
+    O.observeVehicle(car)
+    check(forgedB == false and forgedA == true and witness(car).owner == "alice", "見證的車主名被改成別人：授權不讀它，下次觀測改回")
+end
 -- clone：同 sqlId 但 keyId 不同的車帶著這筆見證 → quarantine
 local clone = vehicle(2, 101, 6666, "Base.CarNormal", 1, 1)
 rawset(clone.parts.Engine.md, "MinidoracatVehicleManager", { oid = ack.oid, epoch = rec(ack.oid).epoch })
@@ -5127,6 +5138,38 @@ SB.ParkedGuard = MVM.GUARD.ALL
 check(offText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_1" and allText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_2"
     and slotText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_3(1,3)" and localText == "IGUI_MVM_ClaimDisclosure\nIGUI_MVM_ClaimRisk_1",
     "綁定確認：風險行依伺服器模式（SLOTS 帶保全名額已用／總數），還沒收到快照用本機沙盒")
+-- 右鍵「車輛管理」子選單：別人的車第一列寫車主（陌生人讀見證、被分享的讀伺服器的列），有權限灰字（~）並在下一列寫能做什麼，
+-- 什麼都不能用的紅字（!）；舊見證沒有車主名退回「別人的車」；自己的車不寫車主
+local function subMenu(v)
+    local function menu()
+        local m = { options = {} }
+        function m:addOption(name) local o = { name = name }; self.options[#self.options + 1] = o; return o end
+        function m:addSubMenu(o, s) o.sub = s end
+        return m
+    end
+    local root, savedMenu, savedHooks = menu(), ISContextMenu, MVM.clientMenuHooks
+    ISContextMenu, MVM.clientMenuHooks = { getNew = function() return menu() end }, {}
+    ISVehicleMenu.FillMenuOutsideVehicle(0, root, v, false)
+    ISContextMenu, MVM.clientMenuHooks = savedMenu, savedHooks
+    local out = {}
+    for _, o in ipairs(root.options[#root.options].sub.options) do
+        out[#out + 1] = o.name .. (o.notAvailable and "!" or "") .. (o.isDisabled and "~" or "")
+    end
+    return table.concat(out, " | ")
+end
+local function wcar(id, w) local v = vehicle(id, 1700 + id, 9700 + id, "Base.CarNormal", 1, 1); rawset(v.parts.Engine.md, "MinidoracatVehicleManager", w); return v end
+local AC = MVM.ACTIONS
+MVM.clientReceive("fleetSnapshot", { to = "gcl", streamId = "g7m", seq = 0, pub = { mQ = AC.PASSENGER + AC.DRIVE }, rows = {
+    { oid = "mOwn", role = "OWNER", state = "ACTIVE", owner = "gcl" },
+    { oid = "mMem", role = "MEMBER", state = "ACTIVE", owner = "alice", myBits = AC.PASSENGER } } })
+local ownerRow = getText("IGUI_MVM_AdminOwner", "alice")
+check(subMenu(wcar(181, { oid = "mP", owner = "alice" })) == ownerRow .. "!"
+    and subMenu(wcar(182, { oid = "mQ", owner = "alice" })) == ownerRow .. "~ | "
+        .. getText("ContextMenu_MVM_PublicVehicle", F.actionsText(AC.PASSENGER + AC.DRIVE)) .. "~"
+    and subMenu(wcar(183, { oid = "mMem" })) == ownerRow .. "~ | " .. getText("IGUI_MVM_YourActions", F.actionsText(AC.PASSENGER)) .. "~"
+    and subMenu(wcar(184, { oid = "mOld" })) == "ContextMenu_MVM_ClaimedByOther!"
+    and subMenu(wcar(185, { oid = "mOwn", owner = "gcl" })) == "ContextMenu_MVM_Unclaim",
+    "右鍵子選單：別人的車第一列是車主（沒權限紅字；公開／被分享灰字，下一列寫能做什麼）；舊見證沒車主名退回「別人的車」；自己的車不寫車主")
 isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
 end)();
 

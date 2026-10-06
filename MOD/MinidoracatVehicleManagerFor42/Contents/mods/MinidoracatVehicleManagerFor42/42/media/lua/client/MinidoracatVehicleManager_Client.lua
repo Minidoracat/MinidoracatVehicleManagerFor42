@@ -289,7 +289,8 @@ MVM.clientHandlers.notice = function(payload)
     MVM.notify(p, MVM.noticeText(b, e), e.bad)
 end
 
--- 車上的零件見證只給 oid，用來對到自己的投影列；他人的車只知道「已被綁定」，以及公開表裡的公開動作。
+-- 車上的零件見證給 oid（對到自己的投影列）與 owner（車主帳號，只供右鍵顯示，授權由伺服器查帳本）；
+-- 他人的車只知道「已被綁定」、車主是誰，以及公開表裡的公開動作。
 -- 宿主可能是任一零件（server 找不到 Engine 等時用第 0 個），要掃全部零件（≤128 個）。
 -- 物品欄刷新時每個車上容器都會問一次（canAccessContainer），所以每台車的結果快取 1 秒；投影變動時整批清掉
 local WITNESS_TTL_MS = 1000
@@ -298,20 +299,20 @@ local function scanWitness(vehicle)
         local part = vehicle:getPartByIndex(i)
         if part and part:hasModData() then
             local w = rawget(part:getModData(), WITNESS_KEY)
-            if type(w) == "table" and type(w.oid) == "string" then return w.oid end
+            if type(w) == "table" and type(w.oid) == "string" then return w end
         end
     end
     return nil
 end
 
-local function witnessOid(vehicle)
+local function witnessOf(vehicle)
     local now = getTimestampMs()
     if now - witnessCacheAt > WITNESS_TTL_MS then witnessCache, witnessCacheAt = {}, now end
     local hit = witnessCache[vehicle]
     if hit ~= nil then return hit or nil end
-    local oid = scanWitness(vehicle)
-    witnessCache[vehicle] = oid or false
-    return oid
+    local w = scanWitness(vehicle)
+    witnessCache[vehicle] = w or false
+    return w
 end
 
 -- 這台車公開給所有人的動作（伺服器公開表；沒有＝0）
@@ -324,10 +325,11 @@ end
 function MVM.clientProjection(playerNum, vehicle)
     local who = principal(playerNum)
     if who == nil or vehicle == nil then return nil end
-    local oid = witnessOid(vehicle)
-    if oid == nil then return nil end
-    local row = bucket(who).rows[oid]
-    return row or { oid = oid, role = "OTHER", publicBits = MVM.clientPublicBits(playerNum, oid) }
+    local w = witnessOf(vehicle)
+    if w == nil then return nil end
+    local row = bucket(who).rows[w.oid]
+    return row or { oid = w.oid, role = "OTHER", owner = type(w.owner) == "string" and w.owner or nil,
+        publicBits = MVM.clientPublicBits(playerNum, w.oid) }
 end
 
 -- 本機玩家在 server 開著管理員越權（adminSnapshot 與 setAdminOverride ACK；重新登入後 client 狀態也歸零）
@@ -505,17 +507,18 @@ function ISVehicleMenu.FillMenuOutsideVehicle(playerNum, context, vehicle, test)
         sub:addOption(getText("ContextMenu_MVM_Unclaim"), player, unclaim, vehicle, row)
         if row.state == "WITNESS_STALE" then sub:addOption(getText("ContextMenu_MVM_Reissue"), player, reissue, vehicle, row) end
     else
-        -- 別人的車：被分享或公開的寫出你能做什麼（灰字資訊列，ISContextMenu 的 isDisabled），其餘說是別人的車
-        -- （紅字 notAvailable＝不能用）
+        -- 別人的車：第一列寫車主（陌生人讀見證、被分享的讀投影列），能做什麼的寫在下一列；有權限的都是灰字資訊列
+        -- （ISContextMenu 的 isDisabled），什麼都不能用的車主列是紅字（notAvailable＝不能用）。舊見證還沒補上車主時退回「別人的車」
         local bits = row.role == "OTHER" and MVM.clientPublicBits(playerNum, row.oid) or (row.myBits or 0)
-        local o
+        if row.owner then
+            local o = sub:addOption(getText("IGUI_MVM_AdminOwner", row.owner), nil, nil)
+            if bits > 0 then o.isDisabled = true else o.notAvailable = true end
+        elseif bits == 0 then
+            sub:addOption(getText("ContextMenu_MVM_ClaimedByOther"), nil, nil).notAvailable = true
+        end
         if bits > 0 then
-            o = sub:addOption(getText(row.role == "OTHER" and "ContextMenu_MVM_PublicVehicle" or "IGUI_MVM_YourActions",
-                MVM.FleetUI.actionsText(bits)), nil, nil)
-            o.isDisabled = true
-        else
-            o = sub:addOption(getText("ContextMenu_MVM_ClaimedByOther"), nil, nil)
-            o.notAvailable = true
+            sub:addOption(getText(row.role == "OTHER" and "ContextMenu_MVM_PublicVehicle" or "IGUI_MVM_YourActions",
+                MVM.FleetUI.actionsText(bits)), nil, nil).isDisabled = true
         end
     end
     for _, hook in ipairs(MVM.clientMenuHooks or {}) do hook(player, sub, vehicle, row) end
