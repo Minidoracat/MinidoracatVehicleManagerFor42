@@ -18,9 +18,21 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [*] Claims belong to your account, so you keep your cars when your character dies; the server sets how many cars each player can claim
 [*] Players without permission cannot: open or close doors, unlock, get in, start the engine, add or siphon fuel, deflate tires, install or remove parts, repair, smash windows, tow, install/remove AutoDrive GPS and autopilot modules, or take the headphones out of the car radio
 [*] When blocked they see "This vehicle is claimed; you need the owner's share to use it" and the car stays as it was
-[*] [b]Damage guard[/b]: while no owner or shared player is inside, weapons (melee or guns) cannot damage a claimed car with damage guard; about every 10 seconds the server repairs damage, puts back broken windows and clears the broken glass. It pauses while someone is inside or the car is being towed, and resumes when they get out. An attacker sees "This vehicle has damage guard; weapons cannot damage it" (or "This vehicle is claimed; its owner will be notified" on a car without damage guard), and the owner gets a notice that the car was attacked, even when offline
+[*] Claims do not stop weapons: to keep a parked car safe from axes and guns, see "Damage guard" below
 [*] Containers follow permissions: the trunk, truck bed, trailers and modded cargo boxes need the "trunk" permission, seats and the glovebox need "ride"; without permission they do not show up in the inventory
 [*] Owners can unlock, open doors (without the alarm) and start the car without a physical key (servers can turn this off)
+[/list]
+
+[h2]🛡️ Damage guard[/h2]
+Claiming stops other players from driving, opening or stripping your car; damage guard is what keeps a parked car safe from axes and guns.
+[list]
+[*] [b]When it works[/b]: while no owner or shared player is inside and the car is not being towed, weapons (melee or guns) cannot damage a claimed car. It pauses while someone is inside or the car is towed and starts again when they get out; while driving, crashes and zombies damage the car as usual, and that damage is not repaired
+[*] [b]Repairs[/b]: about every 10 seconds the server repairs damage, puts back broken windows and clears the broken glass; durability lowered directly by a cheating client or another mod is repaired at the next check too. Fuel, battery charge and cargo are not refilled, and parts removed or windows smashed by the owner or someone with permission are not put back
+[*] [b]What an attacker sees[/b]: "This vehicle has damage guard; weapons cannot damage it"; on a car without damage guard, "This vehicle is claimed; its owner will be notified"
+[*] [b]Owner notices[/b]: when someone hits one of your car's windows (melee or gunfire, including the windshield and door windows), you are told who, which car and whether damage guard stopped it, at most once a minute per attacker; while you are offline it goes to the Notices tab of the fleet window. Hits on the hood, trunk, lights, tires, or a door whose window is broken or rolled down do not send a notice yet (with damage guard they cannot damage those parts either)
+[*] [b]Which cars have it[/b]: in the fleet list, cars with damage guard show a shield and "Damage guard" on the right of their status line; vehicle details also show the damage guard status
+[*] [b]Server modes[/b]: set by admins. The default is "All claimed vehicles": every claimed car has damage guard for free. It can also be "Off" (no car has it) or "By guard slots" (only some cars per player: 1 free guard slot by default, which admins can change for everyone or per player; with Economy on the server you can also buy or rent more, see "Paid slots" below)
+[*] [b]With guard slots[/b]: slots go to your earliest claimed cars automatically, so changing the mode, claiming a new car or buying slots needs no setup. To guard a different car, tick "Damage guard" in that car's details and the slot moves there; untick it to give the slot to the next car, and it will not come back on its own. When your guard slots go down, cars you never ticked pause first (newest claim first), then the most recently ticked ones; they resume when slots come back, and you get a notice when cars pause
 [/list]
 
 [h2]🤝 Sharing[/h2]
@@ -36,9 +48,8 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [list]
 [*] Open it with the steering wheel icon in the family toolbar; press "." to expand the toolbar when it is collapsed
 [*] See your cars, cars shared with you and where they were last seen; click the coordinates in vehicle details to copy them and paste them to others
-[*] Rename, share, transfer or unclaim; when the server uses guard slots, they go to your earliest claimed cars automatically. To guard a different car, tick "Damage guard" in its details, which also show the guard status and how many guard slots you use
-[*] Cars with damage guard show a shield and "Damage guard" on the right of their status line in the list, so you can see it without opening details
-[*] [b]Notices[/b] tab: records who attacked which of your cars and whether damage guard stopped it, repairs done by damage guard, cars that lost damage guard because your guard slots went down, and rented slots locking, unlocking or unclaiming cars. It keeps recording while you are offline; when you log in with new notices you get a message, the steering wheel icon shows the unread count and the tab shows it as "Notices (count)". Opening the tab marks them read. Repeated attacks on the same car by the same player within 10 minutes become one entry with a count. Notices are kept for 30 days, up to 50, on the server, and only you can see yours
+[*] Rename, share, transfer or unclaim; when the server uses guard slots you can also choose which cars have damage guard in their details (see "Damage guard" above)
+[*] [b]Notices[/b] tab: records who hit the windows of which of your cars and whether damage guard stopped it, repairs done by damage guard, cars that lost damage guard because your guard slots went down, and rented slots locking, unlocking or unclaiming cars. It keeps recording while you are offline; when you log in with new notices you get a message, the steering wheel icon shows the unread count and the tab shows it as "Notices (count)". Opening the tab marks them read. Repeated attacks on the same car by the same player within 10 minutes become one entry with a count. Notices are kept for 30 days, up to 50, on the server, and only you can see yours
 [*] [b]Unclaim lost vehicle[/b]: for a car that was destroyed, disappeared or can't be found when you can't get to it. It is unclaimed after a waiting period (24 hours by default) and frees your slot; the car stays claimed meanwhile, and if the server sees it in that time this is cancelled. Admins are not notified
 [*] [b]Kept until[/b]: if the owner does not log in for the number of days the server sets (30 by default), their cars are unclaimed automatically. Vehicle details show the date, which moves forward every time you play; time the server is down does not count
 [/list]
@@ -68,8 +79,7 @@ With Minidoracat MiniMap installed, your cars and shared cars you may "see locat
 
 [h2]⚠️ What is protected[/h2]
 [list]
-[*] Normal player actions are protected. Cars with damage guard resist weapons while parked; while someone is inside, while being towed, or without damage guard, weapons, zombies and crashes damage cars as in vanilla (zombies do not attack empty parked cars, and other players driving into a parked car do not damage it)
-[*] Damage guard does not refill fuel, battery charge or cargo; damage a cheating client deals directly, bypassing weapons, is repaired at the next check (within about 10 seconds)
+[*] Claims protect against normal player actions; weapon damage depends on "Damage guard" above. Zombies do not attack empty parked cars, and other players driving into a parked car do not damage it; while someone is inside, zombies and crashes damage the car as in vanilla
 [*] Someone using a cheating client may briefly get into a seat; the server notices within about a second and acts on it (admins choose between logging only or removing them from the car)
 [*] Whether a car's containers are listed is decided on the player's side, so a modified client may still take items from them, the same as vanilla locked cars; opening and closing the trunk door is still blocked by the server
 [*] Every decision is made on the server; clients only receive data they are allowed to see
@@ -90,7 +100,7 @@ MVCK public permissions become "Share with everyone": allowing everyone to ride,
 A: Yes. Claims belong to your account, not your character.
 
 [b]Q: Are crashes, zombies or gunfire covered?[/b]
-A: It depends on the server's damage guard setting. With damage guard, weapons cannot damage your car while no one is inside, and damage is repaired automatically; while someone is inside (for example while driving), weapons, zombies and crashes work as in vanilla. With damage guard off, or on a car without it, damage works as in vanilla.
+A: It depends on the server's damage guard setting (see "Damage guard" above). With damage guard, weapons cannot damage your car while no one is inside, and damage is repaired automatically; while someone is inside (for example while driving), weapons, zombies and crashes work as in vanilla. Cars without damage guard take damage as in vanilla; you are still told who hit your car's windows.
 
 [b]Q: I am an admin. Why can't I open other players' cars?[/b]
 A: By default admins are blocked like any other player. Turn on "Override: use any vehicle" in the Admin tab of the fleet window; every use is logged.
