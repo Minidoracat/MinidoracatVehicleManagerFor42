@@ -80,8 +80,9 @@ function S.row(rec, who)
         base.role = "OWNER"
         base.epoch = rec.epoch
         base.grants = copyGrants(rec)
-        base.factionShare, base.factionState, base.factionName, base.factionActionBits =
-            rec.factionShare == true, rec.factionState, rec.factionName, rec.factionActionBits or 0
+        -- factionLeader＝分享當下的陣營領袖：陣營分享暫停時，車隊視窗比對現在的領袖說明是不是換了領袖
+        base.factionShare, base.factionState, base.factionName, base.factionActionBits, base.factionLeader =
+            rec.factionShare == true, rec.factionState, rec.factionName, rec.factionActionBits or 0, rec.factionOwnerUser
         base.lastKnownX, base.lastKnownY, base.lastKnownZ, base.lastKnownAtMs =
             rec.lastKnownX, rec.lastKnownY, rec.lastKnownZ, rec.lastKnownAtMs
         base.releaseDueAtMs = rec.releaseDueAtMs
@@ -177,6 +178,32 @@ O.onRecordChanged = function(rec)
     S.pushPublic(rec)
 end
 
+-- 陣營現在的領袖＋成員（帳號清單）
+function S.factionUsers(f)
+    local out = { f:getOwner() }
+    local players = f:getPlayers()
+    for i = 0, players:size() - 1 do out[#out + 1] = players:get(i) end
+    return out
+end
+
+-- 陣營分享整批暫停之後（O.pauseFaction）：每位車主一則通知寫台數（陣營還在、換了領袖：到車隊視窗恢復；
+-- 解散、改名或同名重建：另一句），再重送這些車主與陣營現在成員的快照——成員的「分享給我」立刻少掉這些車、出現暫停提示列
+O.onFactionPaused = function(name, leader, recs)
+    local count, users = {}, {}
+    for _, rec in ipairs(recs) do
+        local o = rec.ownerUser
+        if count[o] == nil then count[o] = 0; users[#users + 1] = o end
+        count[o] = count[o] + 1
+    end
+    local f = Faction.getFaction(name)
+    local key = (f ~= nil and f:getOwner() ~= leader) and "IGUI_MVM_Notice_FactionPaused" or "IGUI_MVM_Notice_FactionGone"
+    for _, o in ipairs(users) do S.notify(o, { key = key, who = name, n = count[o], bad = true }) end
+    if f then
+        for _, u in ipairs(S.factionUsers(f)) do if count[u] == nil then users[#users + 1] = u end end
+    end
+    S.resnapshot(users)
+end
+
 -- 改變收件者集合的突變（分享、陣營）：先記下舊集合；第三方車身標記（可拖曳名單）跟著更新
 local function change(rec, fn)
     local before = S.audience(rec)
@@ -188,17 +215,31 @@ end
 -- quota：used／base（基本）／permanent／rental／paid（Economy 可用名額）／total，
 -- economy＝整合狀態（MVM.Econ.status 或 UNAVAILABLE）。quotaUsed／quotaLimit 保留給舊 client。
 -- pub＝公開分享表；releaseDays＝閒置釋放天數（0＝關閉；玩家在線時期限是「現在＋天數」，客戶端自己換算日期）；
--- guard＝停車保全名額分項（MVM.Parked.counts）；notices／noticeRead＝通知紀錄（舊到新）與已讀到的時間（Notices.lua）
+-- guard＝停車保全名額分項（MVM.Parked.counts）；notices／noticeRead＝通知紀錄（舊到新）與已讀到的時間（Notices.lua）；
+-- factionPaused＝分享給我（陣營成員）但陣營分享暫停中的車 { { name＝陣營名, oids }, ... }：只有陣營名與 oid，
+-- 不給車名、車主、位置（「分享給我」的暫停提示列與上車被擋的原因用）
 function S.snapshot(player, who)
+    local ledger = O.state()
+    -- 組清單前先把失效的陣營分享（換領袖、改名、解散）整批暫停：會通知車主並重送受影響玩家的快照，
+    -- 所以放在建立這次的 stream 之前（巢狀重送的那份先到，這份最後到、stream 也是這份）
+    if ledger then O.pauseStaleFactions() end
     local st = { streamId = getRandomUUID(), seq = 0 }
     R.streams[who] = st
-    local rows = {}
-    local ledger = O.state()
+    local rows, paused, pausedList = {}, {}, {}
     local quota = nil
     if ledger then
         for _, rec in pairs(ledger.recordsByOid) do
             local row = S.row(rec, who)
-            if row then rows[#rows + 1] = row end
+            if row then
+                rows[#rows + 1] = row
+            elseif O.factionPausedFor(rec, who) then
+                local g = paused[rec.factionName]
+                if g == nil then
+                    g = { name = rec.factionName, oids = {} }
+                    paused[rec.factionName], pausedList[#pausedList + 1] = g, g
+                end
+                g.oids[#g.oids + 1] = rec.oid
+            end
         end
         for _, row in ipairs(S.extraRows and S.extraRows(who) or {}) do rows[#rows + 1] = row end
         quota = MVM.Econ and MVM.Econ.summary(who) or { economy = "OFF", permanent = 0, rental = 0, paid = 0 }
@@ -212,7 +253,8 @@ function S.snapshot(player, who)
     S.send(player, "fleetSnapshot", { streamId = st.streamId, seq = 0, rows = rows,
         quotaUsed = quota and quota.used or 0, quotaLimit = quota and quota.total or 0, quota = quota,
         status = O.R.status, pub = ledger and S.publicTable() or nil, releaseDays = S.releaseDays(),
-        guard = ledger and MVM.Parked and MVM.Parked.counts(who) or nil, notices = notices, noticeRead = noticeRead })
+        guard = ledger and MVM.Parked and MVM.Parked.counts(who) or nil, notices = notices, noticeRead = noticeRead,
+        factionPaused = pausedList })
 end
 
 -- 名額規則變了：重送這些線上玩家的快照（名額顯示即時更新）；users＝nil 表示全部線上玩家
@@ -385,21 +427,24 @@ local TYPES = {
     legacyRow = function(v) return type(v) == "string" and #v <= 40 and v:match("^legacy%-%d+$") ~= nil end, -- MVCK 待轉列 oid
     ms = function(v) return MVM.isInt(v) and v >= 0 and v <= 1e15 end, -- 毫秒時間戳
 }
--- 批次名額的帳號清單：1..BATCH_MAX 個、連續陣列（沒有其他鍵）、每個合法且不重複
-S.BATCH_MAX = 500
-function TYPES.users(v)
+-- 清單參數：1..max 個、連續陣列（沒有其他鍵）、每個都通過 valid 且不重複
+local function uniqueList(v, max, valid)
     if type(v) ~= "table" then return false end
     local n = 0
     for _ in pairs(v) do n = n + 1 end
-    if n < 1 or n > S.BATCH_MAX then return false end
+    if n < 1 or n > max then return false end
     local seen = {}
     for i = 1, n do
-        local user = v[i]
-        if not TYPES.user(user) or seen[user] then return false end
-        seen[user] = true
+        local item = v[i]
+        if not valid(item) or seen[item] then return false end
+        seen[item] = true
     end
     return true
 end
+-- 批次名額的帳號清單（最多 BATCH_MAX 位）；陣營分享一鍵恢復的紀錄清單（最多 RESTORE_MAX 筆，車主自己的車）
+S.BATCH_MAX, S.RESTORE_MAX = 500, 200
+function TYPES.users(v) return uniqueList(v, S.BATCH_MAX, TYPES.user) end
+function TYPES.oids(v) return uniqueList(v, S.RESTORE_MAX, TYPES.uuid) end
 
 -- 身分匯入列：1..IDENTITY_ROWS_MAX 列的連續陣列，每列 { u＝合法帳號（不重複）, s＝"" 或 SteamID64 字串 }。
 -- 先驗格式才交給 tonumber：它就是 Double.parseDouble，也吃 7.6E16、前後空白、0x1p56（KahluaUtil.java:293）。
@@ -432,6 +477,7 @@ local SCHEMA = {
     reissueWitness = { vehicleId = "id", expectedOid = "uuid" },
     rename = { expectedOid = "uuid", expectedEpoch = "uuid", name = "text" },
     setFactionShare = { expectedOid = "uuid", expectedEpoch = "uuid", enabled = "bool", actionBits = "bits" },
+    restoreFactionShare = { oids = "oids" },
     setPublicShare = { expectedOid = "uuid", expectedEpoch = "uuid", actionBits = "publicBits" },
     addMember = { expectedOid = "uuid", username = "user", actionBits = "bits" },
     removeMember = { expectedOid = "uuid", username = "user" },
@@ -722,6 +768,44 @@ H.setFactionShare = function(player, who, a)
     O.audit("INFO", "ACL_CHANGE", { actor = who, oid = rec.oid, owner = who,
         reason = a.enabled and ("FACTION " .. tostring(a.actionBits)) or "FACTION_OFF" })
     return { ok = true }
+end
+
+-- 恢復陣營分享的條件：自己的、可授權的、分享給陣營過（有權限位）、自己現在仍在同名陣營。回那個陣營或 nil, 原因
+local function restorable(rec, who)
+    if rec == nil then return nil, "NO_SUCH_RECORD" end
+    if rec.ownerUser ~= who then return nil, "NOT_OWNER" end
+    if not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED" or not rec.factionShare
+        or (rec.factionActionBits or 0) == 0 then return nil, "INVALID_STATE" end
+    local f = Faction.getFaction(rec.factionName)
+    if f == nil then return nil, "FACTION_GONE" end
+    if not (f:getOwner() == who or f:isMember(who)) then return nil, "FACTION_LEFT" end
+    return f
+end
+
+-- 陣營換領袖（或同名重建）後車主一鍵恢復（車隊視窗「我的車」最上面那列）：改綁陣營現在的領袖，權限沿用原本的
+-- factionActionBits（不必重勾）；已經恢復的算成功。一個命令恢復多台：逐台送 setFactionShare 會撞每 5 秒 RATE_MAX 個命令的限流。
+-- 玩家只能在一個陣營，所以可恢復的車都屬同一個陣營；恢復後重送陣營現在成員的快照（暫停提示列跟著更新）
+H.restoreFactionShare = function(player, who, a)
+    if not MVM.sandbox("AllowFactionShare", true) then return fail("FACTION_SHARE_DISABLED") end
+    local st = O.state()
+    local restored, failed, why, faction = 0, 0, nil, nil
+    for _, oid in ipairs(a.oids) do
+        local rec = st.recordsByOid[oid]
+        local f, reason = restorable(rec, who)
+        if f == nil then
+            failed, why = failed + 1, why or reason
+        else
+            if rec.factionState ~= "GRANTED" or O.factionStale(rec) then
+                S.applyFactionShare(rec, f, rec.factionActionBits)
+                O.audit("INFO", "ACL_CHANGE", { actor = who, oid = rec.oid, owner = who,
+                    reason = "FACTION_RESTORED " .. tostring(rec.factionActionBits) })
+            end
+            restored, faction = restored + 1, f
+        end
+    end
+    if restored == 0 then return fail(why) end
+    S.resnapshot(S.factionUsers(faction))
+    return { ok = true, restored = restored, failed = failed, failReason = why }
 end
 
 -- 公開給所有人（actionBits＝0 關閉）：只能是 MVM.PUBLIC_MASK 內的動作（TYPES.publicBits）。陌生人經公開表得知

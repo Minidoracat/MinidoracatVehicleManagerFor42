@@ -778,20 +778,59 @@ end
 -- --------------------------------------------------------------- faction ---
 local function factionHas(f, user) return f:getOwner() == user or f:isMember(user) end
 
--- §5.1 F10：同名陣營存在＋leader 未變＋owner 與 actor 都是成員。
--- rename／disband／換 leader／同進程內同名重建 → 持久化 SUSPENDED；owner 暫離只拒絕、回來即恢復
-function O.factionAllows(rec, actorName)
-    if not rec.factionShare or rec.factionState ~= "GRANTED" or not MVM.sandbox("AllowFactionShare", true) then return false end
+-- 陣營分享的綁定還有效就回那個陣營：同名陣營存在、領袖未變、不是同進程內解散後重建的新物件（不看沙盒、不寫帳本）
+local function boundFaction(rec)
     local f = Faction.getFaction(rec.factionName)
     local ref = R.factionRefs[rec.oid]
-    if f == nil or f:getOwner() ~= rec.factionOwnerUser or (ref ~= nil and ref ~= f) then
-        if R.status == "READY" then
+    if f == nil or f:getOwner() ~= rec.factionOwnerUser or (ref ~= nil and ref ~= f) then return nil end
+    return f
+end
+
+-- 已分享給陣營、但綁的陣營已失效（換領袖、改名、解散、同名重建）：還沒寫成 SUSPENDED、仍可授權的紀錄
+-- （已結束與隔離中的紀錄不算：不能用，也不該讓車主收到通知）
+function O.factionStale(rec)
+    return rec.factionShare == true and rec.factionState == "GRANTED" and O.AUTHORIZABLE[rec.recordState] == true
+        and rec.recordState ~= "QUARANTINED" and boundFaction(rec) == nil
+end
+
+-- 換領袖、改名、解散或同名重建：綁同一個（名稱, 領袖）且已失效的陣營分享一次全部持久化 SUSPENDED（不必等成員逐台碰到），
+-- 每台寫稽核。通知車主、重送車隊資料與第三方拖車名單交給 O.onFactionPaused（Server.lua）。帳本不可寫時不動。回暫停台數
+function O.pauseFaction(name, leader)
+    if R.status ~= "READY" then return 0 end
+    local hit = {}
+    for _, rec in pairs(O.state().recordsByOid) do
+        if rec.factionName == name and rec.factionOwnerUser == leader and O.factionStale(rec) then
             rec.factionState = "SUSPENDED"
             R.factionRefs[rec.oid] = nil
             O.bump(rec)
             O.audit("WARN", "ACL_CHANGE", { oid = rec.oid, owner = rec.ownerUser, reason = "FACTION_SUSPENDED" })
-            if O.onRecordChanged then O.onRecordChanged(rec, nil) end
+            hit[#hit + 1] = rec
         end
+    end
+    for _, rec in ipairs(hit) do claimTags(rec, nil) end
+    if #hit > 0 and O.onFactionPaused then O.onFactionPaused(name, leader, hit) end
+    return #hit
+end
+
+-- 失效但還沒暫停的陣營分享全部整批暫停（組車隊清單前呼叫）
+function O.pauseStaleFactions()
+    if R.status ~= "READY" then return end
+    local stale = {}
+    for _, rec in pairs(O.state().recordsByOid) do
+        if O.factionStale(rec) then stale[#stale + 1] = rec end
+    end
+    for _, rec in ipairs(stale) do
+        if rec.factionState == "GRANTED" then O.pauseFaction(rec.factionName, rec.factionOwnerUser) end
+    end
+end
+
+-- §5.1 F10：同名陣營存在＋leader 未變＋owner 與 actor 都是成員。
+-- rename／disband／換 leader／同進程內同名重建 → 同陣營的分享整批持久化 SUSPENDED（O.pauseFaction）；owner 暫離只拒絕、回來即恢復
+function O.factionAllows(rec, actorName)
+    if not rec.factionShare or rec.factionState ~= "GRANTED" or not MVM.sandbox("AllowFactionShare", true) then return false end
+    local f = boundFaction(rec)
+    if f == nil then
+        O.pauseFaction(rec.factionName, rec.factionOwnerUser)
         return false
     end
     R.factionRefs[rec.oid] = f
@@ -803,13 +842,21 @@ end
 function O.factionMembers(rec)
     local out = {}
     if not rec.factionShare or rec.factionState ~= "GRANTED" or not MVM.sandbox("AllowFactionShare", true) then return out end
-    local f = Faction.getFaction(rec.factionName)
-    local ref = R.factionRefs[rec.oid]
-    if f == nil or f:getOwner() ~= rec.factionOwnerUser or (ref ~= nil and ref ~= f) then return out end
+    local f = boundFaction(rec)
+    if f == nil then return out end
     out[f:getOwner()] = true
     local players = f:getPlayers()
     for i = 0, players:size() - 1 do out[players:get(i)] = true end
     return out
+end
+
+-- 陣營分享暫停中、這個人現在和車主在同名陣營（換領袖後的成員）：被擋時說清楚原因（FACTION_PAUSED），快照也只給這些人暫停提示
+function O.factionPausedFor(rec, who)
+    if who == nil or who == rec.ownerUser or not rec.factionShare or rec.factionState ~= "SUSPENDED"
+        or not O.AUTHORIZABLE[rec.recordState] or rec.recordState == "QUARANTINED"
+        or (rec.factionActionBits or 0) == 0 or not MVM.sandbox("AllowFactionShare", true) then return false end
+    local f = Faction.getFaction(rec.factionName)
+    return f ~= nil and factionHas(f, who) and factionHas(f, rec.ownerUser)
 end
 
 function O.grantBits(rec, user)
@@ -857,7 +904,10 @@ function O.allowsRecord(actor, rec, action, context)
         end
         return true, "ADMIN", rec
     end
-    local reason = quarantined and "QUARANTINED" or "NOT_AUTHORIZED"
+    -- 陣營分享暫停中（換領袖後）的陣營成員：說清楚是暫停、要車主恢復；其他人照舊 NOT_AUTHORIZED
+    local reason = quarantined and "QUARANTINED"
+        or (action ~= "MANAGE" and MVM.bitsAllow(rec.factionActionBits or 0, action) and O.factionPausedFor(rec, who) and "FACTION_PAUSED")
+        or "NOT_AUTHORIZED"
     O.deny(who, action, rec.oid, reason)
     return false, reason, rec
 end

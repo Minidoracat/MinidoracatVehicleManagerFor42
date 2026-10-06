@@ -38,11 +38,12 @@ Claiming stops other players from driving, opening or stripping your car; damage
 
 [h2]🤝 Sharing[/h2]
 [list]
-[*] Share with specific players or your faction and pick each permission: ride, drive, trunk, fuel, install/repair, remove parts, tow, see location
+[*] Share with specific players or your faction and pick each permission: ride, drive, trunk, fuel, install/repair, remove parts, tow, see location; "Select all" above the switches turns them all on (including remove parts, tow and see location) and then becomes "Select none"
 [*] [b]Share with everyone[/b]: any player can use what you tick, limited to ride, drive, trunk, fuel and install/repair (remove parts, tow and see location cannot be public); other players see what everyone can do in the car's right-click menu
 [*] Private by default; nothing is shared automatically. Current shares are listed one per row, and one click stops each
 [*] Only the owner can rename, share, unclaim or transfer, and these rights cannot be shared
-[*] If the faction is renamed, disbanded or gets a new leader, faction sharing pauses until the owner confirms again
+[*] [b]New faction leader[/b]: if the faction is renamed, disbanded or gets a new leader, sharing with that faction pauses for all its cars at once and owners get a notice (kept in the Notices tab if they are offline). While paused, members see which faction paused how many cars at the top of "Shared with me", and trying to use those cars tells them to ask the owner. After a leader change the owner finds the faction at the top of "My vehicles" in the fleet window: tick the cars to restore (all ticked by default) and press once; permissions stay the same. After a rename or disband, share with the faction again
+[*] When a faction leader presses "Change Owner" in the vanilla faction window and the faction has cars shared with it, a warning first says how many cars will pause; the handover only happens after confirming
 [/list]
 
 [h2]🗂️ Fleet window[/h2]

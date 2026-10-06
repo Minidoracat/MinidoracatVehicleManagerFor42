@@ -156,6 +156,17 @@ function F.lockText(row)
     return getText("IGUI_MVM_Lock_RentEnded")
 end
 
+-- 陣營分享暫停列（FPAUSE＝我的車、FPAUSED_SHARED＝分享給我）的標題與副標，清單與詳情共用
+function F.pausedTitle(row)
+    if row.kind == "FPAUSED_SHARED" then return getText("IGUI_MVM_FactionPaused_SharedTitle", row.name) end
+    return getText(row.changed and "IGUI_MVM_FactionPaused_Title" or "IGUI_MVM_FactionPaused_TitleOther", row.name)
+end
+
+function F.pausedSub(row)
+    if row.kind == "FPAUSED_SHARED" then return getText("IGUI_MVM_FactionPaused_SharedCount", row.n) end
+    return getText("IGUI_MVM_FactionPaused_Count", #row.rows)
+end
+
 -- 詳情卡的行（第一行是大字標題）。layoutDetail 算好存在 self.card，draw 只畫；b＝自己的資料桶
 function F.cardLines(row, tab, b, query, now)
     local lines = {}
@@ -173,6 +184,12 @@ function F.cardLines(row, tab, b, query, now)
     elseif row.kind == "NOTICE" then -- 通知紀錄：時間＋全文（layoutDetail 依詳情寬度換行）
         add(MVM.dateTimeText(row.e.t or now), "text", true)
         add(row.text, "text")
+        lines[#lines].wrap = true
+    elseif row.kind == "FPAUSE" or row.kind == "FPAUSED_SHARED" then -- 陣營分享暫停：發生什麼、幾台、怎麼恢復
+        add(F.pausedTitle(row), "text", true)
+        add(F.pausedSub(row), "accent")
+        if row.kind == "FPAUSE" then add(getText("IGUI_MVM_FactionPaused_Leader", tostring(row.leader)), "text") end
+        add(getText(row.kind == "FPAUSE" and "IGUI_MVM_FactionPaused_Explain" or "IGUI_MVM_FactionPaused_SharedExplain"))
         lines[#lines].wrap = true
     elseif row.kind == "PLAYER" then
         add(row.user == "" and getText("IGUI_MVM_Admin_NoOwner") or row.user, "text", true)
@@ -267,6 +284,59 @@ function F.noticeItems(b, query, readAt)
         end
     end
     return out
+end
+
+-- 「我的車」最上面的陣營分享暫停列：陣營分享暫停中的自己的車，依陣營名分組（kind＝FPAUSE，選它就在詳情恢復）。
+-- info(陣營名)＝客戶端看到的陣營 { leader＝現在的領袖, mine＝自己在這個陣營 }；陣營不在或自己已不在就沒辦法一鍵恢復，
+-- 不列（車輛詳情照舊顯示「（已暫停）」，可停止陣營分享或分享給新陣營）。changed＝有車綁的領袖不是現在的領袖（換了領袖）
+function F.pausedGroups(rows, info)
+    local groups, list, keys = {}, {}, {}
+    for _, row in pairs(rows or {}) do
+        if row.role == "OWNER" and row.factionShare and row.factionState == "SUSPENDED" and type(row.factionName) == "string"
+            and (row.factionActionBits or 0) > 0 and not F.isHistory(row) and row.state ~= "QUARANTINED" then
+            local g = groups[row.factionName]
+            if g == nil then
+                local fi = info(row.factionName)
+                g = false
+                if fi and fi.mine then
+                    g = { kind = "FPAUSE", oid = "fpause:" .. row.factionName, name = row.factionName, leader = fi.leader,
+                        rows = {}, changed = false }
+                    list[#list + 1] = g
+                    keys[g] = row.factionName:lower()
+                end
+                groups[row.factionName] = g
+            end
+            if g then
+                g.rows[#g.rows + 1] = row
+                if row.factionLeader ~= g.leader then g.changed = true end
+            end
+        end
+    end
+    for _, g in ipairs(list) do
+        local order = {}
+        for _, row in ipairs(g.rows) do order[row] = F.displayName(row):lower() end
+        g.rows = MVM.sortByKey(g.rows, order)
+    end
+    return MVM.sortByKey(list, keys)
+end
+
+-- 「分享給我」最上面的暫停提示列（kind＝FPAUSED_SHARED）：快照的 factionPaused，只有陣營名與台數
+function F.sharedPausedItems(b)
+    local out = {}
+    for _, g in ipairs(b and b.factionPaused or {}) do
+        out[#out + 1] = { kind = "FPAUSED_SHARED", oid = "fpshared:" .. g.name, name = g.name, n = #g.oids }
+    end
+    return out
+end
+
+-- 轉讓陣營領袖前的提醒台數：分享給我的陣營車（陣營成員看得到所有分享給陣營的車）＋自己分享給陣營的車
+function F.factionShareCount(b)
+    local n = 0
+    for _, row in pairs(b and b.rows or {}) do
+        if row.role == "FACTION" or (row.role == "OWNER" and row.factionShare and row.factionState == "GRANTED"
+            and (row.factionActionBits or 0) > 0 and not F.isHistory(row)) then n = n + 1 end
+    end
+    return n
 end
 
 -- 管理頁清單：玩家列（kind＝PLAYER）後面接展開時的車輛列。名額以 server 的 players 為準；沒有車主的紀錄
@@ -561,6 +631,10 @@ function FleetWindow:build()
                 c.countW = getTextManager():MeasureStringX(FS, c.count)
                 c.title = fit(row.user == "" and getText("IGUI_MVM_Admin_NoOwner") or row.user, w - c.countW - GAP)
                 c.sub, c.titleToken = fit(row.summary, w), "text"
+            elseif row.kind == "FPAUSE" or row.kind == "FPAUSED_SHARED" then
+                -- 陣營分享暫停列：陣營圖示與標題用強調色（要處理），副標寫幾台
+                c.icon, c.color, c.token, c.titleToken = "users", COL.accent, "accent", "accent"
+                c.title, c.sub = fit(F.pausedTitle(row), w), fit(F.pausedSub(row), w)
             elseif row.kind == "NOTICE" then
                 -- 通知：圓點強調色＝未讀（離線時收到、打開分頁前沒看過），錯誤色＝車被攻擊
                 local sub = F.agoText(row.e.t or 0, getTimestampMs())
@@ -621,15 +695,24 @@ function FleetWindow:build()
     self.btnFaction = self:button(getText("IGUI_MVM_Btn_FactionOn"), FleetWindow.onFaction)
     self.btnPublic = self:button(getText("IGUI_MVM_Btn_PublicOn"), FleetWindow.onPublic)
     self.btnTransfer = self:button(getText("IGUI_MVM_Btn_Transfer"), FleetWindow.onTransfer)
-    -- 新增分享時要給的權限：短名稱、寬度照標籤（欄數在 layoutDetail 依最寬的一個決定，各語系都不重疊）
+    -- 新增分享時要給的權限：短名稱、寬度照標籤（欄數在 layoutDetail 依最寬的一個決定，各語系都不重疊）。
+    -- 切換時重排：標題列的「全選／全不選」跟著現在勾的狀態
     self.checks = {}
     for i, a in ipairs(SHAREABLE) do
-        local cb = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_ActionShort_" .. a), theme = theme })
+        local cb = UI.Checkbox.new({ x = 0, y = 0, label = getText("IGUI_MVM_ActionShort_" .. a), theme = theme, target = self,
+            onChange = FleetWindow.onShareCheck })
         cb.internal = a
         cb:setVisible(false)
         body:addChild(cb)
         self.checks[i] = cb
     end
+    self.btnCheckAll = self:button(getText("IGUI_MVM_Btn_CheckAll"), FleetWindow.onCheckAll)
+    self.btnCheckAll:setTooltip(getText("IGUI_MVM_CheckAll_Tip"))
+    -- 陣營分享暫停（「我的車」最上面那列）的恢復：全選／全不選、每台一個勾選（restoreBox 用到才建）、恢復 N 台
+    self.btnRestoreAll = self:button(getText("IGUI_MVM_Btn_CheckAll"), FleetWindow.onRestoreAll)
+    self.btnRestoreNone = self:button(getText("IGUI_MVM_Btn_CheckNone"), FleetWindow.onRestoreNone)
+    self.btnRestore = self:button(getText("IGUI_MVM_Btn_RestoreN", 0), FleetWindow.onRestore, "primary")
+    self.restoreBoxes, self.restorePick = {}, {}
     -- 目前的分享：所有人、陣營、每位成員各一顆停止／移除鈕（x 圖示，標題「對象：權限」，提示寫動作）
     self.btnPublicOff = self:button("", FleetWindow.onPublicOff, "normal", "close")
     self.btnFactionOff = self:button("", FleetWindow.onFactionOff, "normal", "close")
@@ -698,7 +781,7 @@ function FleetWindow:build()
         self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnLeave, self.btnAdminRelease, self.btnQuota,
         self.btnQuotaDefault, self.btnBatch, self.btnBatchDefault, self.btnDefaultQuota, self.btnReleaseDays, self.btnMigrate,
         self.btnIdentity, self.btnRebind, self.overrideBox, self.btnPublicOff, self.btnFactionOff, self.guardBox,
-        self.btnGuardSlotsDefault, self.btnGuardQuota, self.btnGuardQuotaDefault }
+        self.btnGuardSlotsDefault, self.btnGuardQuota, self.btnGuardQuotaDefault, self.btnRestore }
     self.detailControls = { self.btnRename, self.userEntry, self.btnAddMember, self.btnFaction, self.btnPublic,
         self.btnTransfer, self.btnUnclaim, self.btnReport, self.btnCancel, self.btnReissue, self.btnDismiss, self.btnMap, self.btnTeleport,
         self.btnLeave, self.btnAdminRelease, self.quotaEntry, self.btnQuota, self.btnQuotaDefault, self.btnPick,
@@ -706,7 +789,7 @@ function FleetWindow:build()
         self.btnDefaultQuota, self.releaseEntry, self.btnReleaseDays, self.btnMigrate, self.btnIdentity, self.btnRebind,
         self.btnLook, self.overrideBox, self.btnPaidSlots, self.btnPublicOff, self.btnFactionOff, self.btnPaidGuard,
         self.guardSlotsEntry, self.btnGuardSlotsDefault, self.guardQuotaEntry, self.btnGuardQuota, self.btnGuardQuotaDefault,
-        self.guardBox, self.btnGuardSlots }
+        self.guardBox, self.btnGuardSlots, self.btnCheckAll, self.btnRestoreAll, self.btnRestoreNone, self.btnRestore }
     for _, c in ipairs(self.guardChips) do
         self.actionButtons[#self.actionButtons + 1] = c
         self.detailControls[#self.detailControls + 1] = c
@@ -795,7 +878,17 @@ function FleetWindow:treeKey(key, row, index)
     return false
 end
 
--- keyed replace：重建清單時保留選取的 oid（管理頁的玩家列以 player:帳號 當鍵）
+-- 客戶端看到的陣營（原版同步給所有客戶端）：現在的領袖、自己在不在裡面
+local function factionInfo(name)
+    local f = Faction and Faction.getFaction(name)
+    local p = getSpecificPlayer(0)
+    if f == nil or p == nil then return nil end
+    local me = p:getUsername()
+    return { leader = f:getOwner(), mine = f:getOwner() == me or f:isMember(me) }
+end
+
+-- keyed replace：重建清單時保留選取的 oid（管理頁的玩家列以 player:帳號 當鍵）。沒在搜尋時，陣營分享暫停列排在最上面
+-- （我的車：可一鍵恢復的；分享給我：暫停提示）
 function FleetWindow:rebuild()
     self.dirty = false
     local b = self:bucket()
@@ -813,6 +906,11 @@ function FleetWindow:rebuild()
         self:markNoticesRead(b)
     else
         rows = F.filter(b and b.rows, self.tab, self.query)
+        if self.query == "" then
+            local top = self.tab == "OWNED" and F.pausedGroups(b and b.rows, factionInfo) or F.sharedPausedItems(b)
+            for _, row in ipairs(rows) do top[#top + 1] = row end
+            rows = top
+        end
     end
     local unread = MVM.noticeUnread(b)
     self.tabs:setItemLabel("LOG", unread > 0 and getText("IGUI_MVM_Tab_LOG_N", unread) or getText("IGUI_MVM_Tab_LOG"))
@@ -1054,15 +1152,68 @@ function FleetWindow:layoutOwner(row, b, y)
         end
         y = y + PAD
     end
-    y = self:heading("IGUI_MVM_Section_Share", y)
+    y = self:shareHeading(y)
     y = self:checkGrid(y)
     return self:flow({ self.userEntry, self.btnAddMember, self.btnFaction, self.btnPublic }, y)
+end
+
+-- 「新增分享」標題列：右側放「全選／全不選」（全部打開時變全不選），標題與按鈕同一列、不多佔一列；
+-- 寬度不夠時標題在上、按鈕另起一列
+function FleetWindow:shareHeading(y)
+    local all = true
+    for _, cb in ipairs(self.checks) do if not cb:getChecked() then all = false end end
+    local btn = self.btnCheckAll
+    btn:setTitle(getText(all and "IGUI_MVM_Btn_CheckNone" or "IGUI_MVM_Btn_CheckAll"))
+    local title = getText("IGUI_MVM_Section_Share")
+    local right = self.detailX + self.detailW - 8 -- 右緣留給捲軸
+    if self.detailX + measure(title, FS) + GAP * 2 + btn.width > right then
+        return self:flow({ btn }, self:headingText(title, y))
+    end
+    self.headings[#self.headings + 1] = { text = title, y = y + math.floor((self.ch - self.fh) / 2) }
+    place(btn, right - btn.width, y)
+    return y + self.ch + GAP
+end
+
+-- 陣營分享暫停（「我的車」最上面那列）：每台一個勾選（預設全勾，記在 restorePick、跨重排保留）、全選／全不選，
+-- 按「恢復 N 台」一次送出（伺服器 restoreFactionShare）。勾選標籤＝車名＋原本給陣營的權限，太長截字
+function FleetWindow:layoutRestore(g, y)
+    y = self:heading("IGUI_MVM_Section_Restore", y)
+    y = self:flow({ self.btnRestoreAll, self.btnRestoreNone }, y)
+    local n, labelW = 0, self.detailW - 8 - 44 -- 44＝開關寬 36＋間距 8（Checkbox）
+    for i, row in ipairs(g.rows) do
+        local cb = self:restoreBox(i)
+        if self.restorePick[row.oid] == nil then self.restorePick[row.oid] = true end
+        local label = fit(F.displayName(row) .. getText("IGUI_MVM_Sep") .. F.actionsText(row.factionActionBits), labelW)
+        cb.internal = row.oid
+        cb:setLabel(label)
+        cb:setWidth(44 + measure(label, FS))
+        cb:setChecked(self.restorePick[row.oid], true)
+        place(cb, self.detailX, y)
+        y = y + cb.height + GAP
+        if self.restorePick[row.oid] then n = n + 1 end
+    end
+    self.btnRestore:setTitle(getText("IGUI_MVM_Btn_RestoreN", n))
+    return self:flow({ self.btnRestore }, y + GAP)
+end
+
+-- 恢復清單的第 i 個勾選：用到才建，建好就登記成詳情控制項（隱藏、捲動、鍵盤目標都照其他詳情控制項）
+function FleetWindow:restoreBox(i)
+    local cb = self.restoreBoxes[i]
+    if cb then return cb end
+    cb = UI.Checkbox.new({ x = 0, y = 0, label = "", theme = theme, target = self, onChange = FleetWindow.onRestorePick })
+    cb:setVisible(false)
+    self.body:addChild(cb)
+    self.restoreBoxes[i] = cb
+    self.detailControls[#self.detailControls + 1] = cb
+    self.detailSet[cb] = true
+    return cb
 end
 
 function FleetWindow:layoutBody(row, b, y)
     if self.tab == "ADMIN" then return self:layoutAdmin(row, b, y) end
     if self.tab == "LOG" then return y end
-    if row == nil then return y end
+    if row == nil or row.kind == "FPAUSED_SHARED" then return y end
+    if row.kind == "FPAUSE" then return self:layoutRestore(row, y) end
     if row.state == "PENDING_REBIND" then -- MVCK 待轉：車被載入時自動轉正；車找不到（例：拖車裝卸後舊編號消失）時車主可以放棄、釋出名額
         local acts = {}
         if row.lastKnownX then acts[1] = self.btnMap end
@@ -1358,6 +1509,49 @@ end
 function FleetWindow:onFactionOff()
     local row = self.current; if not row then return end
     self:send("setFactionShare", { expectedOid = row.oid, expectedEpoch = row.epoch, enabled = false, actionBits = 0 })
+end
+
+-- 權限開關切換：重排（標題列的全選／全不選跟著變）
+function FleetWindow:onShareCheck() self:layoutDetail() end
+
+-- 全選／全不選：全部打開時按＝全部關掉，否則全部打開（含拆零件、拖曳、查看位置；公開給所有人時仍只帶允許公開的）
+function FleetWindow:onCheckAll()
+    local all = true
+    for _, cb in ipairs(self.checks) do if not cb:getChecked() then all = false end end
+    for _, cb in ipairs(self.checks) do cb:setChecked(not all, true) end
+    self:layoutDetail()
+end
+
+-- 恢復清單的勾選：記在 restorePick（oid → 是否恢復），重排更新「恢復 N 台」
+function FleetWindow:onRestorePick(checked, box)
+    if box and box.internal then self.restorePick[box.internal] = checked == true end
+    self:layoutDetail()
+end
+
+function FleetWindow:pickRestore(value)
+    local g = self.current; if not (g and g.kind == "FPAUSE") then return end
+    for _, row in ipairs(g.rows) do self.restorePick[row.oid] = value end
+    self:layoutDetail()
+end
+
+function FleetWindow:onRestoreAll() self:pickRestore(true) end
+function FleetWindow:onRestoreNone() self:pickRestore(false) end
+
+-- 一次恢復勾選的車（伺服器逐台再驗：自己的、仍在同名陣營）；成功跳通知，有沒恢復的寫出台數與第一個原因。
+-- 恢復過後剩下還暫停的車回到預設全勾（下次打開不是「恢復 0 台」）
+function FleetWindow:onRestore()
+    local g = self.current; if not (g and g.kind == "FPAUSE") then return end
+    local oids = {}
+    for _, row in ipairs(g.rows) do if self.restorePick[row.oid] then oids[#oids + 1] = row.oid end end
+    if #oids == 0 then return self:say("IGUI_MVM_Restore_PickOne") end
+    self:send("restoreFactionShare", { oids = oids }, function(ack)
+        if ack.ok then self.restorePick = {} end
+        local failed = ack.failed or 0
+        local text = failed > 0 and getText("IGUI_MVM_Restore_Partial", ack.restored or 0, failed, MVM.reasonText(ack.failReason))
+            or getText("IGUI_MVM_Restore_Done", ack.restored or 0)
+        MVM.notify(getSpecificPlayer(0), text, failed > 0)
+        return text
+    end)
 end
 
 -- 公開給所有人：只帶得了公開允許的動作；先確認（陌生人也能用）
@@ -1779,6 +1973,39 @@ function FleetWindow:onAppearance()
     if self.look then self.look.win:close() end
     self.look = Look.open(self, row)
 end
+
+-- ------------------------------------------------------------ 陣營轉讓 ---
+-- 原版陣營視窗「更改擁有者」（ISFactionAddPlayerUI changeOwnership 的確認鈕 → onClick → sendFactionChangeOwner，
+-- ISFactionAddPlayerUI.lua:115-135）：有陣營分享的車時先提醒「轉讓後會暫停幾台、車主要恢復」。只是提醒——按轉讓照原版送出，
+-- 伺服器照常暫停；取消就留在原版視窗。ISButton 建立面板時才存 onClick 參照，所以換掉類別方法即可。原版檔依路徑排序可能比本檔晚載入，
+-- 進遊戲時再試一次（Client.lua 的 OnGameStart 呼叫 MVM.installTransferWarn）；每個類別只包一次（Lua 重載也是）
+local function installTransferWarn()
+    if ISFactionAddPlayerUI == nil or rawget(ISFactionAddPlayerUI, "_mvmTransferWarn") then return end
+    local vanillaClick = ISFactionAddPlayerUI.onClick
+    rawset(ISFactionAddPlayerUI, "_mvmTransferWarn", true)
+    function ISFactionAddPlayerUI:onClick(button)
+        local target = self.selectedPlayer
+        if button and button.internal == "ADDPLAYER" and self.changeOwnership and self.faction and target then
+            local p = getSpecificPlayer(0)
+            local n = F.factionShareCount(p and C.buckets[p:getUsername()])
+            if n > 0 then
+                -- F.transferModal／transferText 留給 E2E（同 FleetWindow:confirm 的 self.modal）
+                local panel, text = self, getText("IGUI_MVM_FactionTransfer_Warn", self.faction:getName(), target, n)
+                F.transferText = text
+                F.transferModal = UI.Dialog.show({ title = getText("IGUI_SafehouseUI_ChangeOwnership"), theme = theme, text = text,
+                    confirmText = getText("IGUI_MVM_Btn_TransferFaction", target), cancelText = getText("UI_Cancel"),
+                    onResult = function(ok)
+                        F.transferModal = nil
+                        if ok and panel.selectedPlayer == target then vanillaClick(panel, button) end
+                    end })
+                return
+            end
+        end
+        return vanillaClick(self, button)
+    end
+end
+MVM.installTransferWarn = installTransferWarn
+installTransferWarn()
 
 -- ------------------------------------------------------------------ 入口 ---
 function FleetWindow.ensure()

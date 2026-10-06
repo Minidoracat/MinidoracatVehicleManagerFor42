@@ -46,7 +46,8 @@ if queueAddAfter then
 end
 
 -- ------------------------------------------------------------ UX guards ---
--- 被拒的原因記在 lastReason：租用名額到期鎖住的車（RENT_LOCKED）提示要怎麼解鎖，不是「受保護」
+-- 被拒的原因記在 lastReason：租用名額到期鎖住的車（RENT_LOCKED）提示要怎麼解鎖、陣營分享暫停中的車（FACTION_PAUSED）
+-- 提示要車主恢復，都不是「沒有車主的分享」
 local lastReason = nil
 local function allowed(chr, vehicle, act)
     if vehicle == nil then return true end
@@ -71,7 +72,7 @@ local function guardValid(cls, check)
         if self._mvmOk == nil then
             lastReason = nil
             self._mvmOk = check(self)
-            if not self._mvmOk and lastReason == "RENT_LOCKED" and self._mvmText == nil then
+            if not self._mvmOk and (lastReason == "RENT_LOCKED" or lastReason == "FACTION_PAUSED") and self._mvmText == nil then
                 self._mvmText = MVM.reasonText(lastReason)
             end
         end
@@ -172,7 +173,7 @@ MVM.clientHandlers.enforcement = function(payload)
     local p = getSpecificPlayer(0)
     if p == nil or payload.to ~= (isClient() and p:getUsername() or "local:0") then return end
     local text = getText("IGUI_MVM_Refused")
-    if payload.reason == "RENT_LOCKED" then text = MVM.reasonText(payload.reason)
+    if payload.reason == "RENT_LOCKED" or payload.reason == "FACTION_PAUSED" then text = MVM.reasonText(payload.reason)
     -- 武器打車被擋（砸窗、hitReport）：停車保全中說「打不壞」，否則說「已被綁定、車主會收到通知」（車照樣會壞，見 guards.md）
     elseif payload.guard ~= nil then
         text = getText(payload.guard == true and "IGUI_MVM_Guard_Hit" or "IGUI_MVM_Attack_Owned")

@@ -5288,6 +5288,178 @@ check(#toasts == 3, "之後的快照不再提示離線通知")
 isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
 SB.ParkedGuard = MVM.GUARD.ALL
 end)();
+(function()
+out("情境 FP：陣營換領袖 → 整批暫停、通知車主、成員看到原因；車主一鍵恢復；客戶端暫停列、轉讓提醒台數、陣營同步重要資料")
+boot()
+local AC = MVM.ACTIONS
+local L, M, C2, N, X = player("fpl", 1, 1), player("fpm", 1, 1), player("fpc", 1, 1), player("fpn", 1, 1), player("fpx", 1, 1)
+local crew = newFaction("Crew", "fpl", { "fpm", "fpc", "fpn" })
+local solo = newFaction("Solo", "fpx", {})
+local function car(id) return vehicle(id, 3000 + id, 7000 + id, "Base.CarNormal", 1, 1) end
+local v1, v2, v3, v4, v5 = car(301), car(302), car(303), car(304), car(305)
+local r1, r2, r3 = rec(claim(L, v1).oid), rec(claim(L, v2).oid), rec(claim(M, v3).oid)
+local r4, r5 = rec(claim(X, v4).oid), rec(claim(X, v5).oid)
+local function share(p, r, bits)
+    return cmd(p, "setFactionShare", { expectedOid = r.oid, expectedEpoch = r.epoch, enabled = true, actionBits = bits }).ok
+end
+check(share(L, r1, AC.DRIVE + AC.CARGO) and share(L, r2, AC.PASSENGER) and share(M, r3, AC.DRIVE) and share(X, r4, AC.DRIVE)
+    and share(X, r5, AC.PASSENGER) and O.canUse(C2, v1, "DRIVE") and O.canUse(C2, v3, "DRIVE"), "換領袖前：分享給陣營的車成員都能用")
+local nL, nM, l0 = GH.count(L, "notice"), GH.count(M, "notice"), #logLines
+crew.owner, crew.members = "fpn", { "fpm", "fpc", "fpl" } -- 原版轉讓：原領袖變成員（FactionChangeOwnerPacket.java:61-63）
+local ok, why = O.canUse(C2, v1, "DRIVE")
+check(not ok and why == "FACTION_PAUSED", "換領袖後成員第一次碰車：拒絕，原因 FACTION_PAUSED（不是一般的沒有分享）")
+check(r1.factionState == "SUSPENDED" and r2.factionState == "SUSPENDED" and r3.factionState == "SUSPENDED" and r4.factionState == "GRANTED"
+    and GH.logged(l0, "ACL_CHANGE", r3.oid, "FACTION_SUSPENDED"),
+    "同一陣營、綁原領袖的分享整批暫停（別的車主的也一起，逐台寫稽核），別的陣營不受影響")
+local noteL, noteM = lastOf(L, "notice"), lastOf(M, "notice")
+check(GH.count(L, "notice") == nL + 1 and noteL.key == "IGUI_MVM_Notice_FactionPaused" and noteL.who == "Crew" and noteL.n == 2
+    and GH.count(M, "notice") == nM + 1 and noteM.n == 1 and MVM.Notices.list("fpm")[1].key == "IGUI_MVM_Notice_FactionPaused",
+    "每位車主一則通知（陣營名、自己被暫停幾台），也記進通知紀錄")
+local okX, whyX = O.canUse(X, v1, "DRIVE")
+local _, why2 = O.canUse(C2, v2, "PASSENGER")
+check(not okX and whyX == "NOT_AUTHORIZED" and O.canUse(L, v1, "DRIVE") and why2 == "FACTION_PAUSED" and select(2, O.canUse(C2, v1, "MANAGE")) == "NOT_AUTHORIZED",
+    "陌生人照舊 NOT_AUTHORIZED、車主照常、同陣營其他暫停的車也是 FACTION_PAUSED；MANAGE 不說暫停")
+cmd(C2, "fleetSubscribe", {}, false)
+local snap = lastOf(C2, "fleetSnapshot")
+local listed, keys = false, 0
+for _, row in ipairs(snap.rows) do if row.oid == r1.oid or row.oid == r3.oid then listed = true end end
+local g = snap.factionPaused[1]
+for _ in pairs(g or {}) do keys = keys + 1 end
+check(not listed and #snap.factionPaused == 1 and g.name == "Crew" and #g.oids == 3 and keys == 2,
+    "成員快照：分享給我沒有這些車，暫停資訊只有陣營名與 3 個 oid（不給車名、車主、位置）")
+cmd(X, "fleetSubscribe", {}, false)
+cmd(L, "fleetSubscribe", {}, false)
+local lrow
+for _, row in ipairs(lastOf(L, "fleetSnapshot").rows) do if row.oid == r1.oid then lrow = row end end
+check(#lastOf(X, "fleetSnapshot").factionPaused == 0 and #lastOf(L, "fleetSnapshot").factionPaused == 1
+    and lrow.factionState == "SUSPENDED" and lrow.factionLeader == "fpl" and lrow.factionName == "Crew",
+    "不在陣營的人沒有暫停資訊；車主的列暫停中、帶分享當下的領袖（客戶端比對是不是換了領袖）")
+-- 沒人碰車：任何人組車隊清單時就整批暫停
+local nX = GH.count(X, "notice")
+solo.name = "Solo2" -- 原版改名：getFaction("Solo") 找不到
+cmd(C2, "fleetResync", {}, false)
+local noteX = lastOf(X, "notice")
+check(r4.factionState == "SUSPENDED" and r5.factionState == "SUSPENDED" and GH.count(X, "notice") == nX + 1
+    and noteX.key == "IGUI_MVM_Notice_FactionGone" and noteX.n == 2,
+    "陣營改名：任何人組車隊清單時就整批暫停（不必等成員碰車），車主收到「解散、改名或重建」通知")
+
+-- 一鍵恢復
+l0 = #logLines
+local ack = cmd(L, "restoreFactionShare", { oids = { r1.oid, r2.oid } })
+check(ack.ok and ack.restored == 2 and ack.failed == 0 and r1.factionState == "GRANTED" and r1.factionOwnerUser == "fpn"
+    and r1.factionActionBits == AC.DRIVE + AC.CARGO and r2.factionActionBits == AC.PASSENGER and GH.logged(l0, "ACL_CHANGE", "FACTION_RESTORED"),
+    "車主一鍵恢復：改綁現在的領袖，權限照原本的（不必重勾），寫稽核")
+check(O.canUse(C2, v1, "CARGO") and O.canUse(C2, v2, "PASSENGER") and not O.canUse(C2, v3, "DRIVE"), "恢復的車成員可用；別人的車仍暫停")
+local g2 = lastOf(C2, "fleetSnapshot").factionPaused[1]
+check(g2 and #g2.oids == 1 and g2.oids[1] == r3.oid, "恢復後重送陣營成員的快照：暫停資訊只剩沒恢復的車")
+check(cmd(L, "restoreFactionShare", { oids = { r1.oid } }).restored == 1 and r1.factionOwnerUser == "fpn", "再按一次：已恢復的算成功，不重複改")
+check(cmd(L, "restoreFactionShare", { oids = { r3.oid } }).reason == "NOT_OWNER", "別人的車：NOT_OWNER")
+crew.members = { "fpc", "fpl" }
+check(cmd(M, "restoreFactionShare", { oids = { r3.oid } }).reason == "FACTION_LEFT" and r3.factionState == "SUSPENDED",
+    "車主已離開陣營：FACTION_LEFT，不恢復")
+crew.members = { "fpm", "fpc", "fpl" }
+check(cmd(X, "restoreFactionShare", { oids = { r4.oid } }).reason == "FACTION_GONE", "原本的陣營已不在（改名）：FACTION_GONE")
+local part = cmd(M, "restoreFactionShare", { oids = { r3.oid, r4.oid } })
+check(part.ok and part.restored == 1 and part.failed == 1 and part.failReason == "NOT_OWNER" and r3.factionState == "GRANTED",
+    "部分成功：回恢復幾台、沒恢復幾台與第一個原因")
+check(cmd(L, "restoreFactionShare", { oids = {} }).reason == "BAD_ARGS"
+    and cmd(L, "restoreFactionShare", { oids = { r1.oid, r1.oid } }).reason == "BAD_ARGS"
+    and cmd(L, "restoreFactionShare", { oids = { "bad oid!" } }).reason == "BAD_ARGS", "清單是空的、重複或 oid 不合法：BAD_ARGS")
+SB.AllowFactionShare = false
+check(cmd(L, "restoreFactionShare", { oids = { r1.oid } }).reason == "FACTION_SHARE_DISABLED", "沙盒關閉陣營分享：不能恢復")
+SB.AllowFactionShare = true
+local many = {}
+for i = 1, 25 do
+    local v = car(400 + i)
+    local r = O.createRecord("fpl", v, O.hostPart(v, nil))
+    r.factionShare, r.factionName, r.factionOwnerUser, r.factionState, r.factionActionBits = true, "Crew", "fpl", "SUSPENDED", AC.PASSENGER
+    many[i] = r.oid
+end
+local big = cmd(L, "restoreFactionShare", { oids = many })
+check(big.ok and big.restored == 25 and rec(many[25]).factionOwnerUser == "fpn",
+    "一個命令恢復 25 台（逐台送 setFactionShare 會撞每 5 秒 20 個命令的限流）")
+
+-- 客戶端：暫停列、轉讓提醒台數、原因文字、陣營同步
+local F = MVM.FleetUI
+local function own(oid, name, state, fstate, fname, leader, bits)
+    return { oid = oid, role = "OWNER", name = name, state = state, factionShare = true, factionState = fstate, factionName = fname,
+        factionLeader = leader, factionActionBits = bits }
+end
+local rowsT = { a = own("a", "Bravo", "ACTIVE", "SUSPENDED", "Crew", "fpl", AC.DRIVE),
+    b = own("b", "Alpha", "ACTIVE", "SUSPENDED", "Crew", "fpl", AC.PASSENGER),
+    c = own("c", "Gone", "ACTIVE", "SUSPENDED", "Old", "fpl", AC.DRIVE),
+    d = own("d", "Live", "ACTIVE", "GRANTED", "Crew", "fpn", AC.DRIVE),
+    e = own("e", "Dead", "RELEASED", "SUSPENDED", "Crew", "fpl", AC.DRIVE),
+    f = { oid = "f", role = "FACTION", state = "ACTIVE", myBits = AC.DRIVE } }
+local info = function(name) if name == "Crew" then return { leader = "fpn", mine = true } end return nil end
+local groups = F.pausedGroups(rowsT, info)
+local g1 = groups[1]
+check(#groups == 1 and g1.kind == "FPAUSE" and g1.name == "Crew" and g1.leader == "fpn" and g1.changed and #g1.rows == 2
+    and g1.rows[1].oid == "b" and g1.rows[2].oid == "a",
+    "我的車暫停列：同陣營的暫停車一組（依車名排序）；陣營不在、分享中、已結束的不列；綁的領袖不是現在的＝換了領袖")
+check(F.pausedTitle(g1) == "IGUI_MVM_FactionPaused_Title(Crew)" and F.pausedSub(g1) == "IGUI_MVM_FactionPaused_Count(2)",
+    "暫停列標題寫陣營換了領袖、副標寫台數")
+rowsT.a.factionLeader, rowsT.b.factionLeader = "fpn", "fpn"
+check(F.pausedTitle(F.pausedGroups(rowsT, info)[1]) == "IGUI_MVM_FactionPaused_TitleOther(Crew)", "領袖沒換（同名重建）：標題只寫分享已暫停")
+check(#F.pausedGroups(rowsT, function() return { leader = "fpn", mine = false } end) == 0, "自己已不在這個陣營：不列（沒辦法一鍵恢復）")
+check(F.factionShareCount({ rows = rowsT }) == 2, "轉讓提醒台數：分享給我的陣營車＋自己分享給陣營中的車（暫停、已結束的不算）")
+local items = F.sharedPausedItems({ factionPaused = { { name = "Crew", oids = { "x1", "x2" } } } })
+check(#items == 1 and items[1].kind == "FPAUSED_SHARED" and items[1].n == 2
+    and F.pausedTitle(items[1]) == "IGUI_MVM_FactionPaused_SharedTitle(Crew)" and F.pausedSub(items[1]) == "IGUI_MVM_FactionPaused_SharedCount(2)",
+    "分享給我的暫停提示列：陣營名與台數")
+
+local savedIsClient, savedBad, savedMismatch, realGetText = isClient, HaloTextHelper.addBadText, MVM.Client.protocolMismatch, getText
+isClient = function() return true end
+MVM.Client.protocolMismatch = false
+online = {}
+local me = player("fpme", 1, 1)
+local function witnessed(id, oid) local v = car(id); rawset(v.parts.Engine.md, "MinidoracatVehicleManager", { oid = oid }); return v end
+local vp, vo = witnessed(320, "x1"), witnessed(321, "x9")
+MVM.clientReceive("fleetSnapshot", { to = "fpme", streamId = "fp1", seq = 0, rows = {},
+    factionPaused = { { name = "Crew", oids = { "x1", "x2" } } } })
+local okc, whyc = MVM.clientCanUse(me, vp, "DRIVE")
+local okd, whyd = MVM.clientCanUse(me, vo, "DRIVE")
+check(not okc and whyc == "FACTION_PAUSED" and not okd and whyd == "NOT_AUTHORIZED" and MVM.Client.buckets.fpme.pausedOids.x2 == "Crew",
+    "客戶端：暫停中的陣營車原因 FACTION_PAUSED（上車檢查顯示原因），其他別人的車照舊")
+local toast
+HaloTextHelper.addBadText = function(_, s) toast = s end
+getText = function(k, ...) if k == "IGUI_MVM_Reason_FACTION_PAUSED" then return "paused text" end return realGetText(k, ...) end
+nowMs = nowMs + 9000
+MVM.clientHandlers.enforcement({ to = "fpme", action = "ISOpenVehicleDoor", reason = "FACTION_PAUSED" })
+getText = realGetText
+check(toast == "paused text", "伺服器拒絕 FACTION_PAUSED：說陣營分享暫停、請車主恢復")
+clientSent = {}
+crew.members[#crew.members + 1] = "fpme"
+nowMs = nowMs + 3000
+MVM.Client.onSyncFaction("Crew")
+MVM.Client.onSyncFaction("Crew")
+local n1 = #clientSent
+crew.members[#crew.members] = nil
+nowMs = nowMs + 3000
+MVM.Client.onSyncFaction("Crew")
+local n2 = #clientSent
+nowMs = nowMs + 3000
+MVM.Client.onSyncFaction("Crew")
+MVM.Client.onSyncFaction("Solo2")
+check(n1 == 1 and clientSent[1].command == "fleetResync" and n2 == 2 and #clientSent == 2,
+    "原版陣營同步：自己在（或剛離開）的陣營才重要車隊資料，2 秒內只送一次；不相干的陣營不送")
+isClient, HaloTextHelper.addBadText, MVM.Client.protocolMismatch = savedIsClient, savedBad, savedMismatch
+
+local missing = {}
+local want = { "IGUI_MVM_Reason_FACTION_PAUSED", "IGUI_MVM_Notice_FactionPaused", "IGUI_MVM_Notice_FactionGone",
+    "IGUI_MVM_FactionPaused_Title", "IGUI_MVM_FactionPaused_TitleOther", "IGUI_MVM_FactionPaused_Count", "IGUI_MVM_FactionPaused_Leader",
+    "IGUI_MVM_FactionPaused_Explain", "IGUI_MVM_FactionPaused_SharedTitle", "IGUI_MVM_FactionPaused_SharedCount",
+    "IGUI_MVM_FactionPaused_SharedExplain", "IGUI_MVM_Section_Restore", "IGUI_MVM_Btn_CheckAll", "IGUI_MVM_Btn_CheckNone",
+    "IGUI_MVM_CheckAll_Tip", "IGUI_MVM_Btn_RestoreN", "IGUI_MVM_Restore_Done", "IGUI_MVM_Restore_Partial", "IGUI_MVM_Restore_PickOne",
+    "IGUI_MVM_FactionTransfer_Warn", "IGUI_MVM_Btn_TransferFaction" }
+for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
+    local fh = io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json")
+    local json = fh and fh:read("*a") or ""
+    if fh then fh:close() end
+    for _, k in ipairs(want) do if not json:find('"' .. k .. '"', 1, true) then missing[#missing + 1] = lang .. ":" .. k end end
+end
+check(#missing == 0, "陣營分享暫停與恢復的文字四語都有（缺：" .. table.concat(missing, ",") .. "）")
+end)();
 out("")
 if failures > 0 then
     out(failures .. " 項失敗，" .. passes .. " 項通過")

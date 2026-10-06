@@ -166,6 +166,14 @@ function MVM.clientReceive(command, payload)
         b.quotaUsed, b.quotaLimit, b.quota, b.status = payload.quotaUsed, payload.quotaLimit, payload.quota, payload.status
         b.pub, b.releaseDays = type(payload.pub) == "table" and payload.pub or {}, payload.releaseDays
         b.guard = type(payload.guard) == "table" and payload.guard or nil -- 停車保全模式與保全名額（MVM.Parked.counts）
+        -- 陣營分享暫停中、分享給我的車（只有陣營名與 oid）：「分享給我」的暫停提示列、上車被擋時說清楚原因
+        b.factionPaused, b.pausedOids = {}, {}
+        for _, g in ipairs(type(payload.factionPaused) == "table" and payload.factionPaused or {}) do
+            if type(g) == "table" and type(g.name) == "string" and type(g.oids) == "table" then
+                b.factionPaused[#b.factionPaused + 1] = g
+                for _, oid in ipairs(g.oids) do b.pausedOids[oid] = g.name end
+            end
+        end
         -- 通知紀錄（舊到新）與已讀到的時間；登入後第一份快照有離線時的通知就提示一次
         b.notices = type(payload.notices) == "table" and payload.notices or {}
         b.noticeRead = MVM.isInt(payload.noticeRead) and payload.noticeRead or 0
@@ -357,6 +365,10 @@ function MVM.clientCanUse(actor, vehicle, action)
         end
     end
     if MVM.clientOverride(n) then return true, "ADMIN" end
+    -- 陣營分享暫停中的車（快照的 factionPaused）：提示換領袖後要車主恢復，不是一般的「沒有分享」
+    local who = principal(n)
+    local b = who and C.buckets[who]
+    if action ~= "MANAGE" and b and b.pausedOids and b.pausedOids[row.oid] then return false, "FACTION_PAUSED" end
     return false, "NOT_AUTHORIZED"
 end
 
@@ -533,4 +545,30 @@ Events.OnGameStart.Add(function()
         if p then C.request(p, "fleetSubscribe", {}) end
     end
     Events.OnTick.Add(first)
+end)
+
+-- 原版陣營同步（FactionSyncPacket／FactionDisbandPacket 的 processClient 觸發 SyncFaction，送給所有客戶端）：
+-- 自己在、或剛離開這個陣營就重要一份車隊資料——伺服器組清單時發現陣營分享失效（換領袖、改名、解散）會整批暫停並通知車主，
+-- 新加入的成員也立刻看到陣營分享的車。inFaction 記上次看到自己在哪些陣營（剛被踢、解散時才知道要重要）；2 秒內只送一次
+local inFaction, lastFactionSync = {}, 0
+function C.onSyncFaction(name)
+    local p = getSpecificPlayer(0)
+    if p == nil or not isClient() or type(name) ~= "string" then return end
+    local f, me = Faction.getFaction(name), p:getUsername()
+    local member = f ~= nil and (f:getOwner() == me or f:isMember(me))
+    local was = inFaction[name] == true
+    inFaction[name] = member or nil
+    local t = getTimestampMs()
+    if (member or was) and t - lastFactionSync >= 2000 then
+        lastFactionSync = t
+        C.request(p, "fleetResync", {})
+    end
+end
+if Events.SyncFaction then Events.SyncFaction.Add(function(name) C.onSyncFaction(name) end) end
+Events.OnGameStart.Add(function()
+    local p = getSpecificPlayer(0)
+    local f = p and Faction and Faction.getPlayerFaction and Faction.getPlayerFaction(p)
+    if f then inFaction[f:getName()] = true end
+    -- 原版陣營視窗「更改擁有者」的轉讓提醒（FleetWindow.lua）：原版檔可能比 FleetWindow 晚載入，進遊戲時再包一次
+    if MVM.installTransferWarn then MVM.installTransferWarn() end
 end)
