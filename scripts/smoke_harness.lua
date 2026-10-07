@@ -3593,11 +3593,16 @@ check(not mswLoad(looseTr, myCar) and told == "IGUI_MVM_Reason_CARRIER_UNBOUND",
 told = nil
 check(mswLoad(looseTr, looseC) and told == nil, "MSW：沒綁定的車裝上沒綁定的拖車照常")
 check(not mswLoad(looseTr, theirCar) and told == "IGUI_MVM_Protected", "MSW：別人的車裝上沒綁定的拖車：仍是「受保護」提示")
-MVM.clientHandlers.enforcement({ to = "kow", action = "CMD:msw.loadVehicle", reason = "CARRIER_UNBOUND" })
-local unboundText = told
-MVM.clientHandlers.enforcement({ to = "kow", action = "CMD:msw.loadVehicle", reason = "TOO_FAR" })
-check(unboundText == "IGUI_MVM_Reason_CARRIER_UNBOUND" and told == "IGUI_MVM_Refused",
-    "伺服器拒絕 CARRIER_UNBOUND：顯示請先綁定拖車；其他原因照舊")
+do -- 伺服器拒絕（enforcement）：harness 的 getText 沒參數時回鍵名＝沒有譯文，這裡讓三個原因有譯文
+    local translated, realGetText = { CARRIER_UNBOUND = true, TOO_FAR = true, CARRIER_LOADED = true }, getText
+    getText = function(k, ...) local code = k:match("^IGUI_MVM_Reason_(.+)$"); if code and translated[code] then return "T:" .. code end return realGetText(k, ...) end
+    local function refusedToast(reason) told = nil; MVM.clientHandlers.enforcement({ to = "kow", action = "CMD:msw.loadVehicle", reason = reason }); return told end
+    local unboundText, farText, loadedText, badText = refusedToast("CARRIER_UNBOUND"), refusedToast("TOO_FAR"), refusedToast("CARRIER_LOADED"), refusedToast("BAD_ID")
+    getText = realGetText
+    check(unboundText == "T:CARRIER_UNBOUND" and farText == "T:TOO_FAR" and loadedText == "T:CARRIER_LOADED",
+        "伺服器拒絕：寫出原因與怎麼辦（拖車要先綁定、離車太遠、載著車的拖車不能再被裝）")
+    check(badText == "IGUI_MVM_Failed", "伺服器拒絕：沒有譯文的碼（只有改機客戶端會碰到）顯示不帶代碼的通用說明")
+end
 MVM.notify = realNotify
 local function withParts(id, parts) return vehicle(id, 900 + id, 9900 + id, "Base.X", 1, 1, parts) end
 check(MVM.isCarrier(withParts(67, { "Engine", "ATAMultiSlotWrecker" })) and MVM.isCarrier(withParts(68, { "ATAVehicleWrecker" }))
@@ -5191,6 +5196,8 @@ local missing = {}
 local want = { "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_GUARD_FULL", "IGUI_MVM_Reason_GUARD_NOT_SLOTS",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED", "IGUI_MVM_State_LOCKED", "IGUI_MVM_Product_" .. MVM.ECON_PRODUCT,
     "IGUI_MVM_Product_" .. MVM.GUARD_PRODUCT }
+-- 玩家正常操作會被伺服器拒絕（enforcement）的原因：提示要寫出原因
+for _, code in ipairs({ "TOO_FAR", "CARRIER_UNBOUND", "CARRIER_LOADED", "QUARANTINED", "NOT_READY" }) do want[#want + 1] = "IGUI_MVM_Reason_" .. code end
 for i = 1, 3 do want[#want + 1] = "IGUI_MVM_ClaimRisk_" .. i; want[#want + 1] = "IGUI_MVM_Disclosure_" .. i end
 for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
     local fh = io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json")

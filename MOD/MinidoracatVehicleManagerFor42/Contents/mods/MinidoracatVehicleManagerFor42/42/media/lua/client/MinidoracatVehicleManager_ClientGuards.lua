@@ -172,13 +172,15 @@ MVM.clientHandlers = MVM.clientHandlers or {}
 MVM.clientHandlers.enforcement = function(payload)
     local p = getSpecificPlayer(0)
     if p == nil or payload.to ~= (isClient() and p:getUsername() or "local:0") then return end
-    local text = getText("IGUI_MVM_Refused")
+    local text
     if payload.reason == "RENT_LOCKED" or payload.reason == "FACTION_PAUSED" then text = MVM.reasonText(payload.reason)
     -- 武器打車被擋（砸窗、hitReport）：停車保全中說「打不壞」，否則說「已被綁定、車主會收到通知」（車照樣會壞，見 guards.md）
     elseif payload.guard ~= nil then
         text = getText(payload.guard == true and "IGUI_MVM_Guard_Hit" or "IGUI_MVM_Attack_Owned")
     elseif payload.reason == "NOT_AUTHORIZED" then text = MVM.protectedText(p)
-    elseif payload.reason == "CARRIER_UNBOUND" then text = getText("IGUI_MVM_Reason_CARRIER_UNBOUND") end
+    -- 其餘寫出原因與怎麼辦（離車太遠、拖車要先綁定、載著車不能再被裝、隔離、伺服器啟動中）；沒有譯文的碼只有改機客戶端
+    -- 或程式錯誤會碰到，MVM.reasonText 退回不帶代碼的通用說明
+    else text = MVM.reasonText(payload.reason) end
     MVM.notify(p, text, true)
     MVM.log("enforcement " .. tostring(payload.action) .. " " .. tostring(payload.reason))
 end
