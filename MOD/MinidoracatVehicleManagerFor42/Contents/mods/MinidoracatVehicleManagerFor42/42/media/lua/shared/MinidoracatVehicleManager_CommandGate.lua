@@ -13,7 +13,7 @@ require "MinidoracatVehicleManager_Actions"
 local MVM = MinidoracatVehicleManager
 local CG = {}
 
--- ponytail: 固定半徑、同一樓層，以車身中心算（半掛拖車約 14 格長，站車尾離中心約 7 格）；正常操作被判 TOO_FAR 時放寬或改看車身邊界
+-- 距離量到車身（CG.within）、同一樓層；10 格同原版掛拖車的遠距警告（BaseVehicle.java:10050-10057，原版只記 log 不擋）
 CG.NEAR = 10
 CG.LAUNCH_NEAR = 15 -- Autotsar 卸車的生車座標由客戶端決定（CommonCommands.lua:1001），受保護時限制在拖車附近
 CG.NOTIFY_MS = 2000
@@ -195,12 +195,16 @@ local function once(key, msg)
     MVM.log(msg)
 end
 
--- (x, y, z) 在物件 o 的 d 格內、同一樓層（z＝nil 不比樓層）；NaN 一律不算近。指令防火牆與 Autotsar adapter 共用
+-- (x, y, z) 在車 o 的車身 d 格內、同一樓層（z＝nil 不比樓層）；NaN 一律不算近。量到車身矩形（引擎 getClosestPointOnExtents：
+-- 腳本 extents＋centerOfMassOffset、依車身朝向，BaseVehicle.java:4971-4997），不是物理原點：半掛拖車的原點在車身後段，
+-- tsarslib 拖車選單與引擎自動脫鉤都從牽引車駕駛座送（W900＋貨櫃拖車掛正時駕駛座離拖車原點 9.9～11.4 格、離車身 1.3～2.7 格）。
+-- 指令防火牆、Autotsar adapter、打車回報與綁定距離（Server.lua near、F.findLoaded）共用
+local closest = nil
 function CG.within(o, x, y, z, d)
-    if type(x) ~= "number" or type(y) ~= "number" or o == nil then return false end
+    if type(x) ~= "number" or type(y) ~= "number" or x ~= x or y ~= y or o == nil then return false end
     if z ~= nil and (type(z) ~= "number" or math.floor(z) ~= math.floor(o:getZ())) then return false end
-    local dx, dy = x - o:getX(), y - o:getY()
-    return dx * dx + dy * dy <= d * d
+    closest = closest or Vector2f.new() -- Java 的輸出參數，值不用
+    return o:getClosestPointOnExtents(x, y, closest) <= d * d
 end
 local function near(p, o, d) return CG.within(o, p:getX(), p:getY(), p:getZ(), d) end
 
@@ -293,7 +297,7 @@ end
 
 -- 打到沒有車窗的零件（引擎蓋、後車廂、車燈、輪胎、窗已破或搖下的門）時原版不送任何指令，伺服器處理 PlayerHitVehicle
 -- 也沒有 Lua 事件（guards.md「攻擊通知」）：攻擊者客戶端看到自己的預測傷害就送 hitReport（ClientGuards）。
--- 範圍＝武器射程＋CG.NEAR（距離量到車身中心，長車的車尾離中心可達 7 格）
+-- 範圍＝武器射程＋CG.NEAR，距離量到車身（CG.within）
 function CG.hitReach(weapon) return CG.NEAR + weapon:getMaxRange() end
 
 -- hitReport 只能報自己（通知寫的是送的人）：手上有武器、車在範圍內同一樓層、是綁定的車而自己不能拆零件（同 damageWindow

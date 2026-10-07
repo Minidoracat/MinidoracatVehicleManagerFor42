@@ -5,7 +5,7 @@
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle": "Shared players per vehicle",
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle_tooltip": "How many named players an owner can share one vehicle with.",
     "Sandbox_MinidoracatVehicleManagerClaimDistance": "Claim distance (tiles)",
-    "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "How close to the centre of the vehicle a player must stand to claim, unclaim or re-issue it.",
+    "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "How close to the vehicle's body a player must stand to claim, unclaim or re-issue it. Any part of a long trailer counts.",
     "Sandbox_MinidoracatVehicleManagerAllowFactionShare": "Allow faction sharing",
     "Sandbox_MinidoracatVehicleManagerAllowFactionShare_tooltip": "When enabled, owners can let members of their faction use a vehicle.\nSharing pauses automatically if the faction is renamed, disbanded or gets a new leader.",
     "Sandbox_MinidoracatVehicleManagerInactivityReleaseDays": "Unclaim vehicles of inactive players (days)",

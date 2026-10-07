@@ -556,12 +556,9 @@ local function liveVehicle(id)
     return v
 end
 
--- 車旁：同層、到車心距離 ≤ ClaimDistance（§6.3）
+-- 車旁：同層、到車身距離 ≤ ClaimDistance（§6.3；與指令防火牆同一個 CG.within，長拖車站在車旁任何一段都算）
 local function near(player, vehicle)
-    if math.floor(player:getZ()) ~= math.floor(vehicle:getZ()) then return false end
-    local dx, dy = player:getX() - vehicle:getX(), player:getY() - vehicle:getY()
-    local d = MVM.sandbox("ClaimDistance", 2.5)
-    return dx * dx + dy * dy <= d * d
+    return MVM.CommandGate.within(vehicle, player:getX(), player:getY(), player:getZ(), MVM.sandbox("ClaimDistance", 2.5))
 end
 
 local function claimable(vehicle)

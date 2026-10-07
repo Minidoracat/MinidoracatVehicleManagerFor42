@@ -405,8 +405,8 @@ function F.pickedList(picked)
     return MVM.sortByKey(list, keys)
 end
 
--- 找到身邊這筆紀錄的車（解除綁定／轉讓／重新核發需要車在身邊）。先以見證對 oid；
--- WITNESS_STALE 的見證可能不見或對錯，改找身邊同車型、沒有帶著自己其他有效列見證的車，交給 server 以 native 欄位驗證
+-- 找到身邊這筆紀錄的車（解除綁定／轉讓／重新核發需要車在身邊）。先以見證對 oid；WITNESS_STALE 的見證可能不見或對錯，
+-- 改找身邊（車身 ClaimDistance 內，同伺服器的判定）同車型、沒有帶著自己其他有效列見證的車，交給 server 以 native 欄位驗證
 function F.findLoaded(row)
     local player = getSpecificPlayer(0)
     local reach = MVM.sandbox("ClaimDistance", 2.5)
@@ -418,8 +418,7 @@ function F.findLoaded(row)
         if proj and proj.oid == row.oid then return v end
         if row.state == "WITNESS_STALE" and fallback == nil and player and v:getScriptName() == row.script
             and (proj == nil or proj.role == "OTHER" or proj.state == "WITNESS_STALE")
-            and math.floor(player:getZ()) == math.floor(v:getZ())
-            and (player:getX() - v:getX()) ^ 2 + (player:getY() - v:getY()) ^ 2 <= reach * reach then
+            and MVM.CommandGate.within(v, player:getX(), player:getY(), player:getZ(), reach) then
             fallback = v
         end
     end

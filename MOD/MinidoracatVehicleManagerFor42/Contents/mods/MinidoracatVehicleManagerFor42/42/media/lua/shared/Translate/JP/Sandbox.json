@@ -5,7 +5,7 @@
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle": "1台あたりの共有プレイヤー数",
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle_tooltip": "所有者が1台の車両を共有できる指定プレイヤーの人数です。",
     "Sandbox_MinidoracatVehicleManagerClaimDistance": "登録距離（マス）",
-    "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "登録、登録解除、識別の再発行を行うとき、プレイヤーと車両中心の最大距離です。",
+    "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "登録、登録解除、識別の再発行を行うとき、プレイヤーと車体の最大距離です。長いトレーラーは車体のどの部分の横でもかまいません。",
     "Sandbox_MinidoracatVehicleManagerAllowFactionShare": "派閥共有を許可",
     "Sandbox_MinidoracatVehicleManagerAllowFactionShare_tooltip": "有効にすると、所有者は同じ派閥のメンバーに車両の使用を許可できます。\n派閥の改名、解散、リーダー交代があると共有は自動的に一時停止します。",
     "Sandbox_MinidoracatVehicleManagerInactivityReleaseDays": "長期未ログインの車両を自動で登録解除（日）",

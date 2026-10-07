@@ -243,8 +243,9 @@ do -- InventoryItemFactory.CreateItem 的替身：每件新 id；dur＝裝上零
     end
 end
 local function vehicle(id, sqlId, keyId, script, x, y, partIds)
+    -- ext／com：車身矩形（腳本 extents 的 x、z 與 centerOfMassOffset）；預設大小 0＝距離量到原點
     local v = { id = id, sqlId = sqlId, keyId = keyId, script = script or "Base.CarNormal", x = x or 0, y = y or 0, z = 0,
-        parts = {}, order = {}, removed = false }
+        parts = {}, order = {}, removed = false, ext = { x = 0, z = 0 }, com = { x = 0, z = 0 } }
     for _, pid in ipairs(partIds or { "Engine", "Battery", "DoorFrontLeft" }) do
         local pt = part(pid); pt.vehicle = v; v.parts[pid] = pt; v.order[#v.order + 1] = pt
     end
@@ -284,6 +285,19 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:hasModData() return self.bodyMd ~= nil end
     function v:getModData() self.bodyMd = self.bodyMd or {}; return self.bodyMd end
     function v:transmitModData() count("body") end
+    -- 引擎 getClosestPointOnExtents：點到車身矩形四條邊的最近距離平方（BaseVehicle.java:4971-4997，點在車身內也是到最近的邊）。
+    -- 假車不轉向：車身 x＝世界 x、車身 z＝世界 y（都相對車的位置）
+    function v:getClosestPointOnExtents(wx, wy)
+        local lx, lz = wx - self.x, wy - self.y
+        local x0, x1 = self.com.x - self.ext.x / 2, self.com.x + self.ext.x / 2
+        local z0, z1 = self.com.z - self.ext.z / 2, self.com.z + self.ext.z / 2
+        if lx >= x0 and lx <= x1 and lz >= z0 and lz <= z1 then
+            local d = math.min(lx - x0, x1 - lx, lz - z0, z1 - lz)
+            return d * d
+        end
+        local cx, cz = math.max(x0, math.min(lx, x1)), math.max(z0, math.min(lz, z1))
+        return (lx - cx) ^ 2 + (lz - cz) ^ 2
+    end
     -- 經 Java 方法表呼叫（伺服器包 permanentlyRemove 的方法表，見 VEHICLE_METHODS）
     function v:permanentlyRemove() return VEHICLE_METHODS.permanentlyRemove(self) end
     world[id] = v
@@ -292,6 +306,7 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
 end
 function getVehicleById(id) return world[id] end
 function getCell() return { getVehicles = function() return javaList(vehicleList) end } end
+Vector2f = { new = function() return { x = 0, y = 0 } end } -- getClosestPointOnExtents 的輸出參數（org.joml.Vector2f 有 expose）
 
 -- 原版 timed action 與 UI（server 包 ISRemoveBurntVehicle，client 包選單）
 -- BaseVehicle 的 Java 方法表（__classmetatables[BaseVehicle.class].__index）：OwnershipSystem 載入時包 permanentlyRemove
@@ -4246,6 +4261,68 @@ check(c9.removed and rc9.carrierSqlId == nil and not carrierFirst and rc9.record
 SB.InactivityReleaseDays = 0
 Events.OnClientCommand.Remove(stand)
 SB.ClaimsPerPlayer = quota0
+end)(); -- 分號：下一個情境也是 IIFE
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 F8：距離量到車身（半掛拖車在牽引車駕駛座掛／卸、自動脫鉤、燈號同步；站在長拖車側邊解除與綁定）")
+boot()
+for k in pairs(MVM.CommandGate.R.notified) do MVM.CommandGate.R.notified[k] = nil end
+-- 原版與 rLib 處理器的替身：收到的參數（防火牆拒絕時 id 欄位已改成 -1）
+local seen = nil
+local function stand(m, _, _, args) if m == "vehicle" or m == "rLib" then seen = args end end
+Events.OnClientCommand.Add(stand)
+local function send(p, m, c, args) nowMs = nowMs + 2100; seen = nil; fire("OnClientCommand", m, c, p, args); return seen or {} end
+local function denied(text) for key in pairs(O.R.denyAgg) do if key:find(text, 1, true) then return true end end return false end
+local function clear() for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end end
+-- 依腳本（含模型縮放與偏移）擺正式服回報的 W900＋貨櫃拖車，兩台車頭朝 +y、大栓對準第五輪：
+-- W900（×1.14）車身 6.82×1.90、駕駛座在原點前 1.26（側邊 0.36）、第五輪在原點後 2.24；
+-- 貨櫃拖車（×1.3）車身 11.04×2.32、centerOfMassOffset z 3.09（原點在車身後段）、大栓在原點前 7.73
+local tk = vehicle(91, 9101, 9901, "Base.SemiTruck", 100, 100)
+tk.ext = { x = 1.90, z = 6.82 }
+local tr = vehicle(92, 9102, 9902, "Base.SemiTrailerContainer", 100, 100 - 2.24 - 7.73)
+tr.ext, tr.com = { x = 2.32, z = 11.04 }, { x = 0, z = 3.09 }
+local side = 100 + 2.32 / 2 -- 拖車右側車身
+local OW = player("sow", side + 1, tr.y) -- 拖車原點旁：舊判定也在綁定距離內，防火牆的斷言不依賴綁定距離
+local r = rec(claim(OW, tr).oid)
+OW.x, OW.y, OW.vehicle, tk.seats[0] = 100.36, 101.26, tk, OW -- W900 駕駛座：離拖車原點 11.2 格、離車身 2.6 格
+local function attach(p)
+    return send(p, "vehicle", "attachTrailer", { vehicleA = tk.id, vehicleB = tr.id, attachmentA = "trailerTruck", attachmentB = "trailerTruck" })
+end
+clear()
+local a1 = attach(OW)
+check(a1.vehicleA == tk.id and a1.vehicleB == tr.id and not denied("TOO_FAR"),
+    "駕駛座掛上綁定的貨櫃拖車（tsarslib 駕駛座選單；離拖車原點 11.2 格、離車身 2.6 格）：放行")
+tk.towing, tr.towedBy = tr, tk
+local d1 = send(OW, "vehicle", "detachTrailer", { vehicle = tk.id })
+local d2 = send(OW, "vehicle", "detachTrailerSpontaneous", { vehicle = tk.id })
+local l1 = send(OW, "rLib", "SetVehicleHeadlights", { vehicleId = tr.id, set = true })
+check(d1.vehicle == tk.id and d2.vehicle == tk.id and l1.vehicleId == tr.id and not denied("TOO_FAR"),
+    "駕駛座卸下拖車、引擎自動脫鉤（送的人是駕駛）、拖車燈號同步：放行")
+tk.towing, tr.towedBy, OW.vehicle, tk.seats[0] = nil, nil, nil, nil
+clear()
+OW.x, OW.y = side + 10.3, tr.y + 3
+local a2 = attach(OW)
+OW.x = side + 9.8
+local a3 = attach(OW)
+check(a2.vehicleA == -1 and denied("CMD:vehicle.attachTrailer") and denied("TOO_FAR") and a3.vehicleA == tk.id,
+    "距離門檻量到車身：拖車側邊 10.3 格拒絕（TOO_FAR）、9.8 格放行（離拖車原點約 11.4 格）")
+OW.x, OW.y = side + 4, tr.y + 7 -- 拖車前段側邊
+local u1 = cmd(OW, "unclaim", { vehicleId = tr.id, expectedOid = r.oid, expectedEpoch = r.epoch })
+OW.x = side + 1.5
+local u2 = cmd(OW, "unclaim", { vehicleId = tr.id, expectedOid = r.oid, expectedEpoch = r.epoch })
+local c2 = claim(OW, tr)
+check(u1 and u1.reason == "TOO_FAR" and u2 and u2.ok == true and r.recordState == "RELEASED" and c2 and c2.ok == true,
+    "綁定距離量到車身：拖車前段側邊離車身 4 格解除被拒（TOO_FAR）、1.5 格（離原點約 7.5 格）解除與重新綁定都成功")
+-- 車隊視窗：見證失效時找身邊同車型的車（F.findLoaded）用同一個距離
+local realSP, realProj = getSpecificPlayer, MVM.clientProjection
+getSpecificPlayer = function() return OW end
+MVM.clientProjection = function() return nil end
+local found = MVM.FleetUI.findLoaded({ oid = "stale", state = "WITNESS_STALE", script = "Base.SemiTrailerContainer" })
+OW.x = side + 4
+local none = MVM.FleetUI.findLoaded({ oid = "stale", state = "WITNESS_STALE", script = "Base.SemiTrailerContainer" })
+getSpecificPlayer, MVM.clientProjection = realSP, realProj
+check(found == tr and none == nil, "車隊視窗（見證失效）找身邊的同型拖車：站在拖車前段側邊 1.5 格找得到、4 格找不到")
+Events.OnClientCommand.Remove(stand)
 end)(); -- 分號：下一個情境也是 IIFE
 
 (function()

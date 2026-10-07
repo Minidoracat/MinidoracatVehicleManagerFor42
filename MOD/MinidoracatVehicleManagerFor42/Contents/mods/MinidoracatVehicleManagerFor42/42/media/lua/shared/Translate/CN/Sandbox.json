@@ -5,7 +5,7 @@
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle": "每辆车可分享的玩家数",
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle_tooltip": "车主可以把一辆车分享给几位指定玩家。",
     "Sandbox_MinidoracatVehicleManagerClaimDistance": "绑定距离（格）",
-    "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "绑定、解除绑定或重新签发识别时，玩家与车辆中心的最大距离。",
+    "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "绑定、解除绑定或重新签发识别时，玩家与车身的最大距离。长拖车站在车旁任何一段都算。",
     "Sandbox_MinidoracatVehicleManagerAllowFactionShare": "允许阵营共享",
     "Sandbox_MinidoracatVehicleManagerAllowFactionShare_tooltip": "开启后，车主可以让同阵营成员使用车辆。\n阵营改名、解散或更换领袖时，共享会自动暂停。",
     "Sandbox_MinidoracatVehicleManagerInactivityReleaseDays": "长期未上线自动解除绑定（天）",
