@@ -57,7 +57,15 @@ Claiming stops other players from driving, opening or stripping your car; damage
 [/list]
 
 [h2]🗺️ Minimap tracking (optional)[/h2]
-With Minidoracat MiniMap installed, your cars and shared cars you may "see location" of show on the minimap and world map. Nobody else can see them. Each car can have its own map icon, color and size; these settings are stored only on your computer. If car names clutter the minimap, untick "Show car names on the minimap" under Vehicle Manager in the MiniMap settings (the minimap's gear) to keep only the icons; the world map still shows names.
+With Minidoracat MiniMap installed, your cars and shared cars you may "see location" of show on the minimap and world map. Nobody else can see them. Each car can have its own map icon, color and size; these settings are stored only on your computer.
+
+In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager category has a "Claimed vehicles" layer:
+[list]
+[*] Turn the car markers on or off separately for the minimap and the world map, and set their overall size
+[*] Choose "Show car names on the minimap" and "Show car names on the world map" separately; if names clutter the minimap, turn them off there to keep only the icons
+[*] A live preview above shows the result right away
+[/list]
+The "Open fleet window" button in the same category opens the fleet window. If you had turned off minimap car names before, that choice carries over. With an older MiniMap, the category only has "Show car names on the minimap": untick it to keep only the icons on the minimap; the world map still shows names.
 
 [h2]💰 Paid slots (optional)[/h2]
 [list]
