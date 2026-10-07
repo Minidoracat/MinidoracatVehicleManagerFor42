@@ -432,5 +432,7 @@
     "IGUI_MVM_Restore_Partial": "已恢复 %1 辆；%2 辆没有恢复：%3",
     "IGUI_MVM_Restore_PickOne": "请至少勾选一辆车",
     "IGUI_MVM_FactionTransfer_Warn": "把阵营「%1」转给 %2？\n转让后，分享给这个阵营的 %3 辆车会暂停阵营分享，各车主要到车队窗口恢复才能再用。",
-    "IGUI_MVM_Btn_TransferFaction": "转让给 %1"
+    "IGUI_MVM_Btn_TransferFaction": "转让给 %1",
+    "IGUI_MVM_Opt_ShowButton": "显示车队按钮",
+    "IGUI_MVM_Opt_ShowButton_tooltip": "画面上的车队按钮，点击开关车队窗口。有家族工具栏时在工具栏里；没有时是可拖拽的浮动按钮。隐藏后，在车旁按右键，选「车辆管理 ￫ 打开车队」即可打开。管理员越权中时按钮一定显示。"
 }

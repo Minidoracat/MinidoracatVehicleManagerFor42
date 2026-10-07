@@ -49,6 +49,7 @@ Claiming stops other players from driving, opening or stripping your car; damage
 [h2]🗂️ Fleet window[/h2]
 [list]
 [*] Open it with the steering wheel icon in the family toolbar; press "." to expand the toolbar when it is collapsed
+[*] To hide the steering wheel icon, untick "Show Vehicle Fleet button" under Options → MODS → Vehicle Manager and press Apply; then open the fleet from the right-click menu next to a car: "Vehicle Manager → Open fleet". While an admin override is on, the icon always shows
 [*] See your cars, cars shared with you and where they were last seen; click the coordinates in vehicle details to copy them and paste them to others
 [*] Rename, share, transfer or unclaim; when the server uses guard slots you can also choose which cars have damage guard in their details (see "Damage guard" above)
 [*] [b]Notices[/b] tab: records who hit which of your cars and whether damage guard stopped it, repairs done by damage guard, cars that lost damage guard because your guard slots went down, and rented slots locking, unlocking or unclaiming cars. It keeps recording while you are offline; when you log in with new notices you get a message, the steering wheel icon shows the unread count and the tab shows it as "Notices (count)". Opening the tab marks them read. Repeated attacks on the same car by the same player within 10 minutes become one entry with a count. Notices are kept for 30 days, up to 50, on the server, and only you can see yours

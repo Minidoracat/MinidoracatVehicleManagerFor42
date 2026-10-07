@@ -432,5 +432,7 @@
     "IGUI_MVM_Restore_Partial": "Restored: %1. Not restored: %2. %3",
     "IGUI_MVM_Restore_PickOne": "Tick at least one vehicle",
     "IGUI_MVM_FactionTransfer_Warn": "Give faction %1 to %2?\nAfter the handover, faction sharing pauses for the vehicles shared with this faction (%3). Each owner must restore it in the fleet window.",
-    "IGUI_MVM_Btn_TransferFaction": "Give to %1"
+    "IGUI_MVM_Btn_TransferFaction": "Give to %1",
+    "IGUI_MVM_Opt_ShowButton": "Show Vehicle Fleet button",
+    "IGUI_MVM_Opt_ShowButton_tooltip": "The on-screen Vehicle Fleet button; click it to open or close the fleet window. It sits in the family toolbar when available; otherwise it is a floating button you can drag. When hidden, right-click next to a car and choose \"Vehicle Manager › Open fleet\". While admin override is on, the button is always shown."
 }

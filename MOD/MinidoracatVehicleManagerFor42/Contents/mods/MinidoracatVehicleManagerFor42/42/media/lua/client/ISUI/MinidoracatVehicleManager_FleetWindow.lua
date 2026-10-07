@@ -5,6 +5,7 @@
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Client"
 require "MinidoracatVehicleManager_Appearance"
+require "PZAPI/ModOptions"
 
 local MVM = MinidoracatVehicleManager
 local C = MVM.Client
@@ -2033,9 +2034,48 @@ function FleetWindow.toggle()
     end
 end
 
+-- 玩家選項「顯示車隊按鈕」（選項 > MODS > 車輛管理，預設顯示）：關掉就隱藏車隊入口（工具列入口或浮鈕）。
+-- 管理員越權中例外：紅框入口是常駐安全提醒，隱藏偏好不得蓋掉。entryShown 是入口回呼唯一讀的快取（Dock 每幀可能問）
+local showButton, entryShown, docked = true, true, false
+local function syncEntry()
+    entryShown = showButton or MVM.clientOverride(0)
+    if docked then
+        UI.Dock.refresh()
+    elseif F.float then
+        if not entryShown then F.float:hideTooltip() end
+        F.float:setVisible(entryShown)
+    end
+end
+
+-- MainOptions 只在載入當下已有 ModOptions 資料時建 MODS 分頁（MainOptions.lua:409-411），所以檔案載入時就註冊。
+-- ModOptions.ini 只由 PZAPI.ModOptions:load() 讀回，原版唯一呼叫點是建立選項畫面（MainOptions.lua:2796）；不押在它的
+-- 建立時機上，註冊後自己讀一次（load 只照 ini 覆寫 option.value，重複呼叫無害）。沒有 PZAPI、讀不到或沒有值一律顯示
+local function registerOptions()
+    local options = PZAPI.ModOptions:getOptions("MinidoracatVehicleManager")
+    if options == nil then
+        options = PZAPI.ModOptions:create("MinidoracatVehicleManager", "ContextMenu_MVM_Menu")
+        options:addTickBox("ShowButton", "IGUI_MVM_Opt_ShowButton", true, "IGUI_MVM_Opt_ShowButton_tooltip")
+    end
+    -- 按「套用」時 MainOptions 先把畫面值寫回 option 再呼叫 apply（MainOptions.lua:3760-3763）
+    function options:apply()
+        showButton = self:getOption("ShowButton"):getValue() ~= false
+        syncEntry()
+    end
+    PZAPI.ModOptions:load()
+    showButton = options:getOption("ShowButton"):getValue() ~= false
+end
+if PZAPI and PZAPI.ModOptions then
+    local ok, err = pcall(registerOptions)
+    if not ok then MVM.log("mod options failed: " .. tostring(err)) end
+end
+syncEntry()
+
+-- 越權沒有專屬事件；會改 adminOverride 的路徑（clientReceive 的 ACK／管理快照、角色被撤的 refreshAdminAccess）都會呼叫
+-- onFleetChanged，入口在這裡重算。代價是每則伺服器車隊訊息多一次查表，換來入口回呼不必每幀問越權
 MVM.onFleetChanged = function(to)
     local f = FleetWindow.instance
     if f and to == f:who() then f.dirty = true end
+    syncEntry()
 end
 
 -- 車外右鍵「車輛管理」子選單加「開啟車隊」
@@ -2083,13 +2123,15 @@ local function createFloat()
         end,
     })
     ISLayoutManager.RegisterWindow("MinidoracatVehicleManagerFloat", FloatLayout, F.float)
+    syncEntry() -- 玩家隱藏了就不顯示
 end
 
 -- 家族工具列（框架 rev 13 Dock）：登記成功就不建浮鈕；舊框架或登記失敗照舊用浮鈕。回呼每幀可能被呼叫，不建 table
-local docked = CAPS.dock and UI.Dock and UI.Dock.register({
+docked = CAPS.dock and UI.Dock and UI.Dock.register({
     id = "vehiclemanager", order = 40, iconKey = "steeringwheel",
     label = function() return getText("IGUI_MVM_FleetTitle") end,
     onClick = FleetWindow.toggle,
+    isAvailable = function() return entryShown end, -- 選項 OR 越權中（syncEntry）
     isActive = function() local f = FleetWindow.instance; return f ~= nil and f.win:getIsVisible() end,
     getState = function() if MVM.clientOverride(0) then return "warn" end end, -- 越權中：紅框常駐提醒
     getBadge = function() return MVM.noticeUnreadLocal() end, -- 離線時收到、還沒在「紀錄」分頁看過的通知

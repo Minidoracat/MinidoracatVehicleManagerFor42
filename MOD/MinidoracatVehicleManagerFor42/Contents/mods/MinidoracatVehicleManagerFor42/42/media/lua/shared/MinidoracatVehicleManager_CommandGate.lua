@@ -135,7 +135,7 @@ local RULES = {
         end,
         detachTrailer = tows("vehicle"), detachTrailerSpontaneous = tows("vehicle"), -- :413-429
         setHSV = one("REPAIR"), setSkinIndex = one("REPAIR"), setBloodIntensity = one("REPAIR"), -- :339-346,440-458
-        remove = one("MANAGE"), -- :372-379（Java 只在 debug、GeneralCheats 或拆解中放行，GameServer.java:2308-2313）
+        remove = one("MANAGE"), -- :372-379 直接 permanentlyRemove；Java 一律交給 Lua（GameServer.java:2308-2313 的 isDismantleAllowed() 固定回 true，NetworkPlayerAI.java:653-655）
     },
     -- tsarslib common/media/lua/server/CommonTemplates/CommonCommands.lua
     commonlib = {

@@ -432,5 +432,7 @@
     "IGUI_MVM_Restore_Partial": "已恢復 %1 台；%2 台沒有恢復：%3",
     "IGUI_MVM_Restore_PickOne": "請至少勾選一台車",
     "IGUI_MVM_FactionTransfer_Warn": "把陣營「%1」轉給 %2？\n轉讓後，分享給這個陣營的 %3 台車會暫停陣營分享，各車主要到車隊視窗恢復才能再用。",
-    "IGUI_MVM_Btn_TransferFaction": "轉讓給 %1"
+    "IGUI_MVM_Btn_TransferFaction": "轉讓給 %1",
+    "IGUI_MVM_Opt_ShowButton": "顯示車隊按鈕",
+    "IGUI_MVM_Opt_ShowButton_tooltip": "畫面上的車隊按鈕，點擊開關車隊視窗。有家族工具列時在工具列裡；沒有時是可拖曳的浮動按鈕。隱藏後，在車旁按右鍵，選「車輛管理 ￫ 開啟車隊」就能打開。管理員越權中時按鈕一定顯示。"
 }

@@ -4442,14 +4442,21 @@ end)();
 
 (function()
 out("情境 DK：家族工具列（框架 rev 13 Dock）與舊框架浮鈕退回")
-local saved = { UI = MinidoracatUI, panel = ISPanel, font = UIFont, core = getCore, layout = ISLayoutManager,
+local saved = { UI = MinidoracatUI, panel = ISPanel, font = UIFont, core = getCore, layout = ISLayoutManager, pzapi = PZAPI,
     override = MVM.clientOverride, win = MVM.FleetWindow, fui = MVM.FleetUI, changed = MVM.onFleetChanged, hooks = MVM.clientMenuHooks }
-local regs, floats = {}, {}
+local regs, floats, refreshes = {}, {}, 0
 local function loadFleet(capabilities, accept)
     MinidoracatUI = { v1 = { API_MAJOR = 1, API_REVISION = 13, CAPABILITIES = capabilities,
         Theme = { create = function(options) return options end },
-        FloatButton = { new = function(opts) floats[#floats + 1] = opts; return opts end },
-        Dock = { register = function(spec) regs[#regs + 1] = spec; return accept end } } }
+        FloatButton = { new = function(opts)
+            floats[#floats + 1] = opts
+            opts.visible = true -- 框架建好就 addToUIManager（可見）
+            opts.setVisible = function(self, v) self.visible = v end
+            opts.hideTooltip = function(self) self.tipHidden = true end
+            opts.setPosition = function() end
+            return opts
+        end },
+        Dock = { register = function(spec) regs[#regs + 1] = spec; return accept end, refresh = function() refreshes = refreshes + 1 end } } }
     MVM.clientMenuHooks = {}
     local n = {}
     for _, ev in ipairs({ "OnGameStart", "OnResolutionChange", "OnNetworkUsersReceived" }) do
@@ -4460,6 +4467,7 @@ local function loadFleet(capabilities, accept)
     isClient = function() return false end
     local added = { start = #handlers.OnGameStart - n.OnGameStart, res = #handlers.OnResolutionChange - n.OnResolutionChange }
     for i = n.OnGameStart + 1, #handlers.OnGameStart do handlers.OnGameStart[i]() end -- 進遊戲
+    for i = n.OnResolutionChange + 1, #handlers.OnResolutionChange do handlers.OnResolutionChange[i]() end -- 換解析度
     for ev, k in pairs(n) do while #handlers[ev] > k do table.remove(handlers[ev]) end end
     return added
 end
@@ -4495,7 +4503,78 @@ regs, floats = {}, {}
 local refused = loadFleet(caps(true), false)
 check(#regs == 1 and #floats == 1 and refused.res == 1, "Dock 拒絕登記：退回浮鈕")
 
-MinidoracatUI, ISPanel, UIFont, getCore, ISLayoutManager = saved.UI, saved.panel, saved.font, saved.core, saved.layout
+-- 玩家選項「顯示車隊按鈕」：假 PZAPI.ModOptions，ini[頁][選項] 是 ModOptions.ini 裡的值；每次 newGame 是一次 Lua 重載
+local ini = {}
+local function newGame()
+    local dict = {}
+    PZAPI = { ModOptions = {
+        getOptions = function(_, id) return dict[id] end,
+        create = function(_, id, name)
+            local o = { name = name, items = {}, apply = function() end }
+            function o:addTickBox(oid, label, value, tip)
+                self.items[oid] = { name = label, tooltip = tip, value = value, getValue = function(opt) return opt.value end }
+            end
+            function o:getOption(oid) return self.items[oid] end
+            dict[id] = o
+            return o
+        end,
+        load = function()
+            for id, o in pairs(dict) do
+                for oid, v in pairs(ini[id] or {}) do if o.items[oid] then o.items[oid].value = v end end
+            end
+        end } }
+    return dict
+end
+local over = false
+MVM.clientOverride = function(n) return over and n == 0 end
+local function dock(showIni)
+    ini = { MinidoracatVehicleManager = { ShowButton = showIni } }
+    local pages = newGame()
+    regs = {}
+    loadFleet(caps(true), true)
+    return regs[1], pages.MinidoracatVehicleManager
+end
+local d, page = dock(nil)
+local opt = page and page.items.ShowButton
+check(page and page.name == "ContextMenu_MVM_Menu" and opt and opt.name == "IGUI_MVM_Opt_ShowButton" and opt.value == true
+    and opt.tooltip == "IGUI_MVM_Opt_ShowButton_tooltip", "MOD 選項：「車輛管理」頁有「顯示車隊按鈕」勾選框，預設勾選")
+check(d.isAvailable() == true, "ModOptions.ini 沒有值：工具列入口顯示")
+d, page = dock(false)
+check(d.isAvailable() == false, "ModOptions.ini 存的是隱藏：載入時讀回，工具列入口不顯示")
+over = true
+MVM.onFleetChanged("alice")
+check(d.isAvailable() == true, "隱藏中但管理員越權開啟：入口照樣顯示（紅框提醒不被蓋掉）")
+over = false
+MVM.onFleetChanged("alice")
+check(d.isAvailable() == false, "越權結束：回到選項狀態（隱藏）")
+local r0 = refreshes
+page.items.ShowButton.value = true
+page:apply()
+check(d.isAvailable() == true and refreshes > r0, "選項按套用改成顯示：入口立即回來（重算工具列）")
+page.items.ShowButton.value = false
+page:apply()
+check(d.isAvailable() == false, "選項按套用改成隱藏：入口立即消失")
+
+ini = { MinidoracatVehicleManager = { ShowButton = false } }
+newGame()
+regs, floats = {}, {}
+loadFleet(caps(nil), true)
+local fl = floats[1]
+check(fl and fl.visible == false, "舊框架浮鈕：選項隱藏時進遊戲、換解析度都不會叫回來")
+MVM.onFleetChanged("alice")
+check(fl.visible == false, "舊框架浮鈕：車隊訊息進來（沒越權）仍維持隱藏")
+over = true
+MVM.onFleetChanged("alice")
+check(fl.visible == true, "舊框架浮鈕：越權開啟時強制顯示")
+over = false
+fl.tipHidden = nil
+MVM.onFleetChanged("alice")
+check(fl.visible == false and fl.tipHidden == true, "舊框架浮鈕：越權結束後隱藏，提示一併收掉")
+PZAPI.ModOptions:getOptions("MinidoracatVehicleManager").items.ShowButton.value = true
+PZAPI.ModOptions:getOptions("MinidoracatVehicleManager"):apply()
+check(fl.visible == true, "舊框架浮鈕：選項改回顯示，套用後立即出現")
+
+MinidoracatUI, ISPanel, UIFont, getCore, ISLayoutManager, PZAPI = saved.UI, saved.panel, saved.font, saved.core, saved.layout, saved.pzapi
 MVM.clientOverride, MVM.FleetWindow, MVM.FleetUI, MVM.onFleetChanged, MVM.clientMenuHooks =
     saved.override, saved.win, saved.fui, saved.changed, saved.hooks
 end)(); -- 分號：下一個情境也是 IIFE

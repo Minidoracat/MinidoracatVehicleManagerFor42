@@ -432,5 +432,7 @@
     "IGUI_MVM_Restore_Partial": "%1 台を再開しました。%2 台は再開できませんでした：%3",
     "IGUI_MVM_Restore_PickOne": "車両を 1 台以上選んでください",
     "IGUI_MVM_FactionTransfer_Warn": "派閥「%1」を %2 に譲渡しますか？\n譲渡すると、この派閥と共有している %3 台の共有が一時停止し、各所有者が車両一覧で再開するまで使えません。",
-    "IGUI_MVM_Btn_TransferFaction": "%1 に譲渡"
+    "IGUI_MVM_Btn_TransferFaction": "%1 に譲渡",
+    "IGUI_MVM_Opt_ShowButton": "車両一覧ボタンを表示",
+    "IGUI_MVM_Opt_ShowButton_tooltip": "画面上の車両一覧ボタン。クリックで車両一覧ウィンドウを開閉します。ファミリーツールバーがある場合はその中に表示され、ない場合はドラッグで移動できるフローティングボタンになります。非表示にしても、車のそばで右クリックして「車両管理 ￫ 車両一覧を開く」から開けます。管理者オーバーライド中は常に表示されます。"
 }
