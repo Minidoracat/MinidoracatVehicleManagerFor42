@@ -5,6 +5,7 @@
     "IGUI_MVM_FloatFallback": "車",
     "IGUI_MVM_ProtocolMismatch": "車両管理のバージョンがサーバーと異なります。MODを更新してください。",
     "IGUI_MVM_Protected": "この車両は登録済みです。所有者の共有がないと使えません",
+    "IGUI_MVM_SalvageUnclaimFirst": "あなたが登録した車両です。車両ごと解体するには、先に登録を解除してください",
     "IGUI_MVM_FleetTitle": "車両一覧",
     "IGUI_MVM_Tab_OWNED": "自分の車両",
     "IGUI_MVM_Tab_SHARED": "共有された車両",

@@ -120,6 +120,9 @@ A: By default admins are blocked like any other player. Turn on "Override: use a
 [b]Q: Does it work without MiniMap?[/b]
 A: Yes. MiniMap only shows your cars on the map; claiming, protection, sharing and the fleet window all work without it.
 
+[b]Q: The server runs Vehicle Repair Overhaul. Can other players salvage or repair my car?[/b]
+A: No. Its "Salvage Vehicle" option cannot remove a car someone else has claimed, and its repairs (including engine rebuild, heater and lightbar) need the "Repair" permission you share; taking parts off already needs "Salvage". To salvage your own claimed car, unclaim it first.
+
 [b]Q: Can my friends see where my car is?[/b]
 A: Only people you gave the "see location" permission. By default nobody can.
 

@@ -1,6 +1,7 @@
 -- Client 端（計畫 §8.1.3、§8.0 U 級）：
 --   1. 排入受保護類別的 timed action 時送 prepareAction（server 以連線身分記 intent）
---   2. 上車／換座／拖掛／MSW 拖車裝卸是 client 端判定的動作：依投影快取在 isValid 擋下（U 級；server watchdog 事後偵測）
+--   2. 上車／換座／拖掛、MSW 拖車裝卸、Vehicle Repair Overhaul 拆車與修理是 client 端判定的動作：依投影快取在 isValid 擋下
+--      （U 級；上車由 server watchdog 事後偵測，第三方動作送出的指令由指令防火牆判定）
 --   3. 虛擬鑰匙入口：無實體鑰匙的授權者可從選單發動、解鎖
 --   4. 顯示 server 送來的 enforcement；武器打到別人的車時回報 hitReport（server 據此通知車主）
 --   5. 車上容器（後車廂、座位、置物箱…）依權限決定列不列出
@@ -93,31 +94,53 @@ guardValid(ISDetachTrailerFromVehicle, function(a)
         and allowed(a.character, v:getVehicleTowedBy(), "TOW")
 end)
 
--- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW；綁定的車只能裝上已綁定的拖車
--- （伺服器 CARRIER_UNBOUND，這裡依本機投影提早提示）。它的 perform 只送 msw 命令
--- （MSW_ISLoadVehicle.lua:27-33、MSW_ISLaunchVehicle.lua:39-45），伺服器端由指令防火牆（shared/…_CommandGate.lua）判定；
--- 這裡只是讓一般玩家在排入動作時就看到提示，不必等伺服器拒絕。
--- 類別定義在 MSW 自己的 client 檔，載入順序不保證：現在有就包，否則進遊戲時再包（每個類別只包一次）
-function MVM.guardMsw()
-    if MSW_ISLoadVehicle and not rawget(MSW_ISLoadVehicle, "_mvmGuarded") then
-        rawset(MSW_ISLoadVehicle, "_mvmGuarded", true)
-        guardValid(MSW_ISLoadVehicle, function(a)
-            if not (allowed(a.character, a.vehicle, "TOW") and allowed(a.character, a.trailer, "TOW")) then return false end
-            local n = a.character:getPlayerNum()
-            if MVM.clientProjection(n, a.vehicle) ~= nil and MVM.clientProjection(n, a.trailer) == nil then
-                a._mvmText = getText("IGUI_MVM_Reason_CARRIER_UNBOUND")
-                return false
-            end
-            return true
-        end)
-    end
-    if MSW_ISLaunchVehicle and not rawget(MSW_ISLaunchVehicle, "_mvmGuarded") then
-        rawset(MSW_ISLaunchVehicle, "_mvmGuarded", true)
-        guardValid(MSW_ISLaunchVehicle, function(a) return allowed(a.character, a.trailer, "TOW") end)
-    end
+-- 第三方 MOD 只在客戶端跑的動作（沒有 complete）：perform 只送它自己的伺服器指令，由指令防火牆（shared/…_CommandGate.lua）判定；
+-- 這裡依本機投影在排入時就提示，不必等伺服器拒絕。類別定義在各 MOD 自己的檔案，載入順序不保證：現在有就包，否則進遊戲時
+-- 再包（每個類別只包一次）
+local function guardOnce(cls, check)
+    if cls == nil or rawget(cls, "_mvmGuarded") then return end
+    rawset(cls, "_mvmGuarded", true)
+    guardValid(cls, check)
 end
-MVM.guardMsw()
-Events.OnGameStart.Add(MVM.guardMsw)
+
+-- 修的零件所屬的車；修物品欄裡的東西（Vehicle Repair Overhaul 的 DoFixAction 沒有 part）回 nil＝照原樣
+local function repairCar(a) return a.vehicle or (a.part and a.part:getVehicle()) end
+local function canRepair(a) return allowed(a.character, repairCar(a), "REPAIR") end
+
+function MVM.guardThirdParty()
+    -- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW；綁定的車只能裝上已綁定的拖車
+    -- （伺服器 CARRIER_UNBOUND）。perform 只送 msw 命令（MSW_ISLoadVehicle.lua:27-33、MSW_ISLaunchVehicle.lua:39-45）
+    guardOnce(MSW_ISLoadVehicle, function(a)
+        if not (allowed(a.character, a.vehicle, "TOW") and allowed(a.character, a.trailer, "TOW")) then return false end
+        local n = a.character:getPlayerNum()
+        if MVM.clientProjection(n, a.vehicle) ~= nil and MVM.clientProjection(n, a.trailer) == nil then
+            a._mvmText = getText("IGUI_MVM_Reason_CARRIER_UNBOUND")
+            return false
+        end
+        return true
+    end)
+    guardOnce(MSW_ISLaunchVehicle, function(a) return allowed(a.character, a.trailer, "TOW") end)
+    -- Vehicle Repair Overhaul（Workshop 2757712197）：整車拆解（ISVehicleSalvage.lua:163 送 vehicle.remove）移除整台車，要 MANAGE；
+    -- 車主拆自己綁定的車要先解除綁定，否則車移除後紀錄留成「不在場」、照算名額
+    guardOnce(ISVehicleSalvage, function(a)
+        local row = MVM.clientProjection(a.character:getPlayerNum(), a.vehicle)
+        if row ~= nil and row.role == "OWNER" then
+            a._mvmText = getText("IGUI_MVM_SalvageUnclaimFirst")
+            return false
+        end
+        return allowed(a.character, a.vehicle, "MANAGE")
+    end)
+    guardOnce(VRO and VRO.DoFixAction, canRepair)
+    guardOnce(ISRebuildEngine, canRepair)
+    guardOnce(EHRRepairHeater, canRepair)
+    guardOnce(ELRRepairLightbar, canRepair)
+    -- 在車外關警示燈與警笛（修警示燈前）帶車輛 id；在車內走原版座位指令，交給座位防護
+    guardOnce(ELRTurnOffLightbar, function(a)
+        return not a.isCharacterOutside or allowed(a.character, getVehicleById(a.vehicleId or -1), "REPAIR")
+    end)
+end
+MVM.guardThirdParty()
+Events.OnGameStart.Add(MVM.guardThirdParty)
 
 -- ------------------------------------------------------------ virtual key ---
 local function hasKey(player, vehicle)

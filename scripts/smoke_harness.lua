@@ -3628,6 +3628,10 @@ for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerTo
     _G[n] = { isValid = function() return true end }
 end
 MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil
+-- Vehicle Repair Overhaul 的類別在 shared（比本 MOD 的 client 檔早載入）：載入時就包
+ISVehicleSalvage, VRO = { isValid = function() return true end }, { DoFixAction = { isValid = function() return true end } }
+ISRebuildEngine, EHRRepairHeater = { isValid = function() return true end }, { isValid = function() return true end }
+ELRRepairLightbar, ELRTurnOffLightbar = { isValid = function() return true end }, { isValid = function() return true end }
 handlers.OnGameStart = handlers.OnGameStart or {}
 local nStart = #handlers.OnGameStart
 assert(loadfile(MEDIA .. "/client/MinidoracatVehicleManager_ClientGuards.lua"))()
@@ -3656,6 +3660,27 @@ check(not mswLoad(looseTr, myCar) and told == "IGUI_MVM_Reason_CARRIER_UNBOUND",
 told = nil
 check(mswLoad(looseTr, looseC) and told == nil, "MSW：沒綁定的車裝上沒綁定的拖車照常")
 check(not mswLoad(looseTr, theirCar) and told == "IGUI_MVM_Protected", "MSW：別人的車裝上沒綁定的拖車：仍是「受保護」提示")
+do -- Vehicle Repair Overhaul：整車拆解要 MANAGE、車主要先解除綁定；修理要 REPAIR；車外關警示燈要 REPAIR
+    local shared = carry(vehicle(71, 911, 9911, "Base.CarNormal", 1, 1), { oid = "kShared" })
+    MVM.clientReceive("fleetDelta", { to = "kow", streamId = "kt", seq = 1, removes = {},
+        upserts = { { oid = "kShared", role = "MEMBER", state = "ACTIVE", myBits = MVM.ACTIONS.REPAIR + MVM.ACTIONS.SALVAGE } } })
+    local function act(cls, fields) told = nil; fields.character = me; return setmetatable(fields, { __index = cls }):isValid() end
+    local function salvage(v) return act(ISVehicleSalvage, { vehicle = v }) end
+    check(salvage(looseC) and told == nil, "VRO 整車拆解：沒綁定的車照常")
+    check(not salvage(theirCar) and told == "IGUI_MVM_Protected", "VRO 整車拆解：別人綁定的車擋下（要 MANAGE）")
+    check(not salvage(shared), "VRO 整車拆解：分享了拆零件也不能整台拆（MANAGE 不能分享）")
+    check(not salvage(myCar) and told == "IGUI_MVM_SalvageUnclaimFirst", "VRO 整車拆解：車主拆自己綁定的車，提示先解除綁定")
+    local function fix(cls, v) return act(cls, { part = v and v.parts.Engine or nil }) end
+    local ok = true
+    for _, cls in ipairs({ VRO.DoFixAction, ISRebuildEngine, EHRRepairHeater, ELRRepairLightbar }) do
+        ok = ok and fix(cls, myCar) and fix(cls, shared) and fix(cls, looseC) and not fix(cls, theirCar)
+    end
+    check(ok and fix(VRO.DoFixAction, nil) and not act(EHRRepairHeater, { vehicle = theirCar }),
+        "VRO 修理：自己的車、分享了修理的車、沒綁定的車照常，別人綁定的車擋下；修物品欄的東西照常")
+    local function lightsOff(v, outside) return act(ELRTurnOffLightbar, { isCharacterOutside = outside, vehicleId = v.id }) end
+    check(lightsOff(myCar, true) and lightsOff(shared, true) and not lightsOff(theirCar, true) and lightsOff(theirCar, nil),
+        "VRO 關警示燈：在車外要修理權限，在車內交給座位防護")
+end
 do -- 伺服器拒絕（enforcement）：harness 的 getText 沒參數時回鍵名＝沒有譯文，這裡讓三個原因有譯文
     local translated, realGetText = { CARRIER_UNBOUND = true, TOO_FAR = true, CARRIER_LOADED = true }, getText
     getText = function(k, ...) local code = k:match("^IGUI_MVM_Reason_(.+)$"); if code and translated[code] then return "T:" .. code end return realGetText(k, ...) end
@@ -3727,6 +3752,7 @@ check(#swing(theirCar, other) == 0 and #swing(theirCar, me, { _cls = "InventoryI
 check(#swing(theirCar) == 1, "條件都對：照常回報")
 isClient = savedIsClient
 ISTimedActionQueue, MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil, nil
+ISVehicleSalvage, VRO, ISRebuildEngine, EHRRepairHeater, ELRRepairLightbar, ELRTurnOffLightbar = nil, nil, nil, nil, nil, nil
 for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
 end)();
 
@@ -3753,10 +3779,13 @@ local function strictFields(m, c)
     if m == "vehicle" then return c == "attachTrailer" and { vehicleA = "number", vehicleB = "number" } or { vehicle = "number" } end
     if m == "rLib" then return c == "SetVehicleBattery" and { vehicleId = "number", battery = "number" } or { vehicleId = "number", set = "boolean" } end
     if m == "that_damn_lib" and c == "setPartModData" then return { vehicle = "number" } end
+    if m == "EER_vehicle" then return { vehicleId = "number" } end
+    if m == "EHR_vehicle" or m == "ELR_vehicle" then return { vehicle = "number" } end
     return {}
 end
 local last = nil
-local MODS = { vehicle = true, commonlib = true, atatuning2 = true, msw = true, W900 = true, rLib = true, that_damn_lib = true }
+local MODS = { vehicle = true, commonlib = true, atatuning2 = true, msw = true, W900 = true, rLib = true, that_damn_lib = true,
+    VRO_vehicle = true, EER_vehicle = true, EHR_vehicle = true, ELR_vehicle = true }
 local function third(m, c, _, args)
     if not MODS[m] then return end -- 不看 CG.RULES：拿掉規則的突變也要測得出來
     last = { hit = nil, err = false }
@@ -3842,6 +3871,14 @@ local CASES = {
     { "that_damn_lib", "silentPartInstall", function(V) return { _vehicleId = V.id, part = "Engine", item = "Base.X" } end, { "REPAIR" } },
     { "that_damn_lib", "updatePartConditions", function(V) return { _vehicleId = V.id, conditions = { Engine = 100 } } end, { "REPAIR" } },
     { "that_damn_lib", "savePartsCondition", function(V) return { _vehicleId = V.id } end, { "REPAIR" } },
+    { "VRO_vehicle", "doFix", function(V) return { vehicleId = V.id, partId = "Engine" } end, { "REPAIR" } },
+    { "EER_vehicle", "rebuildEngine", function(V) return { vehicleId = V.id, targetQuality = 100 } end, { "REPAIR" } },
+    { "EHR_vehicle", "repairHeater", args1({ targetCondition = 100 }), { "REPAIR" } },
+    { "ELR_vehicle", "repairLightbar", args1({ targetCondition = 100 }), { "REPAIR" } },
+    { "ELR_vehicle", "setLightbarLightsMode", args1({ mode = 0 }), { "REPAIR" } },
+    { "ELR_vehicle", "setLightbarLightsMode", args1({ mode = 1 }), { "DRIVE" } },
+    { "ELR_vehicle", "setLightbarSirenMode", args1({ mode = 0 }), { "REPAIR" } },
+    { "ELR_vehicle", "setLightbarSirenMode", args1({ mode = 2 }), { "DRIVE" } },
 }
 local covered = { ["that_damn_lib.setPartModData"] = true } -- 一律拒絕，F2 另測
 for _, k in ipairs(CASES) do covered[k[1] .. "." .. k[2]] = true end

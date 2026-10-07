@@ -116,6 +116,11 @@ local function amount(field, tireOnly)
     end
 end
 
+-- 警示燈與警笛模式：關掉（mode 0）是修警示燈前的步驟，要 REPAIR；打開比照車內儀表板，要 DRIVE
+local function lightbar(_, a)
+    return { { vehicle = veh(a.vehicle), action = tonumber(a.mode) == 0 and "REPAIR" or "DRIVE" } }
+end
+
 -- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因。
 -- 目標清單可帶 anchor／loaded／spawn（距離錨點）與 check（權限、距離都通過後的額外條件，回拒絕原因或 nil）
 local RULES = {
@@ -186,6 +191,15 @@ local RULES = {
         updatePartConditions = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：設定零件耐久
         savePartsCondition = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
     },
+    -- Vehicle Repair Overhaul（Workshop 2757712197）42/media/lua/server：修零件、重組引擎、修暖氣與警示燈都直接改零件耐久
+    VRO_vehicle = { doFix = on("vehicleId", "REPAIR") }, -- VRO_VehicleCommands.lua:500-614
+    EER_vehicle = { rebuildEngine = on("vehicleId", "REPAIR") }, -- EER_VehicleCommands.lua:50-117（也改引擎品質）
+    EHR_vehicle = { repairHeater = one("REPAIR") }, -- EHR_VehicleCommands.lua:51-129
+    ELR_vehicle = {
+        repairLightbar = one("REPAIR"), -- ELR_VehicleCommands.lua:52-111
+        -- :113-132；正常呼叫者是修警示燈前在車外關燈與警笛（ELRTurnOffLightbar.lua:51-52）
+        setLightbarLightsMode = lightbar, setLightbarSirenMode = lightbar,
+    },
 }
 CG.RULES = RULES
 
@@ -249,10 +263,11 @@ function CG.decide(rule, module, command, player, args)
     return true
 end
 
--- 消掉請求：先收集鍵再清（不邊 pairs 邊改）。原版、damnlib 不先檢查欄位就 getVehicleById，收到 nil 會在 Java 端報錯：
+-- 消掉請求：先收集鍵再清（不邊 pairs 邊改）。原版、damnlib、Vehicle Repair Overhaul 不先檢查欄位就 getVehicleById，收到 nil 會在 Java 端報錯：
 -- id 欄位改成 -1（VehicleIDMap.get 對負數回 null，VehicleIDMap.java:65-67，處理器安靜結束）；rLib 先 assert 其他欄位型別，
 -- 只改 id 不清空
-local NEG_IDS = { vehicle = { "vehicle", "vehicleA", "vehicleB" }, that_damn_lib = { "_vehicleId", "vehicle" }, rLib = { "vehicleId" } }
+local NEG_IDS = { vehicle = { "vehicle", "vehicleA", "vehicleB" }, that_damn_lib = { "_vehicleId", "vehicle" }, rLib = { "vehicleId" },
+    VRO_vehicle = { "vehicleId" }, EER_vehicle = { "vehicleId" }, EHR_vehicle = { "vehicle" }, ELR_vehicle = { "vehicle" } }
 local KEEP = { rLib = true }
 function CG.neutralize(module, args)
     if not KEEP[module] then

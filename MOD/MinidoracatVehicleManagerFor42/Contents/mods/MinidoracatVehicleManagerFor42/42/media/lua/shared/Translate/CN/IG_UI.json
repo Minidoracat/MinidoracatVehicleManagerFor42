@@ -5,6 +5,7 @@
     "IGUI_MVM_FloatFallback": "车",
     "IGUI_MVM_ProtocolMismatch": "车辆管理版本与服务器不同，请更新 MOD。",
     "IGUI_MVM_Protected": "这辆车已被绑定，没有车主的分享不能使用",
+    "IGUI_MVM_SalvageUnclaimFirst": "这是你绑定的车，要整台拆掉请先解除绑定",
     "IGUI_MVM_FleetTitle": "车队",
     "IGUI_MVM_Tab_OWNED": "我的车",
     "IGUI_MVM_Tab_SHARED": "分享给我",

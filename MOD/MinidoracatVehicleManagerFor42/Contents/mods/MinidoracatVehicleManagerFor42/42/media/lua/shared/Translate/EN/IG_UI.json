@@ -5,6 +5,7 @@
     "IGUI_MVM_FloatFallback": "V",
     "IGUI_MVM_ProtocolMismatch": "Vehicle Manager version differs from the server. Please update the mod.",
     "IGUI_MVM_Protected": "This vehicle is claimed; you need the owner's share to use it",
+    "IGUI_MVM_SalvageUnclaimFirst": "This is your claimed vehicle. Unclaim it first to salvage the whole vehicle.",
     "IGUI_MVM_FleetTitle": "Vehicle Fleet",
     "IGUI_MVM_Tab_OWNED": "My vehicles",
     "IGUI_MVM_Tab_SHARED": "Shared with me",
