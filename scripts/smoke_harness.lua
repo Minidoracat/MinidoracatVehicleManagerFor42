@@ -1580,6 +1580,69 @@ do -- 小地圖車名：MiniMap 設定視窗「車輛管理」分類的勾選框
     tick.set(true)
     check(labels("mini") == mt, "打開後小地圖恢復車名")
 end
+do -- MiniMap 圖層（settingsApiVersion 5＋markerApiVersion 3）與舊版路徑：舊 MiniMap 行為不變，新版改由 MiniMap 管車名
+    local AP, B = MVM.Appearance, MVM.MiniMapBridge
+    local function reg(api)
+        B.registered = nil
+        registered = nil
+        api.registerMarkerProvider = function(owner, fn) registered = { owner = owner, fn = fn } end
+        api.registerSettingsSection = api.registerSettingsSection or function(owner, spec)
+            registered.settings = { owner = owner, spec = spec }; return true end
+        MinidoracatMiniMapAPI = api
+        B.register()
+        return registered.settings and registered.settings.spec
+    end
+    local function labels(surface)
+        local n, layer, ms = 0, 0, registered.fn(0, surface).markers
+        for _, m in ipairs(ms) do
+            if m.label then n = n + 1 end
+            if m.layer == "bound" then layer = layer + 1 end
+        end
+        return n, #ms, layer
+    end
+    -- 舊版 MiniMap（marker v2／settings v4）：勾選框分類、本 MOD 自己拿掉小地圖車名、車標不帶 layer
+    local old = reg({ markerApiVersion = 2, settingsApiVersion = 4 })
+    check(old and old.layers == nil and old.icon == nil and old.actions == nil and old.ticks and #old.ticks == 1
+        and old.ticks[1].label == "IGUI_MVM_MiniMapNames" and old.ticks[1].set == AP.setMiniLabels and not B.layered,
+        "MiniMap marker v2／settings v4：照舊註冊「小地圖顯示車名」勾選框分類，不送圖層")
+    AP.setMiniLabels(false)
+    local on, ot, ol = labels("mini")
+    local wn, wt, wl = labels("world")
+    check(ot > 0 and on == 0 and wn == wt and ol == 0 and wl == 0 and registered.fn(0, "mini") ~= registered.fn(0, "world"),
+        "MiniMap marker v2：關掉車名時小地圖那份由本 MOD 拿掉車名，世界地圖照常，車標不帶 layer")
+    -- 新版 MiniMap：圖層分類（小地圖車名初值帶入舊選擇），車標標 layer，小地圖不再自己拿掉車名
+    local spec = reg({ markerApiVersion = 3, settingsApiVersion = 5 })
+    local L = spec and spec.layers and spec.layers[1]
+    check(spec and spec.label == "IGUI_MVM_SourceName" and spec.icon == "carSedan" and spec.group == "addon" and spec.order == 40
+        and spec.ticks == nil and B.layered and #spec.layers == 1 and L.id == "bound" and L.label == "IGUI_MVM_Layer_Bound"
+        and L.show.mini == true and L.show.world == true and L.size == 16 and L.names.mini == false and L.names.world == true
+        and L.namesMiniLabel == "IGUI_MVM_MiniMapNames" and L.namesWorldLabel == "IGUI_MVM_MiniMapNamesWorld",
+        "MiniMap settings v5：註冊「綁定車輛」圖層，小地圖車名初值帶入玩家原本關掉的選擇")
+    local s = L and L.sample
+    check(s and s.label == "IGUI_MVM_Layer_Sample" and s.r == AP.OWN.r and s.g == AP.OWN.g and s.texture and s.badge and s.badge.texture
+        and s.ring and s.ring.b == AP.OWN.b and s.scale == AP.scale(nil), "預覽範例是帶深色圓底與外環的金黃轎車「我的車」")
+    local mn, mt, ml = labels("mini")
+    check(mt > 0 and mn == mt and ml == mt and registered.fn(0, "mini") == registered.fn(0, "world"),
+        "MiniMap marker v3：車標都標 layer＝bound，小地圖也帶車名（車名開關交給 MiniMap）")
+    local act = spec and spec.actions and spec.actions[1]
+    check(act and act.label == "IGUI_MVM_OpenFleet" and act.tooltip == "IGUI_MVM_OpenFleet_tooltip", "分類有「開啟車隊視窗」按鈕")
+    local realFW, shown, calls = MVM.FleetWindow, false, {}
+    local fakeWin = { getIsVisible = function() return shown end, bringToTop = function() calls[#calls + 1] = "top" end }
+    MVM.FleetWindow = { ensure = function() return { win = fakeWin } end,
+        toggle = function() calls[#calls + 1] = "toggle"; shown = not shown end }
+    act.run(0)
+    act.run(0)
+    MVM.FleetWindow = realFW
+    check(calls[1] == "toggle" and calls[2] == "top" and #calls == 2 and shown, "按鈕打開車隊視窗；已開著就拉到最上層、不會關掉")
+    -- 新版 MiniMap 拒收圖層 spec：退回舊分類與舊的車名處理
+    local fallback = reg({ markerApiVersion = 3, settingsApiVersion = 5, registerSettingsSection = function(owner, spec)
+        if spec.layers then return false end
+        registered.settings = { owner = owner, spec = spec }; return true end })
+    local fn, ft, fl = labels("mini")
+    check(fallback and fallback.ticks and fallback.layers == nil and not B.layered and ft > 0 and fn == 0 and fl == 0,
+        "MiniMap 拒收圖層分類時退回舊勾選框分類，小地圖照舊由本 MOD 拿掉車名")
+    AP.setMiniLabels(true)
+end
 MVM.MiniMapBridge.registered = nil
 MinidoracatMiniMapAPI = nil
 check(pcall(MVM.MiniMapBridge.register) and not MVM.MiniMapBridge.registered, "沒有 MiniMap 時安靜不註冊")
