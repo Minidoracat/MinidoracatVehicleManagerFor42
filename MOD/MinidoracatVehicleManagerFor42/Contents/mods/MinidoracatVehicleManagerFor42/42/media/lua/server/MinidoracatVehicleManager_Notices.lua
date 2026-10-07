@@ -1,7 +1,7 @@
 -- 車主通知紀錄（2026-10-06 使用者：不在線時收不到的通知要有地方看）。S.notify 每則都記一筆，在線就照常即時送；
 -- 快照帶整份紀錄與已讀時間，車隊視窗「紀錄」分頁顯示，看過送 noticesRead。
 -- 存伺服器本機檔案，不放帳本也不放 GMD：帳本分片的容量模型假設小項目 ≤150 B（verify_mod「帳本分片容量」），
--- 而 GMD 任何客戶端都能要整張表（GlobalModData.java:171-205 receiveRequest 不檢查身分）——攻擊者帳號與車名是車主的私人紀錄。
+-- 而 GMD 不適合放私人資料（GlobalModData.java:171-205）——攻擊者帳號與車名是車主的私人紀錄。
 -- 每位車主一個檔 <Export.folder>notices/<帳號逐字 4 位 hex>.txt（帳號可能有檔名不能用的字，Windows 檔名又不分大小寫）：
 -- 第一行 read<TAB>已讀到的 ms<TAB>下一個編號，之後每行一則（舊到新）：
 -- id t key oid who n at bad live c name script（字串欄位 % 編碼 % TAB CR LF）。

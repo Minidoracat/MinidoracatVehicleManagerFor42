@@ -3664,7 +3664,7 @@ do -- 伺服器拒絕（enforcement）：harness 的 getText 沒參數時回鍵�
     getText = realGetText
     check(unboundText == "T:CARRIER_UNBOUND" and farText == "T:TOO_FAR" and loadedText == "T:CARRIER_LOADED",
         "伺服器拒絕：寫出原因與怎麼辦（拖車要先綁定、離車太遠、載著車的拖車不能再被裝）")
-    check(badText == "IGUI_MVM_Failed", "伺服器拒絕：沒有譯文的碼（只有改機客戶端會碰到）顯示不帶代碼的通用說明")
+    check(badText == "IGUI_MVM_Failed", "伺服器拒絕：沒有譯文的碼（正常操作碰不到）顯示不帶代碼的通用說明")
 end
 MVM.notify = realNotify
 local function withParts(id, parts) return vehicle(id, 900 + id, 9900 + id, "Base.X", 1, 1, parts) end
@@ -4342,7 +4342,7 @@ Events.OnClientCommand.Add(stand)
 local function send(p, m, c, args) nowMs = nowMs + 2100; seen = nil; fire("OnClientCommand", m, c, p, args); return seen or {} end
 local function denied(text) for key in pairs(O.R.denyAgg) do if key:find(text, 1, true) then return true end end return false end
 local function clear() for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end end
--- 依腳本（含模型縮放與偏移）擺正式服回報的 W900＋貨櫃拖車，兩台車頭朝 +y、大栓對準第五輪：
+-- 依腳本（含模型縮放與偏移）擺玩家回報的 W900＋貨櫃拖車，兩台車頭朝 +y、大栓對準第五輪：
 -- W900（×1.14）車身 6.82×1.90、駕駛座在原點前 1.26（側邊 0.36）、第五輪在原點後 2.24；
 -- 貨櫃拖車（×1.3）車身 11.04×2.32、centerOfMassOffset z 3.09（原點在車身後段）、大栓在原點前 7.73
 local tk = vehicle(91, 9101, 9901, "Base.SemiTruck", 100, 100)

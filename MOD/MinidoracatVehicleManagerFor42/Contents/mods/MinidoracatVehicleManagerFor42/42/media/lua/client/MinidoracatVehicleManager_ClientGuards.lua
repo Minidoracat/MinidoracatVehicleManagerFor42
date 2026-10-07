@@ -178,8 +178,8 @@ MVM.clientHandlers.enforcement = function(payload)
     elseif payload.guard ~= nil then
         text = getText(payload.guard == true and "IGUI_MVM_Guard_Hit" or "IGUI_MVM_Attack_Owned")
     elseif payload.reason == "NOT_AUTHORIZED" then text = MVM.protectedText(p)
-    -- 其餘寫出原因與怎麼辦（離車太遠、拖車要先綁定、載著車不能再被裝、隔離、伺服器啟動中）；沒有譯文的碼只有改機客戶端
-    -- 或程式錯誤會碰到，MVM.reasonText 退回不帶代碼的通用說明
+    -- 其餘寫出原因與怎麼辦（離車太遠、拖車要先綁定、載著車不能再被裝、隔離、伺服器啟動中）；沒有譯文的碼正常操作碰不到，
+    -- MVM.reasonText 退回不帶代碼的通用說明
     else text = MVM.reasonText(payload.reason) end
     MVM.notify(p, text, true)
     MVM.log("enforcement " .. tostring(payload.action) .. " " .. tostring(payload.reason))
@@ -189,7 +189,7 @@ end
 -- 打到沒有車窗的零件（引擎蓋、後車廂、車燈、輪胎、窗已破或搖下的門）原版不送任何指令、伺服器也沒有事件；攻擊者客戶端在同一次
 -- 攻擊裡先自己扣零件耐久（BaseVehicle.applyDamageToPart 的 client 分支），伺服器之後改回（guards.md「攻擊通知」）。攻擊當下記下
 -- 範圍內、自己不能拆零件的綁定車的零件耐久，下一個 tick 有下降就回報；同一台車 2 秒一次（連射別撐爆伺服器限流）。
--- 改機客戶端可以不送：只是盡力通知，防破壞本身在伺服器
+-- 只是盡力通知，防破壞本身在伺服器
 local swing, reported = nil, {}
 local first = MVM.hitWatch == nil
 MVM.hitWatch = {}
