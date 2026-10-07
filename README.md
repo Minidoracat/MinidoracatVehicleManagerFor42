@@ -135,6 +135,7 @@ Steam 伺服器上，本 MOD 會確認「帳號名稱」和「登入的 Steam �
 - `link_workshop.bat`：手動同步、狀態檢查與歸檔卸載（實體副本）
 - `PZ_Test.bat`：啟動前自動同步 MOD 與家族依賴；Steam／no-Steam／Debug／多開皆保留；遊戲路徑可用 `PZ_PATH` 環境變數覆寫
 - 驗證閘門：`uv run scripts/verify_mod.py`（靜態檢查）、`lua scripts/smoke_harness.lua`（行為測試）
+- 上游監控：`.github/workflows/upstream-watch.yml` 每天查 `upstream.json` 登記的第三方 MOD（Vehicle Repair Overhaul、tsarslib、rSemiTruck、damnlib）有沒有更新，有就開一張 `upstream-update` issue，附上檔案差異與要重新核對的規則。照 issue 重核完、本機訂閱也是最新版後，執行 `python scripts/check_upstream.py --ack <Workshop ID>` 記下新基準（只存檔案 hash，不存第三方檔案內容），commit `upstream.json` 與 `upstream/` 再關閉 issue
 
 ### 發布到 Workshop
 

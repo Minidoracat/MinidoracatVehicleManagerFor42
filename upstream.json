@@ -1,0 +1,133 @@
+{
+  "upstreams": [
+    {
+      "wid": "2757712197",
+      "mod_id": "VehicleRepairOverhaul, VehicleSalvageOverhaulB42",
+      "name": "Vehicle Repair Overhaul",
+      "acked_time_updated": 1790668138,
+      "affects": [
+        "CG.RULES.vehicle.remove（整車拆解最後送 vehicle.remove，MANAGE 擋）",
+        "CG.RULES.VRO_vehicle.doFix",
+        "CG.RULES.EER_vehicle.rebuildEngine",
+        "CG.RULES.EHR_vehicle.repairHeater",
+        "CG.RULES.ELR_vehicle.repairLightbar／setLightbarLightsMode／setLightbarSirenMode",
+        "CG.neutralize NEG_IDS.VRO_vehicle／EER_vehicle（vehicleId）、EHR_vehicle／ELR_vehicle（vehicle）",
+        "ClientGuards ISVehicleSalvage",
+        "ClientGuards VRO.DoFixAction（Type VRO_DoFixAction）",
+        "ClientGuards ISRebuildEngine",
+        "ClientGuards EHRRepairHeater",
+        "ClientGuards ELRRepairLightbar",
+        "ClientGuards ELRTurnOffLightbar"
+      ],
+      "recheck": "VRO 的動作全在客戶端跑（沒有 complete），改車靠自己的伺服器指令：核對 VRO_vehicle.doFix（vehicleId／partId；doFixInventory 只修物品欄、不碰車）、EER_vehicle.rebuildEngine（vehicleId）、EHR_vehicle.repairHeater（vehicle）、ELR_vehicle.repairLightbar／setLightbarLightsMode／setLightbarSirenMode（vehicle、mode）的指令名、id 欄位與 CG.RULES 註解行號，處理器是否仍不檢查欄位就 getVehicleById（拒絕時 id 改 -1 讓它安靜結束）；vro_salvage.dropSalvage／drainTorch／addXp／doReturns 是否開始碰車；ISVehicleSalvage:perform 送指令的順序（dropSalvage 先、vehicle.remove 最後）；ClientGuards 包的類別名稱、vehicle／part／isCharacterOutside／vehicleId 欄位與 isValid 簽名；整車拆解選單（VRO Vehicle Salvage.lua）的入口函式。出現新的改車伺服器指令或新的改車 TimedAction → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例，或在 ClientGuards 補包。兩個 mod.info 的 versionMin 變了、或新增高於 42/ 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。",
+      "watch_files": [
+        "mods/Vehicle Repair Overhaul/42/mod.info",
+        "mods/Vehicle Repair Overhaul/42/media/lua/server/VRO_VehicleCommands.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/server/EER_VehicleCommands.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/server/EHR_VehicleCommands.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/server/ELR_VehicleCommands.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/shared/TimedActions/VRO_DoFixAction.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/shared/TimedActions/ISRebuildEngine.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/shared/TimedActions/EHRRepairHeater.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/shared/TimedActions/ELRRepairLightbar.lua",
+        "mods/Vehicle Repair Overhaul/42/media/lua/shared/TimedActions/ELRTurnOffLightbar.lua",
+        "mods/Vehicle Repair Overhaul - Vehicle Salvage Overhaul/42/mod.info",
+        "mods/Vehicle Repair Overhaul - Vehicle Salvage Overhaul/42/media/lua/server/VRO_SalvageCommands.lua",
+        "mods/Vehicle Repair Overhaul - Vehicle Salvage Overhaul/42/media/lua/shared/TimedActions/ISVehicleSalvage.lua",
+        "mods/Vehicle Repair Overhaul - Vehicle Salvage Overhaul/42/media/lua/client/Vehicles/ISUI/VRO Vehicle Salvage.lua"
+      ]
+    },
+    {
+      "wid": "3402491515",
+      "mod_id": "tsarslib",
+      "name": "Tsar's Common Library B42",
+      "acked_time_updated": 1788789456,
+      "affects": [
+        "CG.RULES.commonlib.loadVehicle／launchVehicle（CARRIER_UNBOUND、生車座標 x, y）",
+        "CG.RULES.commonlib.installTuning／uninstallTuning／bulbSmash／cabinlightsOn／usePortableMicrowave",
+        "CG.RULES.atatuning2.installTuning／uninstallTuning／usePart",
+        "Actions.lua ATAISLoadVehicle adapter",
+        "Actions.lua ATAISLaunchVehicle adapter",
+        "Actions.lua ISInstallTuningVehiclePart／ISUninstallTuningVehiclePart adapter",
+        "Actions.lua ATAISAnimatedPartOpen／ATAISAnimatedPartClose adapter",
+        "Actions.lua ISPaintBus adapter",
+        "Actions.lua ISRefuelFromLiqudTanker adapter",
+        "ISOpenTent complete 回送 atatuning2.usePart（防火牆判定）",
+        "MVM.isCarrier（ATAVehicleWrecker 零件）",
+        "OwnershipSystem permanentlyRemove hook／拖車 keyId 延續（ATAISLoadVehicle）"
+      ],
+      "recheck": "42.21 載入 common＋42.17：核對 CommonCommands.lua 的 commonlib 處理器（loadVehicle 讀 vehicle／trailer、launchVehicle 讀 trailer／x／y、installTuning／uninstallTuning／bulbSmash／cabinlightsOn 讀 vehicle、usePortableMicrowave）與 ATATuning2Commands.lua 的 atatuning2 處理器（installTuning／uninstallTuning／usePart）的指令名、欄位與 CG.RULES 註解行號；adapter 讀的 TimedAction 欄位（ATAISLoadVehicle 的 vehicle／trailer、ATAISLaunchVehicle 的 trailer／square、調校零件與動畫門的 part、ISPaintBus 的 vehicle、油罐車的 part／tank）與 complete 是否仍在伺服器執行、仍先 sendClientCommand 再 permanentlyRemove；ISCommonMenu.lua 的 bulbSmash 呼叫者與拖車選單；ATA_ISVehicleMenu.lua 的 ATAVehicleWrecker 判定。出現新的改車伺服器指令或新的伺服器端改車 TimedAction → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例，或在 Actions.lua BUILTIN 加 adapter。新增高於 42.17 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。",
+      "watch_files": [
+        "mods/tsarslib/common/mod.info",
+        "mods/tsarslib/common/media/lua/server/CommonTemplates/CommonCommands.lua",
+        "mods/tsarslib/common/media/lua/client/ATA/ISUI/ATA_ISVehicleMenu.lua",
+        "mods/tsarslib/42.17/media/lua/server/Tuning2/ATATuning2Commands.lua",
+        "mods/tsarslib/42.17/media/lua/client/CommonTemplates/ISUI/ISCommonMenu.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ATAISLoadVehicle.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ATAISLaunchVehicle.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ISInstallTuningVehiclePart.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ISUninstallTuningVehiclePart.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ATAISAnimatedPartOpen.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ATAISAnimatedPartClose.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ISPaintBus.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/TsarLiqudTanker_ISRefuelFromFuelTruck.lua",
+        "mods/tsarslib/42.17/media/lua/shared/TimedActions/ISOpenTent.lua"
+      ]
+    },
+    {
+      "wid": "3409472393",
+      "mod_id": "rSemiTruck",
+      "name": "W900 Semi-Truck [B42]",
+      "acked_time_updated": 1790971578,
+      "affects": [
+        "CG.RULES.msw.loadVehicle／loadContainer／launchVehicle／unloadContainer",
+        "CG.RULES.W900.applyArmorRepair／setTrailerPhysicsDisabled／toggleFreezer／toggleFridge／moveVehicleImpulse",
+        "CG.RULES.rLib.SetVehicleBattery／SetVehicleHeadlights",
+        "ClientGuards MSW_ISLoadVehicle",
+        "ClientGuards MSW_ISLaunchVehicle",
+        "ClaimTags（SDVCOwner／SDVCAllowedEnter，canPlayerLoadVehicleByClaims）",
+        "MVM.isCarrier（ATAMultiSlotWrecker 零件）",
+        "OwnershipSystem permanentlyRemove hook／OnSpawnVehicleEnd 接回（MSW 裝卸車）"
+      ],
+      "recheck": "42.21 載入 common＋42.20：核對 MSW_Common_Commands.lua 的 msw 處理器（loadVehicle／loadContainer 讀 trailer＋vehicle／container、launchVehicle 讀 trailer／x／y、unloadContainer 讀 trailer／x／y／z）、canPlayerLoadVehicleByClaims 讀的 SDVCOwner／SDVCAllowedEnter 與逗號切段、裝車 permanentlyRemove 與卸車 addVehicleDebug 後還原的欄位；W900Commands.lua 的 W900 處理器（applyArmorRepair 讀 vehicle／part／condition，以及 setTrailerPhysicsDisabled、toggleFreezer、toggleFridge；moveVehicleImpulse 若加回伺服器處理器要重看）；rLib.Commands.lua 的 Server_<cmd> 分派與 vehicleId 欄位；rLib.Vehicles.Armor.lua／ArmorSync.lua 送的耐久值（armor.logic、armor.condition）；rSemiTruck.lua 拖掛同步與防撞桿；MSW_ISLoadVehicle／MSW_ISLaunchVehicle 的類別名、vehicle／trailer 欄位與 perform 送的指令；MSW_ISVehicleMenu.lua 的 ATAMultiSlotWrecker 判定；mod.info 的 id 仍是 rSemiTruck（ClaimTags 依它啟用）。出現新的改車伺服器指令 → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例。新增高於 42.20 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 跟著改。",
+      "watch_files": [
+        "mods/rSemiTruck/42.20/mod.info",
+        "mods/rSemiTruck/common/media/lua/server/MSW_Common_Commands.lua",
+        "mods/rSemiTruck/common/media/lua/server/W900Commands.lua",
+        "mods/rSemiTruck/common/media/lua/server/rLib.Commands.lua",
+        "mods/rSemiTruck/common/media/lua/client/TimedActions/MSW_ISLoadVehicle.lua",
+        "mods/rSemiTruck/common/media/lua/client/TimedActions/MSW_ISLaunchVehicle.lua",
+        "mods/rSemiTruck/common/media/lua/client/TimedActions/W900_ISLoadContainer.lua",
+        "mods/rSemiTruck/common/media/lua/client/TimedActions/W900_ISUnloadContainer.lua",
+        "mods/rSemiTruck/common/media/lua/client/MSW_ISVehicleMenu.lua",
+        "mods/rSemiTruck/common/media/lua/client/rLib.Vehicles.Armor.lua",
+        "mods/rSemiTruck/common/media/lua/client/rSemiTruck.lua",
+        "mods/rSemiTruck/common/media/lua/client/VehicleEnterFix.lua",
+        "mods/rSemiTruck/common/media/lua/shared/rSemiTruck/ArmorSync.lua"
+      ]
+    },
+    {
+      "wid": "3171167894",
+      "mod_id": "damnlib",
+      "name": "that DAMN Library",
+      "acked_time_updated": 1791310809,
+      "affects": [
+        "CG.RULES.that_damn_lib.setPartModData（一律拒絕）",
+        "CG.RULES.that_damn_lib.silentPartInstall／updatePartConditions／savePartsCondition",
+        "CG.RULES.vehicle.setContainerContentAmount（KI5 CTIS 自動補胎壓）",
+        "CG.RULES.vehicle.setDoorOpen（damnlib 門動畫同步）",
+        "CG.neutralize NEG_IDS.that_damn_lib（_vehicleId、vehicle 改 -1）"
+      ],
+      "recheck": "42.21 載入 common＋42.20：核對 DAMN_Server.lua 的 that_damn_lib 分派（_vehicleId 解析成 _vehicle、setDoorOpen 同步）、Commands/DAMN_Data.lua 的 setPartModData、DAMN_Parts.lua 的 silentPartInstall、DAMN_Armor.lua 的 updatePartConditions／savePartsCondition 的指令名與欄位，拒絕時把 _vehicleId 改 -1 是否仍讓處理器安靜結束；shared/DAMN_Parts.lua 與 client/DAMN_Armor_Client.lua 的 CTIS 是否仍以駕駛身分送 vehicle.setContainerContentAmount、值在容量內。出現新的改車伺服器指令（含改零件 modData）→ CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例。新增高於 42.20 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。",
+      "watch_files": [
+        "mods/damnlib/42.20/mod.info",
+        "mods/damnlib/42.20/media/lua/server/DAMN_Server.lua",
+        "mods/damnlib/42.20/media/lua/server/Commands/DAMN_Data.lua",
+        "mods/damnlib/42.20/media/lua/server/Commands/DAMN_Parts.lua",
+        "mods/damnlib/42.20/media/lua/server/Commands/DAMN_Armor.lua",
+        "mods/damnlib/42.20/media/lua/shared/DAMN_Parts.lua",
+        "mods/damnlib/42.20/media/lua/client/DAMN_Armor_Client.lua"
+      ]
+    }
+  ]
+}
