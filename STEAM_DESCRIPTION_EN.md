@@ -11,6 +11,8 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url] (track your cars on the map)
 [*] [b]Optional:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url] (buy or rent extra claim slots and damage guard slots with in-game money, if the server sells them)
 [*] Made for multiplayer (singleplayer works, but the second split-screen player is not supported)
+[*] [b]Add/remove mid-save:[/b] safe either way; removing it ends all vehicle claims and protection
+[*] [b]Languages:[/b] 繁體中文, 简体中文, English, 日本語
 [/list]
 
 [h2]🚀 Quick start[/h2]

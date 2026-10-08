@@ -11,6 +11,8 @@
 [*] [b]任意：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3763913359]Minidoracat MiniMap[/url]（地図で車両を追跡）
 [*] [b]任意：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url]（サーバーが販売していれば、ゲーム内通貨で登録枠と破壊防止枠を購入・レンタル）
 [*] マルチ向けです（シングルでも使えますが、画面分割の2人目は非対応）
+[*] [b]途中追加・削除：[/b]どちらも可能。削除すると車両の登録と保護は無効になります
+[*] [b]対応言語：[/b]繁體中文、简体中文、English、日本語
 [/list]
 
 [h2]🚀 はじめかた[/h2]
