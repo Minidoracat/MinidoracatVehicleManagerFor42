@@ -12,7 +12,7 @@
 [*] [b]選裝：[/b][url=https://steamcommunity.com/sharedfiles/filedetails/?id=3801482125]Minidoracat Economy[/url]（伺服器開放時，用遊戲幣購買或租用更多綁定名額與防破壞名額）
 [*] 以多人為主要用途（單人也能用，但不支援分割畫面第二位玩家）
 [*] [b]中途加入／移除：[/b]都可以；移除後車輛綁定與保護會失效
-[*] [b]介面語言：[/b]繁體中文、简体中文、English、日本語、한국어、Русский、Español、Português、Türkçe、Français、Polski、Deutsch（中英日以外為 AI 翻譯，歡迎回報）
+[*] [b]介面語言：[/b]繁體中文、简体中文、English、日本語、한국어、Русский、Español、Português、Türkçe、Français、Polski、Deutsch（翻譯有問題請回報）
 [/list]
 
 [h2]🚀 快速上手[/h2]
