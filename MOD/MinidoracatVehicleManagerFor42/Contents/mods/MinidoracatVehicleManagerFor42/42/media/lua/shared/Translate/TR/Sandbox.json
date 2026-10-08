@@ -2,7 +2,7 @@
     "Sandbox_MinidoracatVehicleManager": "Minidoracat Vehicle Manager",
     "Sandbox_MinidoracatVehicleManagerClaimsPerPlayer": "Oyuncu başına sahiplenilebilecek araç",
     "Sandbox_MinidoracatVehicleManagerClaimsPerPlayer_tooltip": "Bir hesabın aynı anda sahip olabileceği araç sayısı.\n0 yeni sahiplenmeleri durdurur; zaten sahiplenilmiş araçlar sahiplenilmiş kalır.",
-    "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle": "Araç başına paylaşılan oyuncu",
+    "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle": "Araç başına erişim verilen oyuncu sayısı",
     "Sandbox_MinidoracatVehicleManagerMaxMembersPerVehicle_tooltip": "Bir sahibin tek bir aracı isim vererek kaç oyuncuyla paylaşabileceği.",
     "Sandbox_MinidoracatVehicleManagerClaimDistance": "Sahiplenme mesafesi (kare)",
     "Sandbox_MinidoracatVehicleManagerClaimDistance_tooltip": "Bir oyuncunun aracı sahiplenmek, sahipliğini bırakmak veya yeniden doğrulamak için aracın gövdesine ne kadar yakın durması gerektiği. Uzun bir römorkun herhangi bir parçası da sayılır.",

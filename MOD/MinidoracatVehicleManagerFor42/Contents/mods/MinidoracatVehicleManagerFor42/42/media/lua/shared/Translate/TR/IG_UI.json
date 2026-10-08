@@ -402,7 +402,7 @@
     "IGUI_MVM_Slots_GuardHeadline": "Koruyabileceğin: %1 · kullanımda: %2",
     "IGUI_MVM_Slots_GuardSheetAfter": "Ödemeden sonra koruyabileceğin: %1",
     "IGUI_MVM_Slots_GuardUnavailable": "Ücretli koruma slotu kayıtları şu an okunamıyor; bilinen son slotlar kullanılmaya devam ediyor. Daha sonra tekrar dene.",
-    "IGUI_MVM_Paid_GraceHint": "Bir kiralama bittikten sonraki ek süre boyunca slot sayısını aşan araçlar kilitlenir (ne sahibi ne de paylaşılan oyuncular kullanabilir). Ek süre bittiğinde hâlâ aşım varsa sahiplikleri bırakılır.",
+    "IGUI_MVM_Paid_GraceHint": "Bir kiralama bittikten sonraki ek süre boyunca slot sayısını aşan araçlar kilitlenir (ne sahibi ne de aracın paylaşıldığı oyuncular kullanabilir). Ek süre bittiğinde hâlâ aşım varsa sahiplikleri bırakılır.",
     "IGUI_MVM_Paid_GuardGraceHint": "Bir kiralama bitip ek süresi de dolduğunda koruma slotlarını aşan araçlar hasar korumasını kaybeder (sahiplenilmiş kalırlar).",
     "IGUI_MVM_Tab_LOG": "Bildirimler",
     "IGUI_MVM_Tab_LOG_N": "Bildirimler (%1)",
