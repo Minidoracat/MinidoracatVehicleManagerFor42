@@ -1,0 +1,11 @@
+{
+    "ContextMenu_MVM_Menu": "Araç Yöneticisi",
+    "ContextMenu_MVM_Claim": "Aracı sahiplen",
+    "ContextMenu_MVM_Unclaim": "Aracın sahipliğini bırak",
+    "ContextMenu_MVM_Reissue": "Aracı doğrula",
+    "ContextMenu_MVM_ClaimedByOther": "Başkasının aracı",
+    "ContextMenu_MVM_PublicVehicle": "Herkes şunları yapabilir: %1",
+    "ContextMenu_MVM_StartVirtualKey": "Motoru çalıştır (sanal anahtar)",
+    "ContextMenu_MVM_UnlockVirtualKey": "Kilidi aç (sanal anahtar)",
+    "ContextMenu_MVM_OpenFleet": "Filoyu aç"
+}

@@ -1,0 +1,11 @@
+{
+    "ContextMenu_MVM_Menu": "차량 관리",
+    "ContextMenu_MVM_Claim": "차량 등록",
+    "ContextMenu_MVM_Unclaim": "차량 등록 해제",
+    "ContextMenu_MVM_Reissue": "차량 확인",
+    "ContextMenu_MVM_ClaimedByOther": "다른 사람의 차량",
+    "ContextMenu_MVM_PublicVehicle": "누구나 가능: %1",
+    "ContextMenu_MVM_StartVirtualKey": "시동 걸기 (가상 키)",
+    "ContextMenu_MVM_UnlockVirtualKey": "잠금 해제 (가상 키)",
+    "ContextMenu_MVM_OpenFleet": "차량 목록 열기"
+}

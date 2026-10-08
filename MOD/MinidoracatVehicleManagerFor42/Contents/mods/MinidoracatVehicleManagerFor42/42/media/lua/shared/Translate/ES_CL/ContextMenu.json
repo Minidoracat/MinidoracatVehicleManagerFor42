@@ -1,0 +1,11 @@
+{
+    "ContextMenu_MVM_Menu": "Gestor de vehículos",
+    "ContextMenu_MVM_Claim": "Reclamar vehículo",
+    "ContextMenu_MVM_Unclaim": "Liberar vehículo",
+    "ContextMenu_MVM_Reissue": "Verificar vehículo",
+    "ContextMenu_MVM_ClaimedByOther": "Vehículo de otra persona",
+    "ContextMenu_MVM_PublicVehicle": "Cualquiera puede: %1",
+    "ContextMenu_MVM_StartVirtualKey": "Arrancar el motor (llave virtual)",
+    "ContextMenu_MVM_UnlockVirtualKey": "Desbloquear (llave virtual)",
+    "ContextMenu_MVM_OpenFleet": "Abrir flota"
+}

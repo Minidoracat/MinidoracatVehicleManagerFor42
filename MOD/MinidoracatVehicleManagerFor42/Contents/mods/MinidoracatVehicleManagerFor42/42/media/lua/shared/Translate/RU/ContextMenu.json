@@ -1,0 +1,11 @@
+{
+    "ContextMenu_MVM_Menu": "Управление транспортом",
+    "ContextMenu_MVM_Claim": "Привязать транспорт",
+    "ContextMenu_MVM_Unclaim": "Отвязать транспорт",
+    "ContextMenu_MVM_Reissue": "Проверить транспорт",
+    "ContextMenu_MVM_ClaimedByOther": "Чужой транспорт",
+    "ContextMenu_MVM_PublicVehicle": "Доступно всем: %1",
+    "ContextMenu_MVM_StartVirtualKey": "Запустить двигатель (виртуальный ключ)",
+    "ContextMenu_MVM_UnlockVirtualKey": "Отпереть (виртуальный ключ)",
+    "ContextMenu_MVM_OpenFleet": "Открыть автопарк"
+}

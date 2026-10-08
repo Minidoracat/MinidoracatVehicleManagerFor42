@@ -1,0 +1,11 @@
+{
+    "ContextMenu_MVM_Menu": "Fahrzeugverwaltung",
+    "ContextMenu_MVM_Claim": "Fahrzeug beanspruchen",
+    "ContextMenu_MVM_Unclaim": "Fahrzeug freigeben",
+    "ContextMenu_MVM_Reissue": "Fahrzeug prüfen",
+    "ContextMenu_MVM_ClaimedByOther": "Fahrzeug eines anderen Spielers",
+    "ContextMenu_MVM_PublicVehicle": "Alle dürfen: %1",
+    "ContextMenu_MVM_StartVirtualKey": "Motor starten (virtueller Schlüssel)",
+    "ContextMenu_MVM_UnlockVirtualKey": "Entriegeln (virtueller Schlüssel)",
+    "ContextMenu_MVM_OpenFleet": "Fuhrpark öffnen"
+}

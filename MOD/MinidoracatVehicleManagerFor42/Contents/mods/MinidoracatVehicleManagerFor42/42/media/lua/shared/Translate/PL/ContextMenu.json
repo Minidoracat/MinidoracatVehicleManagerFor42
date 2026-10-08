@@ -1,0 +1,11 @@
+{
+    "ContextMenu_MVM_Menu": "Menedżer pojazdów",
+    "ContextMenu_MVM_Claim": "Przypisz pojazd",
+    "ContextMenu_MVM_Unclaim": "Zwolnij pojazd",
+    "ContextMenu_MVM_Reissue": "Zweryfikuj pojazd",
+    "ContextMenu_MVM_ClaimedByOther": "Pojazd innego gracza",
+    "ContextMenu_MVM_PublicVehicle": "Każdy może: %1",
+    "ContextMenu_MVM_StartVirtualKey": "Uruchom silnik (wirtualny klucz)",
+    "ContextMenu_MVM_UnlockVirtualKey": "Odblokuj (wirtualny klucz)",
+    "ContextMenu_MVM_OpenFleet": "Otwórz flotę"
+}
