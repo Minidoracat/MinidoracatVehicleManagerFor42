@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Virtual key for owners",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Owners and players they allow to drive can unlock, open without triggering the alarm and start their claimed vehicles without the physical key.\nOff keeps the vanilla key rules.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Unauthorized occupant response",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "What the server does when someone sits in a claimed vehicle without permission. The server checks every occupant regularly; a modified client can still sit in the seat for a moment.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "What the server does when someone sits in a claimed vehicle without permission. Either way, it is written to the audit log and that player is warned. The server checks every occupant regularly; a modified client can still sit in the seat for a moment.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Occupant check interval (seconds)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "How often the server checks each online player for sitting in a claimed vehicle without permission.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Log and warn the player",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Remove the player from the vehicle",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Log and warn",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Remove from vehicle",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK migration: keep unmatched claims (days)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Claims imported from Mysterious Vehicle Claim Key become real claims the first time the server sees the vehicle. Imported claims not matched after this many days are dropped and written to the audit log."
 }

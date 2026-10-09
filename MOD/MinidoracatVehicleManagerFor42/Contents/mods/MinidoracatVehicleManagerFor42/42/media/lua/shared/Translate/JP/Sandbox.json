@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "所有者のバーチャルキー",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "所有者と運転を許可されたプレイヤーは、物理的な鍵なしで登録済み車両の解錠、ドアの開閉（警報なし）、エンジン始動ができます。\n無効にすると標準の鍵ルールになります。",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "無許可の乗員への対応",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "許可なく登録済み車両に座っている人がいたときのサーバーの対応です。サーバーは乗員を定期的に確認しますが、改造クライアントは一時的に座れる場合があります。",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "許可なく登録済み車両に座っている人がいたときのサーバーの対応です。どちらの場合も監査ログに記録し、そのプレイヤーに警告します。サーバーは乗員を定期的に確認しますが、改造クライアントは一時的に座れる場合があります。",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "乗員確認の間隔（秒）",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "オンラインの各プレイヤーが許可なく登録済み車両に座っていないか、サーバーが確認する間隔です。",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "記録してプレイヤーに警告",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "プレイヤーを車両から降ろす",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "記録して警告",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "車両から降ろす",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK移行：未照合の登録を保持する日数",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Keyから取り込んだ登録は、サーバーが車両を初めて確認した時点で正式な登録になります。この日数を過ぎても照合できない取り込み分は削除され、監査ログに記録されます。"
 }

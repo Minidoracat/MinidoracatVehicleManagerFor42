@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Wirtualny klucz dla właścicieli",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Właściciele i gracze, którym pozwolą prowadzić, mogą odblokować, otworzyć bez włączania alarmu i uruchomić swoje przypisane pojazdy bez fizycznego klucza.\nWyłączenie zachowuje standardowe zasady kluczy.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Reakcja na nieuprawnione osoby w pojeździe",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Co robi serwer, gdy ktoś siedzi w przypisanym pojeździe bez uprawnień. Serwer regularnie sprawdza każdą osobę w pojeździe; zmodyfikowany klient może jednak przez chwilę siedzieć na miejscu.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Co robi serwer, gdy ktoś siedzi w przypisanym pojeździe bez uprawnień. W obu przypadkach zdarzenie trafia do dziennika audytu, a gracz dostaje ostrzeżenie. Serwer regularnie sprawdza każdą osobę w pojeździe; zmodyfikowany klient może jednak przez chwilę siedzieć na miejscu.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Interwał sprawdzania osób w pojeździe (sekundy)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "Jak często serwer sprawdza, czy któryś gracz online nie siedzi bez uprawnień w przypisanym pojeździe.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Zapisz w logu i ostrzeż gracza",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Usuń gracza z pojazdu",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Zapisz w logu i ostrzeż",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Usuń z pojazdu",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Migracja MVCK: zachowuj niedopasowane przypisania (dni)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Przypisania zaimportowane z Mysterious Vehicle Claim Key stają się prawdziwymi przypisaniami, gdy serwer po raz pierwszy zobaczy pojazd. Zaimportowane przypisania niedopasowane po tylu dniach są usuwane i zapisywane w dzienniku audytu."
 }

@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Sahipler için sanal anahtar",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Sahipler ve sürmesine izin verdikleri oyuncular, sahiplenilmiş araçlarının kilidini fiziksel anahtar olmadan açabilir, alarmı çaldırmadan açabilir ve motoru çalıştırabilir.\nKapalıyken oyunun orijinal anahtar kuralları geçerlidir.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "İzinsiz binen kişiye tepki",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Biri sahiplenilmiş bir araçta izinsiz oturduğunda sunucunun ne yapacağı. Sunucu tüm yolcuları düzenli olarak kontrol eder; değiştirilmiş bir istemci yine de kısa bir süre koltukta oturabilir.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Biri sahiplenilmiş bir araçta izinsiz oturduğunda sunucunun ne yapacağı. İki seçenekte de olay denetim kaydına yazılır ve o oyuncu uyarılır. Sunucu tüm yolcuları düzenli olarak kontrol eder; değiştirilmiş bir istemci yine de kısa bir süre koltukta oturabilir.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Yolcu kontrol aralığı (saniye)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "Sunucunun her çevrimiçi oyuncuyu, sahiplenilmiş bir araçta izinsiz oturup oturmadığı için ne sıklıkla kontrol ettiği.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Günlüğe yaz ve oyuncuyu uyar",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Oyuncuyu araçtan çıkar",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Günlüğe yaz ve uyar",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Araçtan çıkar",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK geçişi: eşleşmeyen sahiplenmeleri sakla (gün)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Key'den içe aktarılan sahiplenmeler, sunucu aracı ilk gördüğünde gerçek sahiplenmeye dönüşür. Bu kadar gün içinde eşleşmeyen içe aktarılmış sahiplenmeler silinir ve denetim kaydına yazılır."
 }

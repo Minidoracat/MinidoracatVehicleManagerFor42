@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "소유자용 가상 키",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "소유자와 소유자가 운전을 허용한 플레이어는 실제 열쇠 없이 등록된 차량의 잠금을 해제하고, 경보를 울리지 않고 열고, 시동을 걸 수 있습니다.\n끄면 기본 열쇠 규칙을 따릅니다.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "무단 탑승자 대응",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "누군가 권한 없이 등록된 차량에 앉았을 때 서버가 할 일입니다. 서버는 모든 탑승자를 주기적으로 확인하지만, 변조된 클라이언트는 잠시 좌석에 앉아 있을 수 있습니다.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "누군가 권한 없이 등록된 차량에 앉았을 때 서버가 할 일입니다. 어느 쪽이든 감사 로그에 기록하고 해당 플레이어에게 경고합니다. 서버는 모든 탑승자를 주기적으로 확인하지만, 변조된 클라이언트는 잠시 좌석에 앉아 있을 수 있습니다.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "탑승자 확인 간격 (초)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "서버가 접속 중인 각 플레이어가 권한 없이 등록된 차량에 앉아 있는지 확인하는 주기입니다.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "기록하고 플레이어에게 경고",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "플레이어를 차량에서 내리게 함",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "기록하고 경고",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "차량에서 내리게 함",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 이전: 일치하지 않은 등록 보관 (일)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Key에서 가져온 등록은 서버가 차량을 처음 감지할 때 실제 등록이 됩니다. 이 일수가 지나도록 일치하지 않은 가져온 등록은 삭제되고 감사 로그에 기록됩니다."
 }

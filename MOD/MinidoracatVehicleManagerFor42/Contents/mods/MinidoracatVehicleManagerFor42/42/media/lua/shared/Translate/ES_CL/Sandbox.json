@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Llave virtual para dueños",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Los dueños y los jugadores a los que permiten conducir pueden desbloquear, abrir sin activar la alarma y arrancar sus vehículos reclamados sin la llave física.\nDesactivado mantiene las reglas de llaves originales.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Respuesta ante ocupantes no autorizados",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Qué hace el servidor cuando alguien se sienta en un vehículo reclamado sin permiso. El servidor revisa a cada ocupante periódicamente; un cliente modificado aún puede sentarse en el asiento un momento.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Qué hace el servidor cuando alguien se sienta en un vehículo reclamado sin permiso. En ambos casos, se anota en el registro de auditoría y se avisa a ese jugador. El servidor revisa a cada ocupante periódicamente; un cliente modificado aún puede sentarse en el asiento un momento.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Intervalo de revisión de ocupantes (segundos)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "Cada cuánto revisa el servidor si algún jugador conectado está sentado en un vehículo reclamado sin permiso.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Registrar y avisar al jugador",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Sacar al jugador del vehículo",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Registrar y avisar",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Sacar del vehículo",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Migración de MVCK: conservar reclamos sin coincidencia (días)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Los reclamos importados de Mysterious Vehicle Claim Key se vuelven reclamos reales la primera vez que el servidor ve el vehículo. Los reclamos importados sin coincidencia tras estos días se descartan y se escriben en el registro de auditoría."
 }

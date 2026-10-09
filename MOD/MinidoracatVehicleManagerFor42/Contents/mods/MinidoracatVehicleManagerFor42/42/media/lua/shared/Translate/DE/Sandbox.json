@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Virtueller Schlüssel für Eigentümer",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Eigentümer und Spieler, denen sie das Fahren erlauben, können ihre beanspruchten Fahrzeuge ohne physischen Schlüssel entriegeln, ohne Alarm öffnen und starten.\nAus behält die normalen Schlüsselregeln bei.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Reaktion auf unbefugte Insassen",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Was der Server tut, wenn jemand ohne Berechtigung in einem beanspruchten Fahrzeug sitzt. Der Server prüft regelmäßig jeden Insassen; ein manipulierter Client kann trotzdem kurz auf dem Sitz sitzen.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Was der Server tut, wenn jemand ohne Berechtigung in einem beanspruchten Fahrzeug sitzt. In beiden Fällen wird der Vorfall ins Prüfprotokoll geschrieben und der Spieler gewarnt. Der Server prüft regelmäßig jeden Insassen; ein manipulierter Client kann trotzdem kurz auf dem Sitz sitzen.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Intervall der Insassenprüfung (Sekunden)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "Wie oft der Server jeden Online-Spieler darauf prüft, ob er ohne Berechtigung in einem beanspruchten Fahrzeug sitzt.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Protokollieren und Spieler warnen",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Spieler aus dem Fahrzeug entfernen",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Protokollieren und warnen",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Aus dem Fahrzeug entfernen",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK-Migration: nicht zugeordnete Ansprüche behalten (Tage)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Aus Mysterious Vehicle Claim Key importierte Ansprüche werden zu echten Ansprüchen, sobald der Server das Fahrzeug zum ersten Mal sieht. Importierte Ansprüche, die nach so vielen Tagen nicht zugeordnet sind, werden verworfen und ins Prüfprotokoll geschrieben."
 }

@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Виртуальный ключ для владельцев",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Владельцы и игроки, которым они разрешили вождение, могут отпирать, открывать без срабатывания сигнализации и заводить свой привязанный транспорт без настоящего ключа.\nВыкл. - обычные правила ключей.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Реакция на посторонних в транспорте",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Что делает сервер, когда кто-то сидит в привязанном транспорте без разрешения. Сервер регулярно проверяет всех, кто сидит в транспорте; модифицированный клиент всё же может ненадолго оказаться на сиденье.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Что делает сервер, когда кто-то сидит в привязанном транспорте без разрешения. В обоих случаях это записывается в журнал аудита, а игрок получает предупреждение. Сервер регулярно проверяет всех, кто сидит в транспорте; модифицированный клиент всё же может ненадолго оказаться на сиденье.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Интервал проверки игроков в транспорте (сек.)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "Как часто сервер проверяет каждого игрока в сети, не сидит ли он в привязанном транспорте без разрешения.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Записать в лог и предупредить игрока",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Высадить игрока из транспорта",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Записать и предупредить",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Высадить из транспорта",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Перенос MVCK: хранить несопоставленные привязки (дн.)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Привязки, импортированные из Mysterious Vehicle Claim Key, становятся настоящими, когда сервер впервые увидит транспорт. Импортированные привязки, не сопоставленные за это число дней, удаляются и записываются в журнал аудита."
 }

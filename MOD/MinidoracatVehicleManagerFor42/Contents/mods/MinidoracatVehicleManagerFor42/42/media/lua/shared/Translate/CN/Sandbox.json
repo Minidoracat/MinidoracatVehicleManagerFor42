@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "车主虚拟钥匙",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "车主与被允许驾驶的玩家，不需要实体钥匙就能解锁、开门（不触发警报）与启动自己绑定的车。\n关闭＝沿用原版钥匙规则。",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "未授权乘员处置",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "有人未经允许坐在已绑定的车上时，服务器的处置方式。服务器会定期检查每位乘员；改机客户端仍可能短暂坐上座位。",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "有人未经允许坐在已绑定的车上时，服务器的处置方式。两种处置都会写入审计记录并警告该玩家。服务器会定期检查每位乘员；改机客户端仍可能短暂坐上座位。",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "乘员检查间隔（秒）",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "服务器多久检查一次每位在线玩家是否未经允许坐在已绑定的车上。",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "记录并警告玩家",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "把玩家移出车外",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "记录并警告",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "移出车外",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 迁移：未对上的绑定保留天数",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "从 Mysterious Vehicle Claim Key 导入的绑定，会在服务器第一次看到该车时转为正式绑定。超过此天数仍未对上的导入项会删除并写入审计记录。"
 }

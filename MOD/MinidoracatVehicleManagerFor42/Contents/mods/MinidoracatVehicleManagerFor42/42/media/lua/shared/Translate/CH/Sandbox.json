@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "車主虛擬鑰匙",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "車主與被允許駕駛的玩家，不需要實體鑰匙就能解鎖、開門（不觸發警報）與發動自己綁定的車。\n關閉＝沿用原版鑰匙規則。",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "未授權乘員處置",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "有人未經允許坐在已綁定的車上時，伺服器的處置方式。伺服器會定期檢查每位乘員；改機客戶端仍可能短暫坐上座位。",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "有人未經允許坐在已綁定的車上時，伺服器的處置方式。兩種處置都會寫入稽核記錄並警告該玩家。伺服器會定期檢查每位乘員；改機客戶端仍可能短暫坐上座位。",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "乘員檢查間隔（秒）",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "伺服器多久檢查一次每位線上玩家是否未經允許坐在已綁定的車上。",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "記錄並警告玩家",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "把玩家移出車外",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "記錄並警告",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "移出車外",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 遷移：未對上的綁定保留天數",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "從 Mysterious Vehicle Claim Key 匯入的綁定，會在伺服器第一次看到該車時轉為正式綁定。超過此天數仍未對上的匯入項會刪除並寫入稽核記錄。"
 }

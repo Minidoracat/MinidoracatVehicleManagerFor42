@@ -26,11 +26,11 @@
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Chave virtual para donos",
     "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Donos e jogadores que eles permitem dirigir podem destrancar, abrir sem disparar o alarme e dar partida nos seus veículos reivindicados sem a chave física.\nDesligado mantém as regras de chave originais.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Resposta a ocupante não autorizado",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "O que o servidor faz quando alguém senta em um veículo reivindicado sem permissão. O servidor verifica cada ocupante regularmente; um cliente modificado ainda pode ficar no assento por um instante.",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "O que o servidor faz quando alguém senta em um veículo reivindicado sem permissão. Nos dois casos, isso é gravado no registro de auditoria e esse jogador é avisado. O servidor verifica cada ocupante regularmente; um cliente modificado ainda pode ficar no assento por um instante.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Intervalo de verificação de ocupantes (segundos)",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds_tooltip": "Com que frequência o servidor verifica se cada jogador online está sentado em um veículo reivindicado sem permissão.",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Registrar e avisar o jogador",
-    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Tirar o jogador do veículo",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Registrar e avisar",
+    "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Tirar do veículo",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Migração do MVCK: manter reivindicações sem correspondência (dias)",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Reivindicações importadas do Mysterious Vehicle Claim Key viram reivindicações reais na primeira vez que o servidor vê o veículo. Reivindicações importadas sem correspondência após esse número de dias são descartadas e gravadas no registro de auditoria."
 }
