@@ -20,7 +20,7 @@ REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(REPO, "STEAM_DESCRIPTION_EN.md")   # 翻譯包改為 STEAM_DESCRIPTION.md
 DST = os.path.join(REPO, "MOD", "MinidoracatVehicleManagerFor42", "workshop.txt")
 
-TITLE = "[B42] Minidoracat Vehicle Manager"
+TITLE = "[B42] Vehicle Manager by Minidoracat"
 TAGS = "Build 42;Interface;Multiplayer"   # 翻譯類用 Build 42;Language/Translation
 VISIBILITY = "public"
 
