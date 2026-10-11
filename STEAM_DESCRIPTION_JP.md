@@ -1,4 +1,4 @@
-[h1]🚗 Minidoracat Vehicle Manager for B42[/h1]
+[h1]🚗 Minidoracat Vehicle Manager[/h1]
 [h3]By Minidoracat[/h3]
 
 [hr][/hr]

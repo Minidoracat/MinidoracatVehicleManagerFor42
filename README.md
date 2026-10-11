@@ -1,4 +1,4 @@
-# Minidoracat Vehicle Manager for B42
+# Minidoracat Vehicle Manager
 
 提供車輛綁定、所有權保護、個人與陣營車隊管理，以及 MiniMap 追蹤與 Economy 租賃整合的車輛管理系統
 

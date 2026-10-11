@@ -1,7 +1,7 @@
 version=1
 id=3813972279
 title=[B42] Vehicle Manager by Minidoracat
-description=[h1]🚗 Minidoracat Vehicle Manager for B42[/h1]
+description=[h1]🚗 Minidoracat Vehicle Manager[/h1]
 description=[h3]By Minidoracat[/h3]
 description=
 description=[hr][/hr]
