@@ -34,7 +34,7 @@ Vehicle claiming and protection for multiplayer servers: claim a car to your acc
 [*] [b]Minimap tracking[/b] (optional): your cars and shared cars you may locate show on the map
 [*] [b]Move from MVCK[/b]: admins import existing MVCK claims in one click
 [/list]
-📖 [b]What is protected, sharing permissions, admin tools and FAQ:[/b] [url=https://steamcommunity.com/workshop/filedetails/discussion/3813972279/586187800873910928/]Vehicle Manager Guide: Claims, Protection & Fleet[/url]
+📖 [b]What is protected, sharing permissions, admin tools and FAQ:[/b] [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3817840709]Vehicle Manager Mod Guide: Claims, Protection & Fleet[/url]
 
 [h2]🔗 More Minidoracat mods[/h2]
 All my mods are in the [url=https://steamcommunity.com/sharedfiles/filedetails/?id=3809297109]Minidoracat Mods for B42 collection[/url] — pick what you need.
