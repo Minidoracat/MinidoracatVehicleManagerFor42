@@ -192,12 +192,12 @@ local RULES = {
         savePartsCondition = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
     },
     -- Vehicle Repair Overhaul（Workshop 2757712197）42/media/lua/server：修零件、重組引擎、修暖氣與警示燈都直接改零件耐久
-    VRO_vehicle = { doFix = on("vehicleId", "REPAIR") }, -- VRO_VehicleCommands.lua:500-614
+    VRO_vehicle = { doFix = on("vehicleId", "REPAIR") }, -- VRO_VehicleCommands.lua:502-619
     EER_vehicle = { rebuildEngine = on("vehicleId", "REPAIR") }, -- EER_VehicleCommands.lua:50-117（也改引擎品質）
-    EHR_vehicle = { repairHeater = one("REPAIR") }, -- EHR_VehicleCommands.lua:51-129
+    EHR_vehicle = { repairHeater = one("REPAIR") }, -- EHR_VehicleCommands.lua:51-131
     ELR_vehicle = {
-        repairLightbar = one("REPAIR"), -- ELR_VehicleCommands.lua:52-111
-        -- :113-132；正常呼叫者是修警示燈前在車外關燈與警笛（ELRTurnOffLightbar.lua:51-52）
+        repairLightbar = one("REPAIR"), -- ELR_VehicleCommands.lua:52-113
+        -- :115-134；正常呼叫者是修警示燈前在車外關燈與警笛（ELRTurnOffLightbar.lua:51-52）
         setLightbarLightsMode = lightbar, setLightbarSirenMode = lightbar,
     },
 }
