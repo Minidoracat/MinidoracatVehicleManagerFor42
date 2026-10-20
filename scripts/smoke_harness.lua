@@ -4520,6 +4520,10 @@ check(#regs == 1 and #floats == 0 and docked.start == 0 and docked.res == 0 and 
     "有 Dock：只登記一個入口，進遊戲不建浮鈕、不掛換解析度處理")
 check(spec.id == "vehiclemanager" and spec.order == 40 and spec.iconKey == "steeringwheel" and spec.label() == "IGUI_MVM_FleetTitle",
     "Dock 入口：id、排序 40、方向盤圖示、名稱是車隊視窗標題")
+local iconFh = spec.icon == "media/ui/MinidoracatVehicleManager/dock_steeringwheel.png"
+    and io.open(MEDIA:sub(1, -5) .. spec.icon:sub(6), "rb") -- MEDIA 是 .../42/media/lua
+if iconFh then iconFh:close() end
+check(iconFh, "Dock 入口：彩色方向盤圖的路徑指到 MOD 裡真的有的檔（白色方向盤留作退路）")
 local W = MVM.FleetWindow
 check(spec.isActive() == false, "車隊視窗還沒建立：入口不是開啟中")
 local shown = true

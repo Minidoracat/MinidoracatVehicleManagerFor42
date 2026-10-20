@@ -2128,7 +2128,8 @@ end
 
 -- 家族工具列（框架 rev 13 Dock）：登記成功就不建浮鈕；舊框架或登記失敗照舊用浮鈕。回呼每幀可能被呼叫，不建 table
 docked = CAPS.dock and UI.Dock and UI.Dock.register({
-    id = "vehiclemanager", order = 40, iconKey = "steeringwheel",
+    id = "vehiclemanager", order = 40,
+    icon = "media/ui/MinidoracatVehicleManager/dock_steeringwheel.png", iconKey = "steeringwheel", -- 彩色圖讀不到時（框架 rev 21 起）退回白色圖示
     label = function() return getText("IGUI_MVM_FleetTitle") end,
     onClick = FleetWindow.toggle,
     isAvailable = function() return entryShown end, -- 選項 OR 越權中（syncEntry）
