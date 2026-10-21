@@ -4,7 +4,7 @@
       "wid": "2757712197",
       "mod_id": "VehicleRepairOverhaul, VehicleSalvageOverhaulB42",
       "name": "Vehicle Repair Overhaul",
-      "acked_time_updated": 1791940466,
+      "acked_time_updated": 1792489587,
       "affects": [
         "CG.RULES.vehicle.remove（整車拆解最後送 vehicle.remove，MANAGE 擋）",
         "CG.RULES.VRO_vehicle.doFix",
@@ -112,7 +112,7 @@
       "wid": "3171167894",
       "mod_id": "damnlib",
       "name": "that DAMN Library",
-      "acked_time_updated": 1791917231,
+      "acked_time_updated": 1792520028,
       "affects": [
         "CG.RULES.that_damn_lib.setPartModData（一律拒絕）",
         "CG.RULES.that_damn_lib.silentPartInstall／updatePartConditions／savePartsCondition",
