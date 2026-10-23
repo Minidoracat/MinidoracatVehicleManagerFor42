@@ -12,6 +12,14 @@
 
 格式基於 [Keep a Changelog](https://keepachangelog.com/zh-TW/1.1.0/)，版本號遵循 `{PZ版本}-{主版本}.{次版本}.{修訂}` 格式。
 
+## [Unreleased]
+
+### 修正
+
+- **在主選單的選項按了「套用」之後，本 MOD 的設定進遊戲全部回到預設**：這是原版遊戲的問題，主選單開選項時如果還沒有任何 MOD 的選項頁，按「套用」會把所有 MOD 的選項存檔清空，「顯示車隊按鈕」等設定就變回預設。現在本 MOD 會自動把你上次的設定補回來。需要 Minidoracat UI Library 一併更新到新版才會生效。
+
+> 技術要點：用 Minidoracat UI Library 的 `UI.ModOptionsBackup.protect`（API rev 23，`modOptionsBackup`）；備份檔在 `Zomboid/Lua/MinidoracatUI/ModOptions_MinidoracatVehicleManager.ini`。
+
 ## [42.21.0-0.9.2] - 2026-10-21
 
 ### 變更

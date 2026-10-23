@@ -2061,6 +2061,13 @@ local function registerOptions()
         showButton = self:getOption("ShowButton"):getValue() ~= false
         syncEntry()
     end
+    -- 原版主選單沒有 MOD 建選項時按套用會把 ModOptions.ini 清空；框架 rev 23 從自己的備份補回，要在 load 之前（showButton 才是補回值）
+    if UI.API_REVISION >= 23 and CAPS.modOptionsBackup and UI.ModOptionsBackup then
+        local restored = UI.ModOptionsBackup.protect(options)
+        if type(restored) == "number" and restored > 0 then
+            MVM.log("restored " .. restored .. " settings from the backup (ModOptions.ini was wiped)")
+        end
+    end
     PZAPI.ModOptions:load()
     showButton = options:getOption("ShowButton"):getValue() ~= false
 end
