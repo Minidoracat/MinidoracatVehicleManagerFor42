@@ -30,9 +30,12 @@ MVM.Guards = G
 
 local INTENT_TTL_MS = 180000 -- 排入佇列到 server 執行：走位＋動作時間
 local INTENTS_PER_ACTOR = 16
-local WATCHDOG_BATCH = 10
+-- watchdog 每 WATCHDOG_MS 跑一次、每次最多查 WATCHDOG_BATCH 人（每秒上限 100 人，與舊的 0.1 秒×10 人相同）。
+-- 每人照沙盒 WatchdogIntervalSeconds 到期；到期後最慢 0.25 秒內查到（舊做法 0.1 秒）
+local WATCHDOG_MS, WATCHDOG_BATCH = 250, 25
 
-local R = { intents = {}, wrapped = {}, marks = {}, due = {}, rewraps = 0, lastRun = 0 }
+-- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）
+local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
 G.R = R
 
 local function now() return getTimestampMs() end
@@ -277,10 +280,12 @@ Events.OnGameStart.Add(function() if not isServer() then G.install("OnGameStart"
 Events.EveryOneMinute.Add(function() G.install("recheck") end)
 
 -- ------------------------------------------------------------------ watchdog ---
--- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人
+-- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人。
+-- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上的人解
+-- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查
 local function occupantCheck(player)
     local v = player:getVehicle()
-    if v == nil then return end
+    if v == nil or O.principal(player) == nil then return end
     local seat = v:getSeat(player)
     local ok, reason, rec = O.canUse(player, v, seat == 0 and "DRIVE" or "PASSENGER", { silent = true })
     if rec ~= nil and not ok then
@@ -311,23 +316,32 @@ function G.watchdog()
     -- 重啟後可能還沒有任何命令觸發載入判定：由 watchdog 自己觸發，否則沒人操作前完全不巡查
     if O.state() == nil then return end
     local t = now()
-    if t - R.lastRun < 100 then return end
+    if t - R.lastRun < WATCHDOG_MS then return end
     -- 觸發載入判定；RECOVERY_REQUIRED 時帳本不可寫，但仍以記憶體帳本唯讀執法（lookup 的唯讀分支）
     O.ready()
     R.lastRun = t
     local interval = MVM.sandbox("WatchdogIntervalSeconds", 1) * 1000
-    local online = S.online()
+    local list = S.players()
     local checked = 0
-    for who, player in pairs(online) do
-        local due = R.due[who]
-        if due == nil then due = t; R.due[who] = t end
+    for i = 0, list:size() - 1 do
+        local player = list:get(i)
+        R.seen[player] = t
+        local due = R.due[player]
+        if due == nil then due = t; R.due[player] = t end
         if due <= t and checked < WATCHDOG_BATCH then
             checked = checked + 1
-            R.due[who] = t + interval
+            R.due[player] = t + interval
             occupantCheck(player)
         end
     end
-    for who in pairs(R.due) do if online[who] == nil then R.due[who] = nil end end
+    -- 離線玩家的到期紀錄每秒清一次（留著只佔記憶體，不影響誰被查）
+    if t - R.lastPrune < 1000 then return end
+    R.lastPrune = t
+    local gone = nil
+    for player, at in pairs(R.seen) do
+        if at ~= t then gone = gone or {}; gone[#gone + 1] = player end
+    end
+    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player] = nil, nil end
 end
 
 Events.OnTick.Add(G.watchdog)

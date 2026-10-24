@@ -257,6 +257,7 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:getSquare() return self.square end
     function v:getMaxPassengers() return self.maxPass end
     function v:getCharacter(seat) return self.seats[seat] end
+    function v:hasPassenger() for s = 0, self.maxPass - 1 do if self.seats[s] then return true end end return false end
     local function count(kind) tx[kind] = (tx[kind] or 0) + 1 end
     function v:transmitPartItem() count("item") end
     function v:transmitPartCondition() count("condition") end
@@ -397,8 +398,8 @@ local function boot(diskState, keepGmd, keepGos)
     S.R.acks, S.R.rate, S.R.attempts, S.R.streams, S.R.unverified, S.R.recheck = {}, {}, {}, {}, {}, {}
     S.R.pub, S.R.sandboxSeen = nil, nil
     O.R.identityConflicts, steamActive = nil, false
-    G.R.intents, G.R.due, G.R.lastRun = {}, {}, 0
-    MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.lastRun = {}, {}, 0
+    G.R.intents, G.R.due, G.R.seen, G.R.lastRun, G.R.lastPrune = {}, {}, {}, 0, 0
+    MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.who, MVM.Tracking.seen, MVM.Tracking.lastRun = {}, {}, {}, {}, 0
     for k in pairs(MVM.Parked.R) do
         local v = MVM.Parked.R[k]
         if type(v) == "table" then MVM.Parked.R[k] = {} elseif type(v) == "number" then MVM.Parked.R[k] = 0 end
@@ -2272,14 +2273,16 @@ local ownTow = vehicle(3, 303, 5003, "Base.CarNormal", 1, 1)
 ownTow.seats[0] = OW; OW.vehicle = ownTow; ownTow.towing = car
 nowMs = nowMs + 1000; G.watchdog()
 check(ownTow.broken == nil, "owner 拖自己的車不解除")
--- coverage：64 人、每 tick 最多 10 人，一個週期內全數檢查
+-- coverage：100 人、每 0.25 秒最多 25 人，1 秒（一個週期）內全數檢查；0.25 秒內不重跑
 boot()
-for i = 1, 64 do player("p" .. i, 1, 1) end
-local t1 = nowMs + 100
-for _ = 1, 7 do nowMs = nowMs + 100; G.watchdog() end
+for i = 1, 100 do player("p" .. i, 1, 1) end
+local t1 = nowMs
+for _ = 1, 4 do nowMs = nowMs + 250; G.watchdog() end
 local cnt = 0
 for _, due in pairs(G.R.due) do if due > t1 then cnt = cnt + 1 end end
-check(cnt == 64, "64 位在線玩家、每 tick 10 人：7 tick 內全數檢查過")
+t1 = G.R.lastRun
+nowMs = nowMs + 100; G.watchdog()
+check(cnt == 100 and G.R.lastRun == t1, "100 位在線玩家、每 0.25 秒 25 人：1 秒內全數檢查過，0.25 秒內不重跑")
 
 out("情境 P2-11：燒毀車拆解入口不能拆受保護車")
 boot()
@@ -2394,6 +2397,114 @@ check(P.fresh(function() P.r6.grants[1].bits = 3 end, '"actions": [\n           
     "vehicles.json 列快取：分享權限或座標原地改也會重編，與不用快取的輸出相同")
 check(P.X.utc(0) == "1970-01-01 00:00:00 UTC" and P.X.utc(1790439302927) == "2026-09-26 16:15:02 UTC", "UTC 時間格式")
 end)(); -- 分號：下一個情境也是 IIFE，避免被解析成連續呼叫
+
+(function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
+out("情境 P7：週期工作只替需要的人解身分、匯出沿用排序（行為與逐人解身分、整份重排相同）")
+local TK, X = MVM.Tracking, MVM.Export
+boot()
+local own = player("own", 1, 1)
+for _, n in ipairs({ "m1", "m2", "f1", "f2", "x" }) do player(n, 1, 1) end
+newFaction("FX", "own", { "f1", "f2", "m2" })
+local car = vehicle(1, 101, 5001, "Base.CarNormal", 1, 1)
+local r = rec(claim(own, car).oid)
+car.seats[0] = own; own.vehicle = car
+local T_, D_ = MVM.ACTIONS.TRACK, MVM.ACTIONS.DRIVE
+local grantSets = { {}, { { user = "m1", bits = T_ } }, { { user = "m1", bits = T_ }, { user = "m2", bits = D_ } },
+    { { user = "m2", bits = D_ + T_ } } }
+local factionSets = { false, { bits = T_, state = "GRANTED" }, { bits = D_, state = "GRANTED" }, { bits = T_, state = "SUSPENDED" } }
+local mismatch, combos = nil, 0
+for _, gs in ipairs(grantSets) do
+    for _, fs in ipairs(factionSets) do
+        r.grants = gs
+        r.factionShare, r.factionName, r.factionOwnerUser = fs and true or nil, fs and "FX" or nil, fs and "own" or nil
+        r.factionActionBits, r.factionState = fs and fs.bits or nil, fs and fs.state or nil
+        -- 參照：S.audience 裡在線、車主或 S.row 給的權限有 TRACK 的人（改動前的算法）
+        local want, on = {}, S.online()
+        for who in pairs(S.audience(r)) do
+            local row = on[who] and S.row(r, who)
+            if row and (who == r.ownerUser or MVM.bitsAllow(row.myBits, "TRACK")) then want[who] = true end
+        end
+        for k in pairs(outbox) do outbox[k] = {} end
+        car.x = car.x + 2; nowMs = nowMs + 600; TK.tick()
+        for name, box in pairs(outbox) do
+            local got = false
+            for _, m in ipairs(box) do if m.command == "trackDelta" then got = true end end
+            if got ~= (want[name] == true) then mismatch = mismatch or (name .. " combo " .. combos) end
+        end
+        combos = combos + 1
+    end
+end
+check(mismatch == nil and combos == 16, "即時位置收件者：16 種分享／陣營組合都與 S.row 判定相同（" .. tostring(mismatch) .. "）")
+-- 開車中身分變了（名字改掉）：舊身分的座位收掉、最後位置寫進帳本
+car.x = 77; own.name = "renamed"; outbox.renamed = {}
+nowMs = nowMs + 600; TK.tick()
+check(r.lastKnownX == 77, "開車中 principal 變了：照舊收斂最後位置")
+own.name = "own"
+-- watchdog：沒有身分（分割畫面）的人坐在受保護車上不查；有身分後一個週期內就查到
+local ghost = player("ghost", 1, 1)
+ghost.num = 1
+car.seats[0] = nil; own.vehicle = nil
+car.seats[1] = ghost; ghost.vehicle = car
+for _ = 1, 15 do nowMs = nowMs + 100; G.watchdog() end
+check(lastOf(ghost, "enforcement") == nil, "watchdog：沒有身分的乘客照舊不查")
+ghost.num = 0
+for _ = 1, 12 do nowMs = nowMs + 100; G.watchdog() end
+check(lastOf(ghost, "enforcement") ~= nil, "有身分後 1.2 秒內被 watchdog 查到")
+-- 離線玩家的到期紀錄會清掉
+car.seats[1] = nil; ghost.vehicle = nil
+for i = #online, 1, -1 do if online[i] == ghost then table.remove(online, i) end end
+for _ = 1, 12 do nowMs = nowMs + 100; G.watchdog() end
+check(G.R.due[ghost] == nil and G.R.seen[ghost] == nil, "watchdog：離線玩家的到期紀錄一秒內清掉")
+-- 匯出：排序鍵沒變就沿用上次順序；車主改了（鍵變了）重新排序，兩種都與清空快取重排的輸出相同
+local car2 = vehicle(2, 102, 5002, "Base.CarNormal", 1, 1)
+claim(player("zed", 1, 1), car2)
+local path = X.folder() .. "vehicles.json"
+local function exportNow() nowMs = nowMs + 20000; O.bump(); X.tick(); return table.concat(files[path]) end
+local function fresh()
+    X.rowCache, X.pendingCache, X.rowOrder, X.pendingOrder, X.exportedRevision, X.lastExportMs = {}, {}, nil, nil, nil, 0
+    X.tick(); return table.concat(files[path])
+end
+X.journalApplied = true
+exportNow()
+r.lastKnownX = 5
+local kept = exportNow()
+local keptFresh = fresh()
+r.ownerUser = "zzz"
+local moved = exportNow()
+local movedFresh = fresh()
+check(kept == keptFresh and moved == movedFresh and moved:find('"owner": "zed"', 1, true) < moved:find('"owner": "zzz"', 1, true),
+    "vehicles.json：沿用與重排的順序都和清空快取的輸出相同（車主改名後順序跟著變）")
+r.ownerUser = "own"
+-- 停車保全：追蹤的車比每秒能查的多（4×PER_TICK）時輪流查，每台都會布防（舊做法每 tick 從頭走，後面的車永遠輪不到）
+boot()
+local PG = MVM.Parked
+SB.ClaimsPerPlayer = 300
+local big = player("big", 1, 1)
+local many = {}
+for i = 1, 200 do
+    local v = vehicle(100 + i, 1000 + i, 6000 + i, "Base.CarNormal", 1, 1)
+    v.parts.Engine.dur = 3
+    claim(big, v)
+    many[#many + 1] = v
+end
+SB.ClaimsPerPlayer = 3
+PG.R.lastScan = 0
+for _ = 1, 10 do nowMs = nowMs + 250; PG.tick() end
+local armedN = 0
+for _, v in ipairs(many) do if v.parts.Engine.dur >= PG.BIG then armedN = armedN + 1 end end
+check(armedN == 200 and #many > 4 * PG.PER_TICK, "停車保全：追蹤 200 台（每秒只能查 160 台）2.5 秒內全部布防")
+-- 不再追蹤的車累積夠多後壓縮輪詢順序，剩下的照樣輪得到
+for i = 1, 150 do many[i].removed = true end
+for _ = 1, 8 do nowMs = nowMs + 250; PG.tick() end
+local live = 0
+for _, e in ipairs(PG.R.order) do if not e.gone then live = live + 1 end end
+for i = 151, 200 do many[i].parts.Engine.dur = 3 end -- 重新載入：durability 被重設，下一次檢查要再拉高
+for i = 151, 200 do PG.touch(many[i]) end
+for _ = 1, 8 do nowMs = nowMs + 250; PG.tick() end
+local rearmed = 0
+for i = 151, 200 do if many[i].parts.Engine.dur >= PG.BIG then rearmed = rearmed + 1 end end
+check(#PG.R.order < 200 and live == 50 and rearmed == 50, "停車保全：移出世界的車清出輪詢順序（壓縮），剩下的照樣每秒檢查")
+end)(); -- 分號：下一個情境也是 IIFE
 
 (function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
 out("情境 E1：Economy 付費名額（rev 2 權益 consumer 邊界）")

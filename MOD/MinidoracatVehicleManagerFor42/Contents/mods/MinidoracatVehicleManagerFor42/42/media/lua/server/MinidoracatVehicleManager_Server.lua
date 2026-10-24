@@ -21,9 +21,9 @@ local function now() return getTimestampMs() end
 
 -- ------------------------------------------------------------- delivery ---
 -- 沒通過 SteamID 驗證的主玩家也要收得到「身分未確認」與管理員身分匯入的回覆：以本機帳號名定址（客戶端依它分桶）。
--- 內容一律依 principal 產生，沒有身分就不會拿到任何車隊資料
-function S.send(player, command, payload)
-    payload.to = O.principal(player) or (isServer() and player:getPlayerNum() == 0 and player:getUsername() or nil)
+-- 內容一律依 principal 產生，沒有身分就不會拿到任何車隊資料。who＝呼叫端這一 tick 剛解出的 principal（可省略，省略就重解）
+function S.send(player, command, payload, who)
+    payload.to = who or O.principal(player) or (isServer() and player:getPlayerNum() == 0 and player:getUsername() or nil)
     if isServer() then
         sendServerCommand(player, MVM.MODULE, command, payload)
     elseif MVM.clientReceive then
@@ -31,19 +31,25 @@ function S.send(player, command, payload)
     end
 end
 
+-- 在線的 IsoPlayer，還沒解身分（呼叫端用 :size()／:get(i) 走訪）：MP 是引擎的在線清單，SP 只有本機玩家 0。
+-- 週期性工作先用它挑出要處理的人，只對那些人解 principal（O.principal 每次要好幾個 Java 呼叫）
+local LOCAL_PLAYERS = {
+    size = function() return getSpecificPlayer(0) and 1 or 0 end,
+    get = function() return getSpecificPlayer(0) end,
+}
+function S.players()
+    if isServer() then return getOnlinePlayers() end
+    return LOCAL_PLAYERS
+end
+
 -- principal → 目前在線的 IsoPlayer
 function S.online()
     local out = {}
-    if isServer() then
-        local list = getOnlinePlayers()
-        for i = 0, list:size() - 1 do
-            local p = list:get(i)
-            local who = O.principal(p)
-            if who then out[who] = p end
-        end
-    else
-        local p = getSpecificPlayer(0)
-        if p then out[O.principal(p)] = p end
+    local list = S.players()
+    for i = 0, list:size() - 1 do
+        local p = list:get(i)
+        local who = O.principal(p)
+        if who then out[who] = p end
     end
     return out
 end

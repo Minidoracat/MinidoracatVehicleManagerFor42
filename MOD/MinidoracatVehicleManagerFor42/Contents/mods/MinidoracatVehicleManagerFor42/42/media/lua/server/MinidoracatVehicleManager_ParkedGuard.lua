@@ -26,13 +26,15 @@ P.CHECK_MS = 1000
 P.RESTORE_MS = 10000
 P.SCAN_MS = 60000
 P.NOTICE_MS = 60000
--- ponytail: 每 tick 最多檢查 PER_TICK 台（約每秒 4×PER_TICK 台）；載入的受保全車多到檢查間隔明顯拉長時改分批輪詢
+-- 每 tick 最多檢查 PER_TICK 台（約每秒 4×PER_TICK 台），從上一 tick 停下的地方接著輪：追蹤的車多過每秒能查的數量時，
+-- 每台的檢查間隔平均拉長，不會有車一直輪不到（舊做法每 tick 從頭走 pairs，後面的車永遠不布防）
 P.PER_TICK = 40
 
--- tracked：車輛 id → { v, id, oid, due, nextRestore, base（布防中才有）, glass0, touched }；byOid：oid → 同一個 entry。
+-- tracked：車輛 id → { v, id, oid, due, nextRestore, base（布防中才有）, glass0, touched, gone }；byOid：oid → 同一個 entry。
+-- order／cursor：輪詢順序（新追蹤的接在尾端，不再追蹤的標 gone、累積夠多才壓縮；dead＝標 gone 的數量）。
 -- overSeen：車主上次的 OVER 台數（變多才通知）。memo：一次 tick 內的車主排名快取
-P.R = { tracked = {}, byOid = {}, overSeen = {}, attackNotified = {}, repairNotified = {}, errors = {},
-    lastTick = 0, lastScan = 0, memo = nil }
+P.R = { tracked = {}, byOid = {}, order = {}, overSeen = {}, attackNotified = {}, repairNotified = {}, errors = {},
+    lastTick = 0, lastScan = 0, cursor = 1, dead = 0, memo = nil }
 local R = P.R
 
 -- 可保全（也是保全名額計數）的紀錄狀態：QUARANTINED 不算（lookup 不是 AUTHORIZED）
@@ -211,8 +213,10 @@ local function restore(e)
 end
 
 -- ------------------------------------------------------------------ track ---
--- 有授權者在車上（車主或有該座位權限的人）就不布防；沒權限的乘客不算（佔座由 watchdog 處理）
+-- 有授權者在車上（車主或有該座位權限的人）就不布防；沒權限的乘客不算（佔座由 watchdog 處理）。
+-- 停著的車幾乎都是空的：先用 hasPassenger 一次問完（BaseVehicle.java:1836-1845，任一座位有角色），有人才逐座看
 local function occupied(v, rec)
+    if not v:hasPassenger() then return false end
     for seat = 0, v:getMaxPassengers() - 1 do
         local chr = v:getCharacter(seat)
         if chr and instanceof(chr, "IsoPlayer") then
@@ -226,9 +230,21 @@ end
 local function drop(e)
     R.tracked[e.id] = nil
     if R.byOid[e.oid] == e then R.byOid[e.oid] = nil end
+    if not e.gone then e.gone, R.dead = true, R.dead + 1 end
 end
 
--- 回 true＝不再追蹤（呼叫端在走完 pairs 後移除）
+-- 輪詢順序裡標 gone 的佔一半以上才壓縮（保持順序，游標跟著移到同一台車）
+local function compact()
+    if R.dead < 32 or R.dead * 2 < #R.order then return end
+    local kept, cursor = {}, 1
+    for i, e in ipairs(R.order) do
+        if not e.gone then kept[#kept + 1] = e end
+        if i == R.cursor - 1 then cursor = #kept + 1 end
+    end
+    R.order, R.cursor, R.dead = kept, cursor, 0
+end
+
+-- 回 true＝不再追蹤（呼叫端在這輪檢查完後移除）
 local function check(e, t)
     local v = e.v
     if v:isRemovedFromWorld() or getVehicleById(e.id) ~= v then return true end -- 車不在了：durability 不存檔，不必寫回
@@ -277,6 +293,7 @@ function P.discover(v)
     end
     e = { v = v, id = id, oid = rec.oid, due = 0, nextRestore = 0 }
     R.tracked[id], R.byOid[rec.oid] = e, e
+    R.order[#R.order + 1] = e
 end
 
 -- 指令防火牆拒絕砸窗時呼叫：回這台車目前是否布防中；通知車主（同一台車＋同一攻擊者 NOTICE_MS 一次；不在線也記進通知紀錄）
@@ -325,10 +342,14 @@ function P.tick()
         P.scan(t)
     end
     R.memo = {}
-    local n, gone = 0, {}
-    for _, e in pairs(R.tracked) do
+    local order, n, gone = R.order, 0, nil
+    local size, i = #order, R.cursor
+    for _ = 1, size do
         if n >= P.PER_TICK then break end
-        if e.due <= t then
+        if i < 1 or i > size then i = 1 end
+        local e = order[i]
+        i = i + 1
+        if not e.gone and e.due <= t then
             n = n + 1
             e.due = t + P.CHECK_MS
             local ok, res = pcall(check, e, t)
@@ -336,11 +357,13 @@ function P.tick()
                 R.errors[e.oid] = true
                 MVM.log("parked guard check failed (dropped) oid=" .. tostring(e.oid) .. ": " .. tostring(res))
             end
-            if not ok or res then gone[#gone + 1] = e end
+            if not ok or res then gone = gone or {}; gone[#gone + 1] = e end
         end
     end
+    R.cursor = i
     R.memo = nil
-    for _, e in ipairs(gone) do drop(e) end
+    for _, e in ipairs(gone or {}) do drop(e) end
+    compact()
 end
 
 Events.OnTick.Add(P.tick)

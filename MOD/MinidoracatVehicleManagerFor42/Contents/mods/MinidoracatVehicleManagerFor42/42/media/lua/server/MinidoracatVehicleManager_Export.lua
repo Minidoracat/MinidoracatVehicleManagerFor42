@@ -157,7 +157,7 @@ local REC_FIELDS = { "ownerUser", "customName", "vehicleScript", "recordState", 
     "lastKnownX", "lastKnownY", "lastKnownZ", "lastKnownAtMs", "factionShare", "factionName", "factionState",
     "factionActionBits", "publicBits" }
 local PENDING_FIELDS = { "ownerUser", "vehicleScript", "lastX", "lastY" }
-X.rowCache, X.pendingCache = {}, {}
+X.rowCache, X.pendingCache, X.rowOrder, X.pendingOrder = {}, {}, nil, nil
 
 local function unchanged(c, src, fields, grants)
     if c == nil then return false end
@@ -178,7 +178,7 @@ local function cached(cache, nextCache, id, src, fields, grants, build)
         local row, key = build(id, src)
         local out = {}
         encode(row, "    ", out)
-        c = { __json = table.concat(out, "", 1, #out), key = key }
+        c = { __json = table.concat(out, "", 1, #out), key = key, id = id }
         for i = 1, #fields do c[i] = src[fields[i]] end
         if grants then
             c.users, c.bits, c.n = {}, {}, 0
@@ -189,24 +189,36 @@ local function cached(cache, nextCache, id, src, fields, grants, build)
     return c
 end
 
+-- 一個表（車輛或待轉）的所有列，依排序鍵排好；回 新快取、列、id 順序。
+-- 排序鍵含 oid／legacyId，不會重複，所以順序只由鍵決定：每列都在上次就有、鍵也沒變（列數相同＝同一批 id）時，
+-- 直接照上次的 id 順序排，不重新排序
+local function collect(src, cache, prevOrder, fields, grants, build)
+    local nextCache, list, n, same = {}, {}, 0, prevOrder ~= nil
+    for id, s in pairs(src) do
+        local old = cache[id]
+        local c = cached(cache, nextCache, id, s, fields, grants, build)
+        if old == nil or old.key ~= c.key then same = false end
+        n = n + 1
+        list[n] = c
+    end
+    if same and n == #prevOrder then
+        for i, id in ipairs(prevOrder) do list[i] = nextCache[id] end
+        return nextCache, list, prevOrder
+    end
+    local keys = {}
+    for _, c in ipairs(list) do keys[c] = c.key end
+    list = MVM.sortByKey(list, keys)
+    local order = {}
+    for i, c in ipairs(list) do order[i] = c.id end
+    return nextCache, list, order
+end
+
 function X.document()
     local st = O.state()
-    local vehicles, keys, rows = {}, {}, {}
-    for oid, rec in pairs(st.recordsByOid) do
-        local c = cached(X.rowCache, rows, oid, rec, REC_FIELDS, true, vehicleRow)
-        vehicles[#vehicles + 1] = c
-        keys[c] = c.key
-    end
-    X.rowCache = rows
-    vehicles = MVM.sortByKey(vehicles, keys)
-    local pending, pkeys, prows = {}, {}, {}
-    for id, e in pairs(st.pendingRebindByLegacyKey) do
-        local c = cached(X.pendingCache, prows, id, e, PENDING_FIELDS, false, pendingRow)
-        pending[#pending + 1] = c
-        pkeys[c] = c.key
-    end
-    X.pendingCache = prows
-    pending = MVM.sortByKey(pending, pkeys)
+    local vehicles, pending
+    X.rowCache, vehicles, X.rowOrder = collect(st.recordsByOid, X.rowCache, X.rowOrder, REC_FIELDS, true, vehicleRow)
+    X.pendingCache, pending, X.pendingOrder = collect(st.pendingRebindByLegacyKey, X.pendingCache, X.pendingOrder,
+        PENDING_FIELDS, false, pendingRow)
     return obj({ "note", "generatedAt", "server", "ledgerId", "ledgerRevision", "count", "vehicles", "waitingForMVCKVehicle" }, {
         note = "Read-only export of the Minidoracat Vehicle Manager ledger. Editing this file changes nothing.",
         generatedAt = X.utc(now()), server = isServer() and getServerName() or nil, ledgerId = st.ledgerId,
