@@ -2377,6 +2377,21 @@ check(P.doc:find('"owner": "owner"', 1, true) and P.doc:find('"model": "CarNorma
 P.jsonBuf = files[P.X.folder() .. "vehicles.json"]
 nowMs = nowMs + 20000; P.X.tick()
 check(files[P.X.folder() .. "vehicles.json"] == P.jsonBuf, "帳本沒變就不重寫")
+-- 列快取：欄位原地改（分享的權限、座標；沒走 O.bump(rec)）下一次匯出就重編，和清空快取後重編的位元組相同
+P.r6 = rec(P.ack6.oid)
+P.r6.grants = { { user = "bob", bits = 255 } }
+nowMs = nowMs + 20000; O.bump(); P.X.tick()
+P.fresh = function(mutate, want)
+    mutate()
+    nowMs = nowMs + 20000; O.bump(); P.X.tick()
+    local cachedDoc = table.concat(files[P.X.folder() .. "vehicles.json"])
+    P.X.rowCache, P.X.pendingCache, P.X.exportedRevision, P.X.lastExportMs = {}, {}, nil, 0
+    P.X.tick()
+    return cachedDoc == table.concat(files[P.X.folder() .. "vehicles.json"]) and cachedDoc:find(want, 1, true) ~= nil
+end
+check(P.fresh(function() P.r6.grants[1].bits = 3 end, '"actions": [\n            "PASSENGER",\n            "DRIVE"\n          ]')
+    and P.fresh(function() P.r6.lastKnownX = 123.4 end, '"x": 123'),
+    "vehicles.json 列快取：分享權限或座標原地改也會重編，與不用快取的輸出相同")
 check(P.X.utc(0) == "1970-01-01 00:00:00 UTC" and P.X.utc(1790439302927) == "2026-09-26 16:15:02 UTC", "UTC 時間格式")
 end)(); -- 分號：下一個情境也是 IIFE，避免被解析成連續呼叫
 

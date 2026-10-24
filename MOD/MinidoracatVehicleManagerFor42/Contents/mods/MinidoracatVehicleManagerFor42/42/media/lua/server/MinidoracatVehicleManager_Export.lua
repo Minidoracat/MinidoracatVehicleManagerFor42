@@ -28,8 +28,8 @@ function X.folder()
 end
 
 -- ------------------------------------------------------------------ JSON ---
-local ARRAY = {}
-local function arr(t) ARRAY[t] = true; return t end
+-- 陣列標記寫在表本身：放進模組層的集合會讓每次匯出建的整棵文件永遠回收不掉
+local function arr(t) t.__array = true; return t end
 
 local ESC = { ['"'] = '\\"', ['\\'] = '\\\\', ['\n'] = '\\n', ['\r'] = '\\r', ['\t'] = '\\t' }
 local HEX = "0123456789abcdef"
@@ -46,8 +46,9 @@ end
 local function encode(v, indent, out)
     local tv = type(v)
     if tv == "table" then
+        if v.__json then out[#out + 1] = v.__json; return end -- 已編好的列（列快取）
         local pad, inner = "\n" .. indent, "\n" .. indent .. "  "
-        if ARRAY[v] then
+        if v.__array then
             if #v == 0 then out[#out + 1] = "[]"; return end
             out[#out + 1] = "["
             for i = 1, #v do
@@ -123,37 +124,88 @@ local function actionsOf(bits)
     return out
 end
 
+local function vehicleRow(oid, rec)
+    local shared = arr({})
+    for _, g in ipairs(rec.grants or {}) do
+        shared[#shared + 1] = obj({ "user", "actions" }, { user = g.user, actions = actionsOf(g.bits) })
+    end
+    local row = obj(VEHICLE_FIELDS, {
+        owner = rec.ownerUser, name = rec.customName ~= "" and rec.customName or nil,
+        model = tostring(rec.vehicleScript or "?"):gsub("^.-%.", ""), state = rec.recordState,
+        claimedAt = X.utc(rec.claimedAtMs), sharedWith = shared, oid = oid,
+        sqlId = not rec.removedAtMs and rec.sqlIdHint or nil, outOfWorldSince = X.utc(rec.removedAtMs),
+        lastKnown = rec.lastKnownX and obj({ "x", "y", "z", "at" }, { x = math.floor(rec.lastKnownX), y = math.floor(rec.lastKnownY),
+            z = math.floor(rec.lastKnownZ or 0), at = X.utc(rec.lastKnownAtMs) }) or nil,
+        faction = rec.factionShare and obj({ "name", "state", "actions" }, { name = rec.factionName, state = rec.factionState,
+            actions = actionsOf(rec.factionActionBits) }) or nil,
+        public = (rec.publicBits or 0) > 0 and actionsOf(rec.publicBits) or nil,
+    })
+    return row, tostring(rec.ownerUser) .. "\t" .. tostring(row.name or row.model) .. "\t" .. oid
+end
+
+local function pendingRow(id, e)
+    local row = obj({ "owner", "model", "lastX", "lastY", "legacyId" }, { owner = e.ownerUser,
+        model = tostring(e.vehicleScript or "?"):gsub("^.-%.", ""), lastX = e.lastX, lastY = e.lastY,
+        legacyId = MVM.Migration.intStr(id) })
+    return row, tostring(e.ownerUser) .. "\t" .. row.legacyId
+end
+
+-- 列快取：一列的輸出只取決於 fields 列出的來源欄位（車輛列另加 grants 的 user／bits）。匯出時逐欄和上次比，全相同就沿用
+-- 上次編好的 JSON 與排序鍵，不重建整列（時間格式化、動作清單、字串跳脫是匯出的大頭）。不靠 revision：有些寫入點不 bump。
+-- 每次匯出換一份新表，刪掉的紀錄跟著淘汰。列要加欄位時，讀到的來源欄位也要加進 fields，否則改了不會重編
+local REC_FIELDS = { "ownerUser", "customName", "vehicleScript", "recordState", "claimedAtMs", "removedAtMs", "sqlIdHint",
+    "lastKnownX", "lastKnownY", "lastKnownZ", "lastKnownAtMs", "factionShare", "factionName", "factionState",
+    "factionActionBits", "publicBits" }
+local PENDING_FIELDS = { "ownerUser", "vehicleScript", "lastX", "lastY" }
+X.rowCache, X.pendingCache = {}, {}
+
+local function unchanged(c, src, fields, grants)
+    if c == nil then return false end
+    for i = 1, #fields do if c[i] ~= src[fields[i]] then return false end end
+    if not grants then return true end
+    local n = 0
+    for i, g in ipairs(src.grants or {}) do
+        if c.users[i] ~= g.user or c.bits[i] ~= g.bits then return false end
+        n = i
+    end
+    return n == c.n
+end
+
+-- 列編在陣列元素的縮排（文件第 2 層）上：和整份一起編的位元組相同
+local function cached(cache, nextCache, id, src, fields, grants, build)
+    local c = cache[id]
+    if not unchanged(c, src, fields, grants) then
+        local row, key = build(id, src)
+        local out = {}
+        encode(row, "    ", out)
+        c = { __json = table.concat(out, "", 1, #out), key = key }
+        for i = 1, #fields do c[i] = src[fields[i]] end
+        if grants then
+            c.users, c.bits, c.n = {}, {}, 0
+            for i, g in ipairs(src.grants or {}) do c.users[i], c.bits[i], c.n = g.user, g.bits, i end
+        end
+    end
+    nextCache[id] = c
+    return c
+end
+
 function X.document()
     local st = O.state()
-    local vehicles, keys = {}, {}
+    local vehicles, keys, rows = {}, {}, {}
     for oid, rec in pairs(st.recordsByOid) do
-        local shared = arr({})
-        for _, g in ipairs(rec.grants or {}) do
-            shared[#shared + 1] = obj({ "user", "actions" }, { user = g.user, actions = actionsOf(g.bits) })
-        end
-        local row = obj(VEHICLE_FIELDS, {
-            owner = rec.ownerUser, name = rec.customName ~= "" and rec.customName or nil,
-            model = tostring(rec.vehicleScript or "?"):gsub("^.-%.", ""), state = rec.recordState,
-            claimedAt = X.utc(rec.claimedAtMs), sharedWith = shared, oid = oid,
-            sqlId = not rec.removedAtMs and rec.sqlIdHint or nil, outOfWorldSince = X.utc(rec.removedAtMs),
-            lastKnown = rec.lastKnownX and obj({ "x", "y", "z", "at" }, { x = math.floor(rec.lastKnownX), y = math.floor(rec.lastKnownY),
-                z = math.floor(rec.lastKnownZ or 0), at = X.utc(rec.lastKnownAtMs) }) or nil,
-            faction = rec.factionShare and obj({ "name", "state", "actions" }, { name = rec.factionName, state = rec.factionState,
-                actions = actionsOf(rec.factionActionBits) }) or nil,
-            public = (rec.publicBits or 0) > 0 and actionsOf(rec.publicBits) or nil,
-        })
-        vehicles[#vehicles + 1] = row
-        keys[row] = tostring(rec.ownerUser) .. "\t" .. tostring(row.name or row.model) .. "\t" .. oid
+        local c = cached(X.rowCache, rows, oid, rec, REC_FIELDS, true, vehicleRow)
+        vehicles[#vehicles + 1] = c
+        keys[c] = c.key
     end
+    X.rowCache = rows
     vehicles = MVM.sortByKey(vehicles, keys)
-    local pending, pkeys = {}, {}
+    local pending, pkeys, prows = {}, {}, {}
     for id, e in pairs(st.pendingRebindByLegacyKey) do
-        local row = obj({ "owner", "model", "lastX", "lastY", "legacyId" }, { owner = e.ownerUser,
-            model = tostring(e.vehicleScript or "?"):gsub("^.-%.", ""), lastX = e.lastX, lastY = e.lastY,
-            legacyId = MVM.Migration.intStr(id) })
-        pending[#pending + 1] = row
-        pkeys[row] = tostring(e.ownerUser) .. "\t" .. row.legacyId
+        local c = cached(X.pendingCache, prows, id, e, PENDING_FIELDS, false, pendingRow)
+        pending[#pending + 1] = c
+        pkeys[c] = c.key
     end
+    X.pendingCache = prows
     pending = MVM.sortByKey(pending, pkeys)
     return obj({ "note", "generatedAt", "server", "ledgerId", "ledgerRevision", "count", "vehicles", "waitingForMVCKVehicle" }, {
         note = "Read-only export of the Minidoracat Vehicle Manager ledger. Editing this file changes nothing.",

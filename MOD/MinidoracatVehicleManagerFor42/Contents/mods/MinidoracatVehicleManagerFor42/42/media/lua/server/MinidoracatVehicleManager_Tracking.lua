@@ -15,21 +15,23 @@ local SAMPLE_MS, HEARTBEAT_MS = 500, 5000
 
 local function now() return getTimestampMs() end
 
--- 會收到這台車即時位置的在線玩家
-local function trackers(rec)
+-- 會收到這台車即時位置的在線玩家。online＝這次 tick 開頭的 S.online()（同一 tick 內不會變；每台車各算一次要
+-- 對全部在線玩家各解一次 principal）。車主一定收得到（S.row 對車主一律回 OWNER），不必為他組整列
+local function trackers(rec, online)
     local out = {}
-    local online = S.online()
     for who in pairs(S.audience(rec)) do
         local player = online[who]
-        if player then
+        if player and who == rec.ownerUser then
+            out[who] = player
+        elseif player then
             local row = S.row(rec, who)
-            if row and (row.role == "OWNER" or MVM.bitsAllow(row.myBits, "TRACK")) then out[who] = player end
+            if row and MVM.bitsAllow(row.myBits, "TRACK") then out[who] = player end
         end
     end
     return out
 end
 
-function T.sample(vehicle, force)
+function T.sample(vehicle, force, online)
     local verdict, rec = O.lookup(vehicle)
     if rec == nil or verdict ~= "AUTHORIZED" then return end
     local t = now()
@@ -40,18 +42,18 @@ function T.sample(vehicle, force)
         if t - last.t < SAMPLE_MS or (not moved and t - last.t < HEARTBEAT_MS) then return end
     end
     T.last[rec.oid] = { x = x, y = y, z = z, t = t }
-    for _, player in pairs(trackers(rec)) do
+    for _, player in pairs(trackers(rec, online)) do
         S.send(player, "trackDelta", { oid = rec.oid, x = x, y = y, z = z, t = t })
     end
 end
 
 -- 車（與它拖著的車）不再有人時：最後一次取樣並收斂進帳本
-function T.leave(vehicle)
+function T.leave(vehicle, online)
     if vehicle == nil or vehicle:isRemovedFromWorld() then return end
-    T.sample(vehicle, true)
+    T.sample(vehicle, true, online)
     O.observeVehicle(vehicle)
     local towed = vehicle:getVehicleTowing()
-    if towed and not towed:isRemovedFromWorld() then T.sample(towed, true); O.observeVehicle(towed) end
+    if towed and not towed:isRemovedFromWorld() then T.sample(towed, true, online); O.observeVehicle(towed) end
 end
 
 function T.tick()
@@ -66,19 +68,19 @@ function T.tick()
         local prev = T.seat[who]
         if prev ~= v then
             -- 離車：最後一次取樣並寫入帳本 lastKnown（低頻持久化，§7.3）；引擎此時也把車與拖掛寫進 vehicles.db
-            T.leave(prev)
+            T.leave(prev, online)
             T.seat[who] = v
         end
         if v and v:isDriver(player) then
-            T.sample(v, false)
+            T.sample(v, false, online)
             local towed = v:getVehicleTowing()
-            if towed then T.sample(towed, false) end
+            if towed then T.sample(towed, false, online) end
         end
     end
     -- 在車上直接斷線：引擎斷線時同樣寫 vehicles.db（GameServer.java:2594-2595），這裡也收斂最後位置
     local gone = {}
     for who in pairs(T.seat) do if online[who] == nil then gone[#gone + 1] = who end end
-    for _, who in ipairs(gone) do T.leave(T.seat[who]); T.seat[who] = nil end
+    for _, who in ipairs(gone) do T.leave(T.seat[who], online); T.seat[who] = nil end
 end
 
 Events.OnTick.Add(T.tick)
