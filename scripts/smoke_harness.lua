@@ -408,7 +408,7 @@ local function boot(diskState, keepGmd, keepGos)
         local v = MVM.Parked.R[k]
         if type(v) == "table" then MVM.Parked.R[k] = {} elseif type(v) == "number" then MVM.Parked.R[k] = 0 end
     end
-    MVM.Parked.R.memo, MVM.RentLock.watch, MVM.Econ.guardFresh = nil, {}, {}
+    MVM.Parked.R.memo, MVM.RentLock.watch, MVM.RentLock.lastMs, MVM.Econ.guardFresh = nil, {}, 0, {}
     for k in pairs(tx) do tx[k] = nil end
     for k in pairs(vanillaCalls) do vanillaCalls[k] = nil end
     Ledger.instance = nil
@@ -5219,11 +5219,23 @@ check(O.canUse(ADM, cars[3], "DRIVE"), "越權中的管理員：可用")
 cmd(ADM, "setAdminOverride", { enabled = false })
 local row = S.row(recs[3], "rown")
 check(row.lock == "RENT" and row.lockUntilMs == GU and S.row(recs[3], "rmem").lock == "RENT", "車隊列帶 lock／lockUntilMs（車主與成員）")
+-- 牆鐘節流：EveryOneMinute 是遊戲分鐘（一天 1 小時的伺服器每 2.5 秒一次，全員睡覺快轉時約 31 ms），全表掃描照真實時間最多 60 秒一次
+local ev0, evals = RL.evaluate, 0
+RL.evaluate = function(owner) evals = evals + 1; return ev0(owner) end
+RL.minute() -- boot 後第一次＝開服那次（OnServerStarted）
+local n1 = evals
+check(n1 > 0 and recs[3].recordState == "ACTIVE" and recs[2].recordState == "ACTIVE" and recs[3].lock == "RENT" and RL.watch.rown == true,
+    "開服那次照常重算；寬限中：鎖定不變，絕不釋出")
+nowMs = nowMs + 59999
 RL.minute()
-check(recs[3].recordState == "ACTIVE" and recs[2].recordState == "ACTIVE" and recs[3].lock == "RENT" and RL.watch.rown == true,
-    "寬限中每分鐘重算：鎖定不變，絕不釋出")
+check(evals == n1, "60 秒內再觸發：不重算")
+nowMs = nowMs + 1
+RL.minute()
+check(evals == 2 * n1, "滿 60 秒：再重算一次")
+RL.evaluate = ev0
 H.fail = "not_ready"
 E.onChanged("rown", MVM.ECON_PRODUCT)
+nowMs = nowMs + 60000
 RL.minute()
 H.fail, H.throw = nil, true
 RL.evaluate("rown")
@@ -5307,6 +5319,7 @@ check(claim(GR, world[152]).ok, "續租後：可以綁")
 MinidoracatEconomy = nil
 E.init()
 l0 = #logLines
+nowMs = nowMs + 60000
 RL.minute()
 check(E.status == "ABSENT" and rt.lock == nil and GH.logged(l0, "RENT_UNLOCK", rt.oid, "ECONOMY_ABSENT"), "Economy 沒裝（ABSENT）：清掉所有租約鎖定並稽核")
 end)();

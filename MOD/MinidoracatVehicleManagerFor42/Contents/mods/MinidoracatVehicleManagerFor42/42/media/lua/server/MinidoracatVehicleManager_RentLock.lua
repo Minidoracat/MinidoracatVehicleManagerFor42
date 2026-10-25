@@ -9,7 +9,8 @@ require "MinidoracatVehicleManager_Economy"
 local MVM = MinidoracatVehicleManager
 local O, S, E = MVM.Own, MVM.Srv, MVM.Econ
 -- watch＝還有寬限／到期／待確認租約的車主（RAM；重啟後由鎖定紀錄與 Economy 的變更通知補回）
-local RL = { watch = {} }
+-- lastMs＝上次全表重算的牆鐘時間（0＝開服後還沒算過，開服那次一定跑）
+local RL = { watch = {}, lastMs = 0 }
 MVM.RentLock = RL
 
 -- 這位車主綁定名額的租約分項；Economy 不是 READY、查詢失敗或欄位不合回 nil（呼叫端什麼都不改）。
@@ -146,10 +147,16 @@ function RL.evaluate(owner)
     if released > 0 then notify(owner, "IGUI_MVM_Rent_Released", released, nil, true) end
 end
 
--- 每分鐘與開服：重算有鎖定或觀察中的車主。Economy 沒裝（ABSENT）＝不會再有租約資料，清掉所有租約鎖定。
--- ponytail: 每分鐘全表掃一次找鎖定（O.maintain 也是）；紀錄量大到有感時改成維護 owner→鎖定數 索引
+-- 每分鐘（牆鐘節流）與開服：重算有鎖定或觀察中的車主。Economy 沒裝（ABSENT）＝不會再有租約資料，清掉所有租約鎖定。
+-- EveryOneMinute 是遊戲分鐘（一天 1 小時的伺服器每 2.5 秒一次，全員睡覺快轉時約 31 ms），所以照真實時間最多 60 秒一次；
+-- 權益變更、解除綁定、轉讓、管理員釋出都直接呼叫 RL.evaluate，節流只讓租約時間到期最多晚 1 分鐘處理。
+-- 帳本 READY 前不記時間：開服時帳本還沒好，好了之後下一次觸發就算
+-- ponytail: 每 60 秒全表掃一次找鎖定（O.maintain 也是）；紀錄量大到一次掃描有感時改成維護 owner→鎖定數 索引
 function RL.minute()
     if O.R.status ~= "READY" then return end
+    local t = getTimestampMs()
+    if t - RL.lastMs < 60000 then return end
+    RL.lastMs = t
     local st = O.state()
     if E.status == "ABSENT" then
         for _, rec in pairs(st.recordsByOid) do
@@ -166,6 +173,6 @@ function RL.minute()
     for owner in pairs(owners) do RL.evaluate(owner) end
 end
 
--- 排在 S.minute（O.maintain 做載入判定）之後；開服這輪排在 E.init 之後（本檔 require Economy）。帳本還沒 READY 就等下一分鐘
+-- 排在 S.minute（O.maintain 做載入判定）之後；開服這輪排在 E.init 之後（本檔 require Economy）
 Events.EveryOneMinute.Add(RL.minute)
 if Events.OnServerStarted then Events.OnServerStarted.Add(RL.minute) end
