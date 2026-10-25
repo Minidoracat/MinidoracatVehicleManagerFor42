@@ -416,6 +416,7 @@
     "IGUI_MVM_Reason_FACTION_GONE": "Essa facção foi dissolvida ou renomeada. Use Compartilhar com facção.",
     "IGUI_MVM_Notice_FactionPaused": "A facção %1 mudou de líder; compartilhamento com a facção pausado para os veículos: %2. Restaure-o no topo de Meus veículos.",
     "IGUI_MVM_Notice_FactionGone": "A facção %1 foi dissolvida, renomeada ou recriada; compartilhamento com a facção pausado para os veículos: %2. Veja a janela da frota.",
+    "IGUI_MVM_Notice_TowDetached": "%2 assumiu o volante do veículo que rebocava seu %1, que foi solto.",
     "IGUI_MVM_FactionPaused_Title": "A facção %1 mudou de líder",
     "IGUI_MVM_FactionPaused_TitleOther": "Facção %1: compartilhamento pausado",
     "IGUI_MVM_FactionPaused_Count": "Compartilhamento com a facção pausado para os veículos: %1",

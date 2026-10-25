@@ -416,6 +416,7 @@
     "IGUI_MVM_Reason_FACTION_GONE": "해당 조직이 해산되었거나 이름이 바뀌었습니다. 대신 조직에 공유를 사용하세요.",
     "IGUI_MVM_Notice_FactionPaused": "조직 %1의 리더가 바뀌어 조직 공유가 일시 중지된 차량: %2. 내 차량 상단에서 복원하세요.",
     "IGUI_MVM_Notice_FactionGone": "조직 %1이(가) 해산, 이름 변경 또는 재생성되어 조직 공유가 일시 중지된 차량: %2. 차량 목록 창을 확인하세요.",
+    "IGUI_MVM_Notice_TowDetached": "%2 님이 내 %1을(를) 견인하던 차량의 운전석에 앉아 연결이 분리되었습니다.",
     "IGUI_MVM_FactionPaused_Title": "조직 %1의 리더가 바뀌었습니다",
     "IGUI_MVM_FactionPaused_TitleOther": "조직 %1: 공유 일시 중지됨",
     "IGUI_MVM_FactionPaused_Count": "조직 공유가 일시 중지된 차량: %1",

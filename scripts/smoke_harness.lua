@@ -269,7 +269,11 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:isDriver(chr) return self.seats[0] == chr end
     function v:exit(chr) for i, c in pairs(self.seats) do if c == chr then self.seats[i] = nil end end chr.vehicle = nil end
     function v:getVehicleTowing() return self.towing end
-    function v:breakConstraint() self.broken = (self.broken or 0) + 1 end
+    function v:breakConstraint() -- 同 Java：兩端的拖掛都解開（BaseVehicle.breakConstraint）
+        self.broken = (self.broken or 0) + 1
+        if self.towing then self.towing.towedBy = nil; self.towing = nil end
+        if self.towedBy then self.towedBy.towing = nil; self.towedBy = nil end
+    end
     function v:getId() return self.id end
     function v:getSqlId() return self.sqlId end
     function v:getKeyId() return self.keyId end
@@ -2265,14 +2269,26 @@ local bypass = 0
 for i = logs + 1, #logLines do if logLines[i]:find("ADMIN_BYPASS", 1, true) then bypass = bypass + 1 end end
 check(bypass == 0 and lastEnforcement(ADM) == nil, "越權中的 admin 在車上：watchdog 不執法、也不洗 ADMIN_BYPASS")
 car.seats[0] = nil; ADM.vehicle = nil
+(function() -- 主 chunk 區域變數已滿 200：拖掛對帳（解開拖掛、通知被拖車的車主）
+local function notices() local n = 0; for _, m in ipairs(outbox.owner) do if m.command == "notice" then n = n + 1 end end; return n end
+local _, r = O.lookup(car)
+local n0 = notices()
 local tower = vehicle(2, 202, 5002, "Base.CarNormal", 1, 1)
 tower.seats[0] = ST; ST.vehicle = tower; tower.towing = car
 nowMs = nowMs + 1000; G.watchdog()
-check(tower.broken == 1, "陌生人拖走受保護車 → breakConstraint")
+local note = lastOf(OW, "notice")
+check(tower.broken == 1 and tower.towing == nil, "陌生人拖走受保護車 → breakConstraint")
+check(notices() == n0 + 1 and note.key == "IGUI_MVM_Notice_TowDetached" and note.oid == r.oid and note.who == "stranger"
+    and note.bad == true, "解開拖掛時通知被拖車的車主：哪台車、誰坐上了牽引車")
 local ownTow = vehicle(3, 303, 5003, "Base.CarNormal", 1, 1)
 ownTow.seats[0] = OW; OW.vehicle = ownTow; ownTow.towing = car
 nowMs = nowMs + 1000; G.watchdog()
-check(ownTow.broken == nil, "owner 拖自己的車不解除")
+check(ownTow.broken == nil and notices() == n0 + 1, "owner 拖自己的車不解除、不通知")
+r.lock = "RENT"
+nowMs = nowMs + 1000; G.watchdog()
+check(ownTow.broken == 1 and notices() == n0 + 1, "車主拖自己被租用鎖定的車：照樣解開，但不通知自己")
+r.lock = nil
+end)();
 -- coverage：100 人、每 0.25 秒最多 25 人，1 秒（一個週期）內全數檢查；0.25 秒內不重跑
 boot()
 for i = 1, 100 do player("p" .. i, 1, 1) end

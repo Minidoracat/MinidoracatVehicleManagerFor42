@@ -416,6 +416,7 @@
     "IGUI_MVM_Reason_FACTION_GONE": "Ta frakcja została rozwiązana lub przemianowana. Zamiast tego użyj \"Udostępnij frakcji\".",
     "IGUI_MVM_Notice_FactionPaused": "Frakcja %1 zmieniła lidera; udostępnianie frakcji wstrzymane dla pojazdów: %2. Przywróć je na górze zakładki Moje pojazdy.",
     "IGUI_MVM_Notice_FactionGone": "Frakcja %1 została rozwiązana, przemianowana lub utworzona na nowo; udostępnianie frakcji wstrzymane dla pojazdów: %2. Zobacz okno floty.",
+    "IGUI_MVM_Notice_TowDetached": "%2 usiadł(a) za kierownicą pojazdu holującego twój pojazd %1, więc go odczepiono.",
     "IGUI_MVM_FactionPaused_Title": "Frakcja %1 zmieniła lidera",
     "IGUI_MVM_FactionPaused_TitleOther": "Frakcja %1: udostępnianie wstrzymane",
     "IGUI_MVM_FactionPaused_Count": "Udostępnianie frakcji wstrzymane dla pojazdów: %1",

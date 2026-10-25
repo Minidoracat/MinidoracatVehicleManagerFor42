@@ -33,6 +33,7 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [*] install/remove AutoDrive GPS and autopilot modules, or take the headphones out of the car radio
 [/list]
 [*] [b]When blocked[/b]: they see "This vehicle is claimed; you need the owner's share to use it" and the car stays as it was.
+[*] [b]While another car tows it[/b]: if someone without tow permission gets in the driver's seat of the car towing yours, your car is unhitched and stays where it is, and you get a notice. The towing car isn't protected unless it's claimed too, so it can be driven away.
 [*] [b]Who owns it[/b]: right-click next to the car and open Vehicle Manager: the first line shows the owner's account name; for cars shared with you or with everyone, the next line lists what you can do.
 [*] [b]Weapons aren't blocked[/b]: to keep a parked car safe from axes and guns, see "Damage guard".
 [*] [b]No key needed[/b]: owners can unlock, open doors (without the alarm) and start the car without a physical key (servers can turn this off).
@@ -134,6 +135,7 @@ Set by admins:
 [*] [b]What it records[/b]:
 [list]
 [*] who hit which of your cars and whether damage guard stopped it
+[*] who got in the car towing yours, which unhitched your car
 [*] repairs done by damage guard
 [*] cars that lost damage guard because your guard slots went down
 [*] rented slots locking, unlocking or unclaiming cars

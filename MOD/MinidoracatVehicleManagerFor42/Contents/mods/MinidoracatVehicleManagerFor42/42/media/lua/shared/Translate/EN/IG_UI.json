@@ -416,6 +416,7 @@
     "IGUI_MVM_Reason_FACTION_GONE": "That faction was disbanded or renamed. Use Share with faction instead.",
     "IGUI_MVM_Notice_FactionPaused": "Faction %1 changed leader; faction sharing paused for vehicles: %2. Restore it at the top of My vehicles.",
     "IGUI_MVM_Notice_FactionGone": "Faction %1 was disbanded, renamed or recreated; faction sharing paused for vehicles: %2. See the fleet window.",
+    "IGUI_MVM_Notice_TowDetached": "%2 got in the driver's seat of the vehicle towing your %1, so it was unhitched.",
     "IGUI_MVM_FactionPaused_Title": "Faction %1 changed leader",
     "IGUI_MVM_FactionPaused_TitleOther": "Faction %1: sharing paused",
     "IGUI_MVM_FactionPaused_Count": "Faction sharing paused for vehicles: %1",

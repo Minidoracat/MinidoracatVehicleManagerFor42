@@ -416,6 +416,7 @@
     "IGUI_MVM_Reason_FACTION_GONE": "元の派閥は解散または名前変更されました。「派閥と共有」を使ってください",
     "IGUI_MVM_Notice_FactionPaused": "派閥「%1」のリーダーが変わり、派閥と共有していた %2 台の共有を一時停止しました。車両一覧の「自分の車両」の一番上から再開できます",
     "IGUI_MVM_Notice_FactionGone": "派閥「%1」が解散・名前変更・再作成され、派閥と共有していた %2 台の共有を一時停止しました。車両一覧で再開するか、共有し直してください",
+    "IGUI_MVM_Notice_TowDetached": "%2 があなたの「%1」を牽引中の車両の運転席に座ったため、連結を外しました",
     "IGUI_MVM_FactionPaused_Title": "派閥「%1」のリーダーが変わりました",
     "IGUI_MVM_FactionPaused_TitleOther": "派閥「%1」の共有は一時停止中",
     "IGUI_MVM_FactionPaused_Count": "%1 台の派閥共有が一時停止中",

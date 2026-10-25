@@ -299,15 +299,20 @@ local function occupantCheck(player)
         end
         return
     end
-    -- 拖掛對帳：駕駛拖著受保護車卻沒有 TOW → 解除（事後處置，同原版 detachTrailer）
+    -- 拖掛對帳：駕駛拖著受保護車卻沒有 TOW → 解除（事後處置，同原版 detachTrailer），並通知被拖車的車主是誰坐上了牽引車
+    -- （車主自己被擋〔租用鎖定〕不通知）。解開後就不再拖著，同一次拖掛只會通知一次
     local towed = seat == 0 and v:getVehicleTowing() or nil
     if towed ~= nil then
         local tok, _, trec = O.canUse(player, towed, "TOW", { silent = true })
         if trec ~= nil and not tok then
+            local who = O.principal(player)
             v:breakConstraint(true, false)
-            O.audit("WARN", "DENY", { actor = O.principal(player), role = "TOW", oid = trec.oid, owner = trec.ownerUser,
+            O.audit("WARN", "DENY", { actor = who, role = "TOW", oid = trec.oid, owner = trec.ownerUser,
                 reason = "TOW_DETACHED" })
             enforce(player, "TOW", "NOT_AUTHORIZED", trec.oid)
+            if trec.ownerUser and trec.ownerUser ~= who then
+                S.notify(trec.ownerUser, { key = "IGUI_MVM_Notice_TowDetached", oid = trec.oid, who = who, bad = true })
+            end
         end
     end
 end
