@@ -16,6 +16,22 @@ local function ui()
 end
 MVM.ui = ui
 
+-- 更新概要（框架 rev 24，WhatsNew）：玩家更新後第一次進遊戲，右上角跳一則本版重點。發布列車的 ready 用 regex
+-- 讀這段：四欄寫字面字串、一欄一行；發版寫了新概要才把 since 改成本版（家族 conventions.md「遊戲內更新概要」）。
+pcall(require, "MinidoracatUI/WhatsNew")
+do
+    local UI = ui()
+    if UI and type(UI.API_REVISION) == "number" and UI.API_REVISION >= 24
+        and UI.CAPABILITIES and UI.CAPABILITIES.whatsNew and UI.WhatsNew then
+        UI.WhatsNew.register({
+            modId = "MinidoracatVehicleManagerFor42",
+            since = "0.10.0",
+            name = "IGUI_MVM_SourceName",
+            text = "IGUI_MVM_WhatsNew",
+        })
+    end
+end
+
 -- 玩家通知走框架 Toast；只有能力缺席（離線 harness、舊框架）才退回原版頭頂文字。錯誤停留久一點（含怎麼辦，要讀得完）。
 -- 最多 4 行：Toast 寬度固定（文字 284px），英文「發生什麼＋怎麼辦」一行約 36 字，3 行會把怎麼辦截成省略號（E2E admin-layout toasts）
 -- 車隊視窗開著時通知讓開（框架 rev 12 避開區，Toast 每幀問一次矩形）：錯誤通知停 8 秒，常常蓋到剛打開的視窗右上角

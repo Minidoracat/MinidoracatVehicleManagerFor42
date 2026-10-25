@@ -417,6 +417,7 @@
     "IGUI_MVM_Notice_FactionPaused": "%1 grubunun lideri değişti; şu araçlar için grup paylaşımı duraklatıldı: %2. Araçlarım sekmesinin üst kısmından geri yükle.",
     "IGUI_MVM_Notice_FactionGone": "%1 grubu dağıtıldı, yeniden adlandırıldı veya yeniden kuruldu; şu araçlar için grup paylaşımı duraklatıldı: %2. Filo penceresine bak.",
     "IGUI_MVM_Notice_TowDetached": "%2, senin %1 aracını çeken aracın direksiyonuna geçti; aracın çözüldü.",
+    "IGUI_MVM_WhatsNew": "Aracını çeken araca kimin bindiğini artık görürsün. Hasar koruması artık hiçbir aracı atlamıyor.",
     "IGUI_MVM_FactionPaused_Title": "%1 grubunun lideri değişti",
     "IGUI_MVM_FactionPaused_TitleOther": "%1 grubu: paylaşım duraklatıldı",
     "IGUI_MVM_FactionPaused_Count": "Grup paylaşımı duraklatılan araçlar: %1",

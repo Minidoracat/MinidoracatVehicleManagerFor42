@@ -417,6 +417,7 @@
     "IGUI_MVM_Notice_FactionPaused": "Fraktion %1 hat einen neuen Anführer; Teilen mit Fraktion pausiert für Fahrzeuge: %2. Stelle es oben unter \"Meine Fahrzeuge\" wieder her.",
     "IGUI_MVM_Notice_FactionGone": "Fraktion %1 wurde aufgelöst, umbenannt oder neu gegründet; Teilen mit Fraktion pausiert für Fahrzeuge: %2. Siehe Fuhrpark-Fenster.",
     "IGUI_MVM_Notice_TowDetached": "Dein Fahrzeug %1 wurde abgehängt: %2 hat sich ans Steuer des Zugfahrzeugs gesetzt.",
+    "IGUI_MVM_WhatsNew": "Du erfährst, wer ins Fahrzeug steigt, das deins zieht. Der Schadensschutz lässt kein Fahrzeug mehr aus.",
     "IGUI_MVM_FactionPaused_Title": "Fraktion %1 hat einen neuen Anführer",
     "IGUI_MVM_FactionPaused_TitleOther": "Fraktion %1: Teilen pausiert",
     "IGUI_MVM_FactionPaused_Count": "Teilen mit Fraktion pausiert für Fahrzeuge: %1",

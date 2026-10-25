@@ -417,6 +417,7 @@
     "IGUI_MVM_Notice_FactionPaused": "阵营「%1」换了领袖，你分享给阵营的 %2 辆车已暂停。到车队窗口「我的车」最上方恢复",
     "IGUI_MVM_Notice_FactionGone": "阵营「%1」已解散、改名或重新建立，你分享给它的 %2 辆车已暂停阵营分享。到车队窗口恢复，或重新分享给阵营",
     "IGUI_MVM_Notice_TowDetached": "%2 坐上了拖曳你「%1」那辆车的驾驶座，你的车已自动解除拖曳、留在原地",
+    "IGUI_MVM_WhatsNew": "有人坐上拖着你绑定车的那辆车时，现在会通知你是谁；附近绑定车很多时，防破坏也会每辆都开。",
     "IGUI_MVM_FactionPaused_Title": "阵营「%1」换了领袖",
     "IGUI_MVM_FactionPaused_TitleOther": "阵营「%1」的分享已暂停",
     "IGUI_MVM_FactionPaused_Count": "%1 辆车的阵营分享已暂停",

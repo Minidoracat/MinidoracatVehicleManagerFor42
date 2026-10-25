@@ -417,6 +417,7 @@
     "IGUI_MVM_Notice_FactionPaused": "La facción %1 cambió de líder; uso compartido con la facción en pausa para los vehículos: %2. Restáuralo arriba en Mis vehículos.",
     "IGUI_MVM_Notice_FactionGone": "La facción %1 se disolvió, se renombró o se volvió a crear; uso compartido con la facción en pausa para los vehículos: %2. Consulta la ventana de flota.",
     "IGUI_MVM_Notice_TowDetached": "%2 se puso al volante del vehículo que remolcaba tu %1, que quedó desenganchado.",
+    "IGUI_MVM_WhatsNew": "Sabrás quién sube al vehículo que remolca el tuyo. La protección contra daños ya no omite vehículos.",
     "IGUI_MVM_FactionPaused_Title": "La facción %1 cambió de líder",
     "IGUI_MVM_FactionPaused_TitleOther": "Facción %1: uso compartido en pausa",
     "IGUI_MVM_FactionPaused_Count": "Uso compartido con la facción en pausa para los vehículos: %1",
