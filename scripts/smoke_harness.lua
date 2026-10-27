@@ -6100,6 +6100,40 @@ check(API.startSummon(OW, car) == true, "車主召喚")
 AD.sessions[car] = { by = "someone", phase = "driving" } -- 召喚結束後別人接著召喚同一台
 dog()
 check(AD.stop == nil and G.R.summons[OW] == nil, "召喚已換人：不替別人的召喚判權限，清掉舊紀錄")
+-- SP 分割畫面第 2 位：S.players 只有第 0 位，重驗不能靠它
+serverMode = false
+local keepReceive = MVM.clientReceive
+MVM.clientReceive = function() end
+local P1 = player("sp1", 1, 1)
+P1.num = 1
+r.grants = { { user = "local:1", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(P1, car) == true and G.R.summons[P1] == car.id, "SP 第 2 位玩家（local:1，有 DRIVE）召喚")
+r.grants = {}
+dog()
+check(AD.stop == "AUTH" and G.R.summons[P1] == nil, "SP 第 2 位玩家途中失去 DRIVE：照樣以 AUTH 停掉")
+MVM.clientReceive = keepReceive
+serverMode = true
+-- stopSummon 沒停成：不通知、不寫稽核，下一秒再試；summonInfo 出錯：不卡住巡查，丟掉這筆
+r.grants = { { user = "sdrv", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true, "成員再召喚")
+r.grants = {}
+local stop = API.stopSummon
+API.stopSummon = function() return false end
+e0 = GH.count(DR, "enforcement")
+dog()
+check(G.R.summons[DR] == car.id and GH.count(DR, "enforcement") == e0, "stopSummon 沒停成：不通知、保留紀錄")
+API.stopSummon = stop
+dog()
+check(AD.stop == "AUTH" and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1, "下一秒再試：停掉並通知")
+r.grants = { { user = "sdrv", bits = AC.DRIVE } }
+check(API.startSummon(DR, car) == true, "成員又召喚")
+local info = API.summonInfo
+API.summonInfo = function() error("boom") end
+local okDog = pcall(dog)
+API.summonInfo = info
+check(okDog and G.R.summons[DR] == nil, "summonInfo 出錯：巡查不中斷，丟掉這筆")
 MinidoracatAutoDriveAPI = nil
 end)();
 out("")

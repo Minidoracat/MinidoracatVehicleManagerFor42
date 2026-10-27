@@ -130,9 +130,11 @@ local function hasGlass(v)
     return sq ~= nil and sq:getBrokenGlass() ~= nil
 end
 
--- 記基準並把 durability 拉高。已是 BIG 的零件（布防中重記）沿用舊基準的原值
+-- 記基準並把 durability 拉高。已是 BIG 的零件（布防中重記）沿用舊基準的原值。
+-- 基準先掛上 e.base：迴圈中途出錯時，disarm 還寫得回已經拉高的零件
 local function capture(e)
     local v, old, base = e.v, e.base or {}, {}
+    e.base = base
     for i = 0, v:getPartCount() - 1 do
         local part = v:getPartByIndex(i)
         local id, item, dur = part:getId(), part:getInventoryItem(), part:getDurability()
@@ -141,7 +143,7 @@ local function capture(e)
             win = part:getWindow() ~= nil, dur = dur }
         if dur > 0 and part:getDurability() < P.BIG then part:setDurability(P.BIG) end
     end
-    e.base, e.glass0 = base, hasGlass(v)
+    e.glass0 = hasGlass(v)
 end
 
 -- 只寫回仍是 BIG 的（換過件的 durability 已被 doInventoryItemStats 重設成新件的值）

@@ -309,9 +309,10 @@ Events.EveryOneMinute.Add(function() G.install("recheck") end)
 -- ------------------------------------------------------------------ watchdog ---
 -- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人。
 -- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上的人解
--- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查
+-- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查。召喚者另外每秒重驗（summonCheck）
 
--- 召喚途中召喚者沒有 DRIVE 了（收回分享、租用鎖定、轉讓、陣營暫停、途中被別人綁定）：停掉召喚，同上車要 DRIVE
+-- 召喚途中召喚者沒有 DRIVE 了（收回分享、租用鎖定、轉讓、陣營暫停、途中被別人綁定）：停掉召喚，同上車要 DRIVE。
+-- 每秒走一次放行過的召喚者（不經 S.players：SP 那份只有第 0 位，分割畫面其他位置也召喚得了）
 local function summonCheck(player)
     local vid = R.summons[player]
     local api = MinidoracatAutoDriveAPI
@@ -320,16 +321,15 @@ local function summonCheck(player)
     if not info or info.by ~= player:getUsername() then R.summons[player] = nil; return end -- 已結束或換人召喚（只對 session，不是授權）
     local ok, reason, rec = O.canUse(player, v, "DRIVE", { silent = true })
     if ok then return end
+    if type(api.stopSummon) ~= "function" or api.stopSummon(v, "AUTH") ~= true then return end -- 沒停成：下一秒再試
     R.summons[player] = nil
-    if type(api.stopSummon) == "function" then api.stopSummon(v, "AUTH") end
     enforce(player, "SUMMON", reason, rec and rec.oid)
     O.audit("WARN", "SUMMON_STOPPED", { actor = O.principal(player), oid = rec and rec.oid, owner = rec and rec.ownerUser, reason = reason })
 end
 
 local function occupantCheck(player)
     local v = player:getVehicle()
-    if v == nil then return summonCheck(player) end
-    if O.principal(player) == nil then return end
+    if v == nil or O.principal(player) == nil then return end
     local seat = v:getSeat(player)
     local ok, reason, rec = O.canUse(player, v, seat == 0 and "DRIVE" or "PASSENGER", { silent = true })
     if rec ~= nil and not ok then
@@ -383,14 +383,19 @@ function G.watchdog()
             occupantCheck(player)
         end
     end
-    -- 離線玩家的到期紀錄每秒清一次（留著只佔記憶體，不影響誰被查）
+    -- 每秒：召喚者重驗；離線玩家的到期紀錄清掉（留著只佔記憶體，不影響誰被查）
     if t - R.lastPrune < 1000 then return end
     R.lastPrune = t
+    local summoners = {}
+    for player in pairs(R.summons) do summoners[#summoners + 1] = player end
+    for _, player in ipairs(summoners) do
+        if not pcall(summonCheck, player) then R.summons[player] = nil end -- 其他 MOD 的函式出錯：不再重驗這筆，不卡住巡查
+    end
     local gone = nil
     for player, at in pairs(R.seen) do
         if at ~= t then gone = gone or {}; gone[#gone + 1] = player end
     end
-    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player], R.summons[player] = nil, nil, nil end
+    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player] = nil, nil end
 end
 
 Events.OnTick.Add(G.watchdog)
