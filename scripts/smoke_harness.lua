@@ -6077,6 +6077,17 @@ API.summonInfo = function(v) return AD.sessions[v] end
 P.discover(car)
 GH.tick()
 check(GH.armed(car), "重新追蹤：照常布防")
+-- 布防中重記（touch）時零件讀值出錯：走過與沒走到的零件都要寫回原值
+P.touch(car)
+local getCond = pt.WindowFrontLeft.getCondition
+pt.WindowFrontLeft.getCondition = function() error("boom") end
+GH.tick()
+pt.WindowFrontLeft.getCondition = getCond
+check(P.R.tracked[91] == nil and pt.Engine.dur == 5 and pt.WindowFrontLeft.dur == 3 and pt.DoorFrontLeft.dur == 4,
+    "重記中途出錯：停止追蹤，走過與沒走到的零件 durability 都寫回")
+P.discover(car)
+GH.tick()
+check(GH.armed(car) and pt.DoorFrontLeft.dur == P.BIG, "重新追蹤：照常布防")
 
 -- 召喚途中重驗 DRIVE（watchdog）：分享收回就以 AUTH 停掉召喚、通知召喚者
 API.startSummon = function(p, v) AD.sessions[v] = { by = p:getUsername(), phase = "starting" }; return true end
@@ -6127,13 +6138,43 @@ check(G.R.summons[DR] == car.id and GH.count(DR, "enforcement") == e0, "stopSumm
 API.stopSummon = stop
 dog()
 check(AD.stop == "AUTH" and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1, "下一秒再試：停掉並通知")
+-- summonInfo 出錯：不卡住同一輪的其他召喚者，紀錄留著；恢復後撤權照樣停
+local car2 = GH.car(93)
+local r2 = rec(claim(OW, car2).oid)
 r.grants = { { user = "sdrv", bits = AC.DRIVE } }
-check(API.startSummon(DR, car) == true, "成員又召喚")
+r2.grants = { { user = "strk", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true and API.startSummon(TR, car2) == true, "兩位成員各召喚一台")
+r.grants, r2.grants = {}, {}
 local info = API.summonInfo
-API.summonInfo = function() error("boom") end
+API.summonInfo = function(v) if v == car then error("boom") end return AD.sessions[v] end
+local mlog, logged = MVM.log, {}
+MVM.log = function(msg) logged[#logged + 1] = tostring(msg) end
 local okDog = pcall(dog)
+MVM.log = mlog
+local failedLogs = table.concat(logged, "\n")
+check(okDog and G.R.summons[DR] == car.id and AD.sessions[car] ~= nil and AD.sessions[car2] == nil and G.R.summons[TR] == nil
+    and failedLogs:find("summon recheck failed vid=91", 1, true) ~= nil and failedLogs:find("summon recheck failed vid=93", 1, true) == nil,
+    "一台的 summonInfo 出錯：巡查不中斷、另一位照樣停掉，出錯那筆留著並記 log")
 API.summonInfo = info
-check(okDog and G.R.summons[DR] == nil, "summonInfo 出錯：巡查不中斷，丟掉這筆")
+dog()
+check(AD.stop == "AUTH" and AD.sessions[car] == nil and G.R.summons[DR] == nil, "恢復後下一秒：照樣以 AUTH 停掉")
+-- 停止時 onEnd 當場替同一人開另一台：新的那台照樣受重驗
+r.grants, r2.grants = { { user = "sdrv", bits = AC.DRIVE } }, { { user = "sdrv", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true, "成員召喚第一台")
+API.stopSummon = function(v, code)
+    AD.stop, AD.sessions[v] = code, nil
+    if v == car then API.startSummon(DR, car2) end
+    return true
+end
+r.grants = {}
+dog()
+API.stopSummon = stop
+check(AD.stop == "AUTH" and G.R.summons[DR] == car2.id and AD.sessions[car2] ~= nil, "停止回呼裡開的新召喚：紀錄不被舊的停止清掉")
+r2.grants = {}
+dog()
+check(AD.sessions[car2] == nil and G.R.summons[DR] == nil, "新的那台失權：照樣停掉")
 MinidoracatAutoDriveAPI = nil
 end)();
 out("")

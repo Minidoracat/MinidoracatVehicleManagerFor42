@@ -34,8 +34,9 @@ local INTENTS_PER_ACTOR = 16
 -- 每人照沙盒 WatchdogIntervalSeconds 到期；到期後最慢 0.25 秒內查到（舊做法 0.1 秒）
 local WATCHDOG_MS, WATCHDOG_BATCH = 250, 25
 
--- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）；summons：IsoPlayer → 經本 MOD 放行的召喚車 id
-local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, summons = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
+-- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）；summons：IsoPlayer → 經本 MOD 放行的召喚車 id；
+-- summonErrs：重驗出錯已記過 log 的車 id
+local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, summons = {}, summonErrs = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
 G.R = R
 
 local function now() return getTimestampMs() end
@@ -321,8 +322,11 @@ local function summonCheck(player)
     if not info or info.by ~= player:getUsername() then R.summons[player] = nil; return end -- 已結束或換人召喚（只對 session，不是授權）
     local ok, reason, rec = O.canUse(player, v, "DRIVE", { silent = true })
     if ok then return end
-    if type(api.stopSummon) ~= "function" or api.stopSummon(v, "AUTH") ~= true then return end -- 沒停成：下一秒再試
-    R.summons[player] = nil
+    R.summons[player] = nil -- 先清：停止時的 onEnd 可能當場替同一人開新的召喚（wrapSummon 記下新的那台）
+    if type(api.stopSummon) ~= "function" or api.stopSummon(v, "AUTH") ~= true then
+        if R.summons[player] == nil then R.summons[player] = vid end -- 沒停成：下一秒再試
+        return
+    end
     enforce(player, "SUMMON", reason, rec and rec.oid)
     O.audit("WARN", "SUMMON_STOPPED", { actor = O.principal(player), oid = rec and rec.oid, owner = rec and rec.ownerUser, reason = reason })
 end
@@ -389,7 +393,15 @@ function G.watchdog()
     local summoners = {}
     for player in pairs(R.summons) do summoners[#summoners + 1] = player end
     for _, player in ipairs(summoners) do
-        if not pcall(summonCheck, player) then R.summons[player] = nil end -- 其他 MOD 的函式出錯：不再重驗這筆，不卡住巡查
+        local vid = R.summons[player]
+        local ok, err = pcall(summonCheck, player)
+        if not ok then -- 其他 MOD 的函式出錯：不卡住巡查，紀錄留著下一秒再試，同一台只記一次 log
+            if R.summons[player] == nil then R.summons[player] = vid end
+            if not R.summonErrs[vid] then
+                R.summonErrs[vid] = true
+                MVM.log("summon recheck failed vid=" .. tostring(vid) .. ": " .. tostring(err))
+            end
+        end
     end
     local gone = nil
     for player, at in pairs(R.seen) do
