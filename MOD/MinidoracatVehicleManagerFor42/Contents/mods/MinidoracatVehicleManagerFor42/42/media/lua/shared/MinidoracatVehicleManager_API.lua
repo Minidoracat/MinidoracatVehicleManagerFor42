@@ -153,6 +153,6 @@ end
 -- 另外兩個公開介面不在這裡定義（各在用得到的那一端；其他 MOD 用 type(...) == "function" 偵測）：
 -- listOwned(playerNum) -> { { oid, script, name?, keyId?, x?, y?, z?, ageMs?, mine }, … } 或 nil（還沒收到車隊資料）
 --   client only（Client.lua）：這位玩家車隊裡看得到的車，只供 UX。
--- canTrackKeyId(player, keyId) -> allowed, reasonCode
---   server only（OwnershipSystem.lua）：用 keyId 問 TRACK、不需要車子載入，規則同 canUse(…, "TRACK")；沒綁定回 true, "UNCLAIMED"；
---   不寫越權稽核，可以輪詢。
+-- canTrackKeyId(player, keyId, script?) -> allowed, reasonCode
+--   server only（OwnershipSystem.lua）：用 keyId（給 script 時只看同車型）問 TRACK、不需要車子載入，規則同 canUse(…, "TRACK")；
+--   沒綁定回 true, "UNCLAIMED"；不寫越權稽核，可以輪詢。

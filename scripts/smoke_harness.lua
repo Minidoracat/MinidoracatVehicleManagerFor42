@@ -5904,11 +5904,12 @@ for round = 1, 2 do
             total = total + 1
             local a1, w1 = O.canUse(actor, v, "TRACK")
             local a2, w2 = API.canTrackKeyId(actor, v.keyId)
-            if a1 ~= a2 or w1 ~= w2 then same = false end
+            local a3, w3 = API.canTrackKeyId(actor, v.keyId, v.script) -- Tesla's call: with the model
+            if a1 ~= a2 or w1 ~= w2 or a1 ~= a3 or w1 ~= w3 then same = false end
         end
     end
 end
-check(same and total == 20, "車主／成員／陌生人／管理員（越權開關）／陣營 × 一般與隔離紀錄：和 canUse(TRACK) 結果與原因相同")
+check(same and total == 20, "車主／成員／陌生人／管理員（越權開關）／陣營 × 一般與隔離紀錄：和 canUse(TRACK) 結果與原因相同（給不給車型都一樣）")
 local n0 = #logLines
 for _ = 1, 3 do API.canTrackKeyId(AD, car.keyId) end
 local bypass = 0
@@ -5932,6 +5933,17 @@ r.lock = nil
 local twin = vehicle(73, 9703, 97001, "Base.CarNormal", 1, 1)
 local rt = rec(claim(MB, twin).oid)
 check(rt and not API.canTrackKeyId(OW, 97001) and not API.canTrackKeyId(MB, 97001), "keyId 撞號：只過其中一筆的人都被拒")
+-- Autotsar 載過車的拖車紀錄留著被載車的 keyId（KEYID_TOW）：給車型就只看那台車，不被別人的拖車擋下
+O.setState(r2, "ACTIVE", "TEST")
+local trl = vehicle(74, 9704, 97002, "Base.Trailer", 1, 1)
+local rtl = rec(claim(ST, trl).oid)
+ok, why = API.canTrackKeyId(OW, 97002, "Base.CarNormal")
+check(rtl and not API.canTrackKeyId(OW, 97002) and ok and why == "OWNER" and select(2, API.canTrackKeyId(ST, 97002, "Base.Trailer")) == "OWNER"
+    and not API.canTrackKeyId(ST, 97002, "Base.CarNormal"), "同 keyId 不同車型（拖車載過車）：給車型只判那個車型的紀錄，各自照權限")
+ok, why = API.canTrackKeyId(ST, 97003, "Base.CarNormal")
+check(ok and why == "UNCLAIMED" and select(2, API.canTrackKeyId(OW, 97002, 5)) == "BAD_TARGET"
+    and select(2, API.canTrackKeyId(OW, 97002, "CarNormal")) == "BAD_TARGET" and select(2, API.canTrackKeyId(OW, 97002, "")) == "BAD_TARGET",
+    "給車型也一樣：沒紀錄 UNCLAIMED；車型不是字串、不是完整車型（短名、空字串）拒絕，不會變成沒綁定放行")
 
 -- 客戶端：餵伺服器送給車主的真快照（S.row 帶 keyId）
 local savedIsClient = isClient

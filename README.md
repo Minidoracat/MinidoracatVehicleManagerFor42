@@ -142,9 +142,10 @@ Steam 伺服器上，本 MOD 會確認「帳號名稱」和「登入的 Steam �
 全域表 `MinidoracatVehicleManagerAPI`（不必寫進 `require=`；用 `type(api.<名稱>) == "function"` 偵測）。授權只以伺服器的回答為準，客戶端的只供介面顯示。
 
 - `canUse(player, vehicle, action, context?)` → `allowed, reason`：伺服器是權威判斷；`action` 是 `PASSENGER`、`DRIVE`、`CARGO`、`FUEL`、`REPAIR`、`SALVAGE`、`TOW`、`TRACK`、`MANAGE`；沒綁定的車回 `true, "UNCLAIMED"`。`context.silent = true` 時管理員越權不寫稽核（每秒或每幾秒輪詢用）。客戶端版本只看自己收到的資料。
-- `canTrackKeyId(player, keyId)` → `allowed, reason`（伺服器）：用車鑰匙編號判 `TRACK`，不需要車子載入，規則和 `canUse(…, "TRACK")` 相同（車主、分享、陣營、租用到期鎖定、管理員越權）；沒綁定回 `true, "UNCLAIMED"`。不寫越權稽核，可以輪詢。
+- `canTrackKeyId(player, keyId, script?)` → `allowed, reason`（伺服器）：用車鑰匙編號判 `TRACK`，不需要車子載入，規則和 `canUse(…, "TRACK")` 相同（車主、分享、陣營、租用到期鎖定、管理員越權）；沒綁定回 `true, "UNCLAIMED"`。`script` 是完整車型（`vehicle:getScriptName()`，例 `Base.CarNormal`；短名回 `false, "BAD_TARGET"`），給了就只看那個車型的紀錄，建議一定要給：拖車載過車之後，拖車的紀錄會留著那台車的車鑰匙編號。同一個編號（與車型）有兩筆以上紀錄時，要每一筆都准才算准。不寫越權稽核，可以輪詢。
 - `listOwned(playerNum)` → 陣列或 `nil`（客戶端）：這位玩家車隊裡看得到、還沒結束的車，每筆 `{ oid, script, name?, keyId?, x?, y?, z?, ageMs?, mine }`（`script` 是完整車型，例 `Base.CarNormal`；位置只給車主與有 `TRACK` 的人，有 10 秒內的即時位置就用它，`ageMs` 是位置多舊；`mine` 是自己綁的）。只讀已收到的車隊資料，不另外向伺服器查詢；還沒收到時回 `nil`。
 - `getLocalClaimProjection(playerNum, vehicle)`（客戶端）：這台已載入車輛在本機車隊資料裡的那一列；別人的車回 `role = "OTHER"` 的簡表，沒綁定回 `nil`。
+- `MinidoracatVehicleManager.clientMenuHooks`（客戶端）：陣列，放 `function(player, sub, vehicle, row)`；本 MOD 建車外右鍵「車輛管理」子選單（只給第一位本機玩家）時，在自己的選項之後依序呼叫，`sub` 是那個子選單、`row` 是 `getLocalClaimProjection` 的結果（可能是 `nil`）。在 `OnGameStart` 之後再加，避免載入順序問題。
 
 ### 發布到 Workshop
 

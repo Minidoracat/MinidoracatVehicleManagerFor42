@@ -18,7 +18,7 @@
 
 - **其他 MOD 可以查你車隊裡的車與「查看位置」權限**：給 Tesla Collection 這類 MOD 用：它們的介面可以列出你車隊裡看得到的車（自己綁的與分享給你的），也能在車不在已載入的區域時，照本 MOD 的規則確認你還有沒有查看位置的權限。分享被收回、別人綁的車照樣查不到；本 MOD 自己的畫面與保護沒有改變。
 
-> 技術要點：伺服器的 `MinidoracatVehicleManagerAPI.canTrackKeyId(player, keyId)` 用車鑰匙編號判 TRACK，不需要車子載入，結果和 `canUse(…, "TRACK")` 相同（沒綁定回 `true, "UNCLAIMED"`），不寫管理員越權稽核，可以輪詢；客戶端的 `MinidoracatVehicleManagerAPI.listOwned(playerNum)` 只讀已收到的車隊資料、不另外向伺服器查詢，只供介面顯示。車隊資料每一列多帶車鑰匙編號。
+> 技術要點：伺服器的 `MinidoracatVehicleManagerAPI.canTrackKeyId(player, keyId, script?)` 用車鑰匙編號（給車型時只看那個車型）判 TRACK，不需要車子載入，結果和 `canUse(…, "TRACK")` 相同（沒綁定回 `true, "UNCLAIMED"`；同一個編號有兩筆以上紀錄時每筆都要准），不寫管理員越權稽核，可以輪詢；客戶端的 `MinidoracatVehicleManagerAPI.listOwned(playerNum)` 只讀已收到的車隊資料、不另外向伺服器查詢，只供介面顯示。車隊資料每一列多帶車鑰匙編號。介面清單見 README「給其他 MOD 的介面」。
 
 ## [42.21.0-0.10.2] - 2026-10-27
 
