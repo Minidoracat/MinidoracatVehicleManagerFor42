@@ -18,7 +18,11 @@
 
 - **其他 MOD 可以查你車隊裡的車與「查看位置」權限**：給 Tesla Collection 這類 MOD 用：它們的介面可以列出你車隊裡看得到的車（自己綁的與分享給你的），也能在車不在已載入的區域時，照本 MOD 的規則確認你還有沒有查看位置的權限。分享被收回、別人綁的車照樣查不到；本 MOD 自己的畫面與保護沒有改變。
 
+- **AutoDrive 的召喚也照綁車權限**：用 AutoDrive 讓沒人坐的車自己開過來（召喚）時，召喚的人要有這台車的「駕駛」權限；只分享查看位置或搭乘的人叫不動，召喚途中分享被收回也會停下。召喚途中的車不算停著的車，和有人在開一樣沒有防破壞；車停好、召喚結束後，防破壞自動恢復。
+
 > 技術要點：伺服器的 `MinidoracatVehicleManagerAPI.canTrackKeyId(player, keyId, script?)` 用車鑰匙編號（給車型時只看那個車型）判 TRACK，不需要車子載入，結果和 `canUse(…, "TRACK")` 相同（沒綁定回 `true, "UNCLAIMED"`；同一個編號有兩筆以上紀錄時每筆都要准），不寫管理員越權稽核，可以輪詢；客戶端的 `MinidoracatVehicleManagerAPI.listOwned(playerNum)` 只讀已收到的車隊資料、不另外向伺服器查詢，只供介面顯示。車隊資料每一列多帶車鑰匙編號。介面清單見 README「給其他 MOD 的介面」。
+>
+> 伺服器包住 `MinidoracatAutoDriveAPI.startSummon(player, vehicle, opts)`，照 `canUse(player, vehicle, "DRIVE")` 判，不准時回 `false, <本 MOD 的翻譯鍵>`、不呼叫 AutoDrive；沒綁定的車照 AutoDrive。召喚途中召喚者失去 DRIVE 時，伺服器巡查以停止碼 `AUTH` 呼叫 `stopSummon`。`MinidoracatAutoDriveAPI.summonInfo(vehicle)` 有值的車，防破壞當成有人在開、解除。AutoDrive 沒裝或沒有這些函式時都不動。
 
 ## [42.21.0-0.10.2] - 2026-10-27
 

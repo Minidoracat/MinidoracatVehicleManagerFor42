@@ -5978,6 +5978,220 @@ check(#list == 1 and list[1].oid == r2.oid, "已結束（解除綁定）的車�
 isClient = savedIsClient
 MVM.Client.buckets = {}
 end)();
+(function()
+out("情境 SUM：AutoDrive 召喚（startSummon 要 DRIVE；召喚中的車不當停著的車保全）")
+boot()
+local G, P, AC = MVM.Guards, MVM.Parked, MVM.ACTIONS
+SB.ParkedGuard = MVM.GUARD.ALL
+-- 沒裝 AutoDrive、或 AutoDrive 舊版沒有召喚：什麼都不做
+MinidoracatAutoDriveAPI = nil
+G.install("SUM")
+MinidoracatAutoDriveAPI = { navDeviceApiVersion = 1 }
+G.install("SUM")
+check(MinidoracatAutoDriveAPI.startSummon == nil, "沒裝 AutoDrive、或 API 沒有 startSummon：不出錯、不加函式")
+-- 假 AutoDrive：startSummon 記呼叫次數、summonInfo 回 sessions 表
+local AD = { calls = 0, sessions = {} }
+MinidoracatAutoDriveAPI.startSummon = function(p, v, opts)
+    AD.calls, AD.opts = AD.calls + 1, opts
+    if p == nil or v == nil then return false, "UI_AD_BadArgs" end
+    return true
+end
+G.install("SUM")
+local API = MinidoracatAutoDriveAPI
+local OW, DR, TR, ST = player("sown", 1, 1), player("sdrv", 1, 1), player("strk", 1, 1), player("sstr", 1, 1)
+local car, loose = GH.car(91), GH.car(92)
+local pt = car.parts
+local r = rec(claim(OW, car).oid)
+check(cmd(OW, "addMember", { expectedOid = r.oid, username = "sdrv", actionBits = AC.DRIVE }).ok
+    and cmd(OW, "addMember", { expectedOid = r.oid, username = "strk", actionBits = AC.TRACK + AC.PASSENGER }).ok
+    and O.grantBits(r, "strk") == AC.TRACK + AC.PASSENGER, "車主分享：sdrv 駕駛、strk 查看位置＋搭乘")
+local opts = { mode = "target", x = 5, y = 6 }
+local ok, why = API.startSummon(OW, car, opts)
+check(ok == true and AD.calls == 1 and AD.opts == opts, "車主：交給 AutoDrive，opts 原樣傳過去")
+check(API.startSummon(DR, car) == true and AD.calls == 2, "有 DRIVE 的成員：可以召喚")
+ok, why = API.startSummon(TR, car)
+check(ok == false and why == "IGUI_MVM_Protected" and AD.calls == 2, "只有 TRACK（和搭乘）的成員：拒絕、回綁車翻譯鍵，AutoDrive 沒被呼叫")
+ok, why = API.startSummon(ST, car)
+check(ok == false and why == "IGUI_MVM_Protected" and AD.calls == 2, "陌生人：拒絕")
+check(API.startSummon(ST, loose) == true and AD.calls == 3, "沒綁定的車：照 AutoDrive")
+ok, why = API.startSummon(nil, car)
+check(ok == false and why == "UI_AD_BadArgs" and AD.calls == 4, "缺玩家：交給 AutoDrive 自己拒絕")
+r.lock = "RENT"
+ok, why = API.startSummon(OW, car)
+check(ok == false and why == "IGUI_MVM_Reason_RENT_LOCKED" and AD.calls == 4, "租用到期鎖住：車主也拒絕，回 RENT_LOCKED 的翻譯鍵")
+r.lock = nil
+local AM = player("sadm", 1, 1, { admin = true })
+ok, why = API.startSummon(AM, car)
+check(ok == false and why == "IGUI_MVM_ProtectedAdmin" and AD.calls == 4, "沒開越權的管理員：拒絕，回提示開越權的翻譯鍵")
+local state = O.state
+O.state = function() return nil end -- 帳本還沒就緒（開機窗口）
+ok, why = API.startSummon(OW, car)
+O.state = state
+check(ok == false and why == "IGUI_MVM_Reason_NOT_READY" and AD.calls == 4, "帳本還沒就緒：拒絕（不像裝置槽那樣放行），AutoDrive 沒被呼叫")
+-- 拒絕可能回的翻譯鍵，16 種語言都要有
+local missing = {}
+for _, lang in ipairs({ "AR", "CH", "CN", "DE", "EN", "ES", "ES_CL", "ES_MX", "FR", "JP", "KO", "PL", "PT", "PTBR", "RU", "TR" }) do
+    local f = assert(io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json", "rb"))
+    local text = f:read("*a")
+    f:close()
+    for _, key in ipairs({ "IGUI_MVM_Protected", "IGUI_MVM_ProtectedAdmin", "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_QUARANTINED",
+        "IGUI_MVM_Reason_FACTION_PAUSED", "IGUI_MVM_Reason_NOT_READY" }) do
+        if not text:find('"' .. key .. '"', 1, true) then missing[#missing + 1] = lang .. ":" .. key end
+    end
+end
+check(#missing == 0, "拒絕回的翻譯鍵 16 語都有（缺：" .. table.concat(missing, " ") .. "）")
+local w1 = API.startSummon
+G.install("again")
+API.startSummon(OW, car)
+check(API.startSummon == w1 and AD.calls == 5, "重跑 install：不重包（一次召喚只呼叫 AutoDrive 一次）")
+local l0 = #logLines
+API.startSummon = function() AD.calls = AD.calls + 100; return true end -- 後載的 MOD 換掉
+G.install("recheck")
+check(API.startSummon(ST, car) == false and AD.calls == 5 and GH.logged(l0, "ADAPTER_REWRAPPED", "startSummon"), "被換掉：重包並稽核，陌生人照樣被擋")
+
+-- 停車保全：summonInfo 有值＝召喚中，不是停著的車
+GH.tick()
+check(GH.armed(car), "還沒有 summonInfo：照常布防")
+API.summonInfo = function(v) return AD.sessions[v] end
+GH.tick()
+check(GH.armed(car), "有 summonInfo、這台沒在召喚：照常布防")
+AD.sessions[car] = { by = "sown", phase = "driving", startedMs = nowMs }
+GH.tick()
+check(not GH.armed(car) and pt.Engine.dur == 5 and pt.DoorFrontLeft.dur == 4, "召喚中：解除，durability 寫回原值")
+pt.DoorFrontLeft.cond = 55 -- 召喚途中撞到
+GH.tick(P.RESTORE_MS)
+check(pt.DoorFrontLeft.cond == 55 and not GH.armed(car), "召喚中撞到的車損：不補回")
+AD.sessions[car] = nil
+GH.tick()
+GH.tick(P.RESTORE_MS)
+check(GH.armed(car) and pt.DoorFrontLeft.cond == 55, "召喚結束：重新布防，以當下車況為基準（撞到的不補）")
+pt.DoorFrontLeft.cond = 40
+GH.tick(P.RESTORE_MS)
+check(pt.DoorFrontLeft.cond == 55, "結束後停著被打：照常補回新基準")
+
+-- summonInfo 出錯：保全不再追蹤這台車，拉高的 durability 要寫回（之後重新追蹤才不會把 BIG 記成原值）
+API.summonInfo = function() error("boom") end
+GH.tick()
+check(P.R.tracked[91] == nil and pt.Engine.dur == 5 and pt.DoorFrontLeft.dur == 4, "檢查出錯：停止追蹤並寫回 durability")
+API.summonInfo = function(v) return AD.sessions[v] end
+P.discover(car)
+GH.tick()
+check(GH.armed(car), "重新追蹤：照常布防")
+-- 布防中重記（touch）時零件讀值出錯：走過與沒走到的零件都要寫回原值
+P.touch(car)
+local getCond = pt.WindowFrontLeft.getCondition
+pt.WindowFrontLeft.getCondition = function() error("boom") end
+GH.tick()
+pt.WindowFrontLeft.getCondition = getCond
+check(P.R.tracked[91] == nil and pt.Engine.dur == 5 and pt.WindowFrontLeft.dur == 3 and pt.DoorFrontLeft.dur == 4,
+    "重記中途出錯：停止追蹤，走過與沒走到的零件 durability 都寫回")
+P.discover(car)
+GH.tick()
+check(GH.armed(car) and pt.DoorFrontLeft.dur == P.BIG, "重新追蹤：照常布防")
+
+-- 召喚途中重驗 DRIVE（watchdog）：分享收回就以 AUTH 停掉召喚、通知召喚者
+API.startSummon = function(p, v) AD.sessions[v] = { by = p:getUsername(), phase = "starting" }; return true end
+API.stopSummon = function(v, code) AD.stop = code; AD.sessions[v] = nil; return true end
+G.install("recheck")
+AD.sessions, G.R.summons = {}, {}
+local function dog() nowMs = nowMs + 1000; G.watchdog() end
+check(API.startSummon(DR, car) == true and G.R.summons[DR] == car.id, "成員召喚：記下召喚者")
+dog()
+check(AD.stop == nil and AD.sessions[car] ~= nil, "還有 DRIVE：繼續召喚")
+local e0 = GH.count(DR, "enforcement")
+check(cmd(OW, "removeMember", { expectedOid = r.oid, username = "sdrv" }).ok, "車主收回分享")
+l0 = #logLines
+dog()
+local enf = lastOf(DR, "enforcement")
+check(AD.stop == "AUTH" and AD.sessions[car] == nil and G.R.summons[DR] == nil, "召喚途中失去 DRIVE：以 AUTH 停掉召喚")
+check(GH.count(DR, "enforcement") == e0 + 1 and enf.action == "SUMMON" and enf.reason == "NOT_AUTHORIZED"
+    and GH.logged(l0, "SUMMON_STOPPED", "sdrv"), "通知召喚者原因、寫稽核")
+AD.stop = nil
+check(API.startSummon(OW, car) == true, "車主召喚")
+AD.sessions[car] = { by = "someone", phase = "driving" } -- 召喚結束後別人接著召喚同一台
+dog()
+check(AD.stop == nil and G.R.summons[OW] == nil, "召喚已換人：不替別人的召喚判權限，清掉舊紀錄")
+-- SP 分割畫面第 2 位：S.players 只有第 0 位，重驗不能靠它
+serverMode = false
+local keepReceive = MVM.clientReceive
+MVM.clientReceive = function() end
+local P1 = player("sp1", 1, 1)
+P1.num = 1
+r.grants = { { user = "local:1", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(P1, car) == true and G.R.summons[P1] == car.id, "SP 第 2 位玩家（local:1，有 DRIVE）召喚")
+r.grants = {}
+dog()
+check(AD.stop == "AUTH" and G.R.summons[P1] == nil, "SP 第 2 位玩家途中失去 DRIVE：照樣以 AUTH 停掉")
+MVM.clientReceive = keepReceive
+serverMode = true
+-- stopSummon 沒停成：不通知、不寫稽核，下一秒再試
+r.grants = { { user = "sdrv", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true, "成員再召喚")
+r.grants = {}
+local stop = API.stopSummon
+API.stopSummon = function() return false end
+e0 = GH.count(DR, "enforcement")
+dog()
+check(G.R.summons[DR] == car.id and GH.count(DR, "enforcement") == e0, "stopSummon 沒停成：不通知、保留紀錄")
+API.stopSummon = stop
+dog()
+check(AD.stop == "AUTH" and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1, "下一秒再試：停掉並通知")
+-- summonInfo 出錯：不卡住同一輪的其他召喚者，紀錄留著；恢復後撤權照樣停
+local car2 = GH.car(93)
+local r2 = rec(claim(OW, car2).oid)
+r.grants = { { user = "sdrv", bits = AC.DRIVE } }
+r2.grants = { { user = "strk", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true and API.startSummon(TR, car2) == true, "兩位成員各召喚一台")
+r.grants, r2.grants = {}, {}
+local info = API.summonInfo
+API.summonInfo = function(v) if v == car then error("boom") end return AD.sessions[v] end
+local mlog, logged = MVM.log, {}
+MVM.log = function(msg) logged[#logged + 1] = tostring(msg) end
+local okDog = pcall(dog)
+MVM.log = mlog
+local failedLogs = table.concat(logged, "\n")
+check(okDog and G.R.summons[DR] == car.id and AD.sessions[car] ~= nil and AD.sessions[car2] == nil and G.R.summons[TR] == nil
+    and failedLogs:find("summon recheck failed vid=91", 1, true) ~= nil and failedLogs:find("summon recheck failed vid=93", 1, true) == nil,
+    "一台的 summonInfo 出錯：巡查不中斷、另一位照樣停掉，出錯那筆留著並記 log")
+API.summonInfo = info
+AD.stop, e0 = nil, GH.count(DR, "enforcement")
+dog()
+check(AD.stop == "AUTH" and AD.sessions[car] == nil and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1,
+    "恢復後下一秒：照樣以 AUTH 停掉並通知")
+-- stopSummon 出錯（紀錄已先清）：放回紀錄、下一秒再試
+r.grants = { { user = "sdrv", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true, "成員再召喚一次")
+r.grants = {}
+API.stopSummon = function() error("boom") end
+MVM.log = function() end
+okDog = pcall(dog) and pcall(dog)
+MVM.log = mlog
+check(okDog and G.R.summons[DR] == car.id and AD.sessions[car] ~= nil, "stopSummon 出錯：巡查不中斷，紀錄放回")
+API.stopSummon, e0 = stop, GH.count(DR, "enforcement")
+dog()
+check(AD.stop == "AUTH" and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1, "恢復後：停掉並通知")
+-- 停止時 onEnd 當場替同一人開另一台：新的那台照樣受重驗
+r.grants, r2.grants = { { user = "sdrv", bits = AC.DRIVE } }, { { user = "sdrv", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true, "成員召喚第一台")
+API.stopSummon = function(v, code)
+    AD.stop, AD.sessions[v] = code, nil
+    if v == car then API.startSummon(DR, car2) end
+    return true
+end
+r.grants = {}
+dog()
+API.stopSummon = stop
+check(AD.stop == "AUTH" and G.R.summons[DR] == car2.id and AD.sessions[car2] ~= nil, "停止回呼裡開的新召喚：紀錄不被舊的停止清掉")
+r2.grants = {}
+dog()
+check(AD.sessions[car2] == nil and G.R.summons[DR] == nil, "新的那台失權：照樣停掉")
+MinidoracatAutoDriveAPI = nil
+end)();
 out("")
 if failures > 0 then
     out(failures .. " 項失敗，" .. passes .. " 項通過")

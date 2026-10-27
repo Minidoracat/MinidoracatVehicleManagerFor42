@@ -1,11 +1,11 @@
 -- 停車保全（server-only，SP 也跑）：PlayerHitVehicle 在 Java 直接扣零件耐久、中間沒有 Lua 入口（guards.md 已知坑），
--- 所以對「停著、沒有授權者在車上、沒被拖」的受保全車：
+-- 所以對「停著、沒有授權者在車上、沒被拖、不在 AutoDrive 召喚中」的受保全車：
 --   1. 布防：記下每個零件的基準（耐久、原件 id、型別、是否車窗、durability），durability > 0 的零件拉到 BIG
 --      （武器傷害＝damage*50*(doorDamage/10)/durability 取整 → 0；durability <= 0 的 setDurability 不收，照原樣）
 --   2. 每 RESTORE_MS 復原：同一原件（或兩次都沒有原件的零件，例：引擎、暖氣；槍擊從車頭會打到）耐久補回基準、
 --      車窗原件不見了換一片同型新玻璃（清掉布防後才出現的碎玻璃）、
 --      其他換件改認目前的為基準；durability 被重設（車重新載入、換件）就再拉高。油、電、貨物一律不補
---   3. 解除（有授權者上車、被拖、紀錄結束、模式不保全）：把拉高的 durability 寫回原值
+--   3. 解除（有授權者上車、被拖、AutoDrive 召喚中、紀錄結束、模式不保全）：把拉高的 durability 寫回原值
 -- 模式（沙盒 ParkedGuard）每次檢查重讀：OFF 不保全、ALL 所有綁定車、SLOTS 依保全名額：車主沒關掉的車（rec.guard ~= false）
 -- 依順序前 limit 台生效（ON），其餘 OVER。limit＝基本（guardOverrides 或沙盒）＋付費；順序見 ranked。
 -- 追蹤：生車、綁定成功、每 SCAN_MS 掃已載入車（O.R.bySqlId 先篩）→ discover；授權突變後 touch → 下次檢查重記基準。
@@ -130,18 +130,21 @@ local function hasGlass(v)
     return sq ~= nil and sq:getBrokenGlass() ~= nil
 end
 
--- 記基準並把 durability 拉高。已是 BIG 的零件（布防中重記）沿用舊基準的原值
+-- 記基準並把 durability 拉高。已是 BIG 的零件（布防中重記）沿用舊基準的原值。
+-- 在原表上逐件更新、一開始就掛上 e.base：迴圈中途出錯時，disarm 對走過與沒走到的零件都寫得回
 local function capture(e)
-    local v, old, base = e.v, e.base or {}, {}
+    local v, base = e.v, e.base or {}
+    e.base = base
     for i = 0, v:getPartCount() - 1 do
         local part = v:getPartByIndex(i)
         local id, item, dur = part:getId(), part:getInventoryItem(), part:getDurability()
-        if dur >= P.BIG and old[id] then dur = old[id].dur end
+        local prev = base[id]
+        if dur >= P.BIG and prev then dur = prev.dur end
         base[id] = { cond = part:getCondition(), itemId = item and item:getID() or -1, full = item and item:getFullType() or "",
             win = part:getWindow() ~= nil, dur = dur }
         if dur > 0 and part:getDurability() < P.BIG then part:setDurability(P.BIG) end
     end
-    e.base, e.glass0 = base, hasGlass(v)
+    e.glass0 = hasGlass(v)
 end
 
 -- 只寫回仍是 BIG 的（換過件的 durability 已被 doInventoryItemStats 重設成新件的值）
@@ -227,6 +230,12 @@ local function occupied(v, rec)
     return false
 end
 
+-- AutoDrive 召喚中（車上沒人、自己在開）不是停著的車：照開車處理，撞到要扣損，結束後以當下車況重新布防
+local function summoned(v)
+    local api = MinidoracatAutoDriveAPI
+    return type(api) == "table" and type(api.summonInfo) == "function" and api.summonInfo(v) ~= nil
+end
+
 local function drop(e)
     R.tracked[e.id] = nil
     if R.byOid[e.oid] == e then R.byOid[e.oid] = nil end
@@ -253,7 +262,7 @@ local function check(e, t)
         disarm(e)
         return true
     end
-    local want = P.state(rec) == "ON" and v:getVehicleTowedBy() == nil and not occupied(v, rec)
+    local want = P.state(rec) == "ON" and v:getVehicleTowedBy() == nil and not occupied(v, rec) and not summoned(v)
     if want and e.base == nil then
         capture(e)
         e.nextRestore = t + P.RESTORE_MS
@@ -353,9 +362,12 @@ function P.tick()
             n = n + 1
             e.due = t + P.CHECK_MS
             local ok, res = pcall(check, e, t)
-            if not ok and not R.errors[e.oid] then
-                R.errors[e.oid] = true
-                MVM.log("parked guard check failed (dropped) oid=" .. tostring(e.oid) .. ": " .. tostring(res))
+            if not ok then
+                pcall(disarm, e) -- 不再追蹤：拉高的 durability 要寫回，否則之後重新追蹤會把 BIG 記成原值
+                if not R.errors[e.oid] then
+                    R.errors[e.oid] = true
+                    MVM.log("parked guard check failed (dropped) oid=" .. tostring(e.oid) .. ": " .. tostring(res))
+                end
             end
             if not ok or res then gone = gone or {}; gone[#gone + 1] = e end
         end

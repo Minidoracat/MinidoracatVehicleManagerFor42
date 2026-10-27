@@ -2,7 +2,7 @@
 --   1. 原版 timed action 的 server lifecycle 包裝：第一個突變前 canUse，拒絕就不呼叫原函式並推回權威狀態
 --   2. actor intent（§8.1.3）：NetTimedAction 的 character 可被冒充，受保護車的動作要求該連線先送過 prepareAction
 --   3. 虛擬鑰匙三個 adapter（發動／解鎖／開門免警報，Phase 0 gate 15 實證）
---   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）
+--   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）；召喚 MinidoracatAutoDriveAPI.startSummon 要 DRIVE
 --   5. 佔座 watchdog 與拖掛對帳（事後偵測，D 級）
 --   6. 放行的 complete／裝置槽變更之後通知停車保全重記基準（MVM.Parked.touch）
 -- 未受保護的車（無紀錄）一律照原版走，不要求 intent。
@@ -34,8 +34,9 @@ local INTENTS_PER_ACTOR = 16
 -- 每人照沙盒 WatchdogIntervalSeconds 到期；到期後最慢 0.25 秒內查到（舊做法 0.1 秒）
 local WATCHDOG_MS, WATCHDOG_BATCH = 250, 25
 
--- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）
-local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
+-- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）；summons：IsoPlayer → 經本 MOD 放行的召喚車 id；
+-- summonErrs：重驗出錯已記過 log 的車 id
+local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, summons = {}, summonErrs = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
 G.R = R
 
 local function now() return getTimestampMs() end
@@ -244,6 +245,7 @@ function G.install(reason)
         end
     end
     G.wrapAutoDrive()
+    G.wrapSummon()
     if reason ~= "recheck" then MVM.log("action guards installed (" .. tostring(reason) .. ")") end
 end
 
@@ -274,6 +276,32 @@ function G.wrapAutoDrive()
     MDAD.applyDeviceChange = w
 end
 
+-- 召喚（車上沒人、AutoDrive 代開：到召喚者這裡、到指定地點、直線前進／後退）：呼叫端是其他 MOD 的伺服器 Lua，
+-- player 是發出召喚的玩家。要 DRIVE；沒紀錄的車照 AutoDrive，缺 player／vehicle 交給 AutoDrive 拒絕。
+-- 回 false 時第二個值是翻譯鍵，由呼叫端顯示。放行後記下召喚者，watchdog 在召喚途中重驗（summonCheck）
+local function summonKey(player, reason)
+    if reason ~= "NOT_AUTHORIZED" then return "IGUI_MVM_Reason_" .. tostring(reason) end
+    return O.isAdmin(player) and "IGUI_MVM_ProtectedAdmin" or "IGUI_MVM_Protected"
+end
+
+function G.wrapSummon()
+    local api = MinidoracatAutoDriveAPI
+    if type(api) ~= "table" or type(api.startSummon) ~= "function" or R.marks[api.startSummon] then return end
+    local orig = api.startSummon
+    local w = function(player, vehicle, opts)
+        if player == nil or vehicle == nil then return orig(player, vehicle, opts) end
+        local ok, reason = O.canUse(player, vehicle, "DRIVE", { op = "summon", mod = "MinidoracatAutoDrive" })
+        if not ok then return false, summonKey(player, reason) end
+        local r1, r2 = orig(player, vehicle, opts)
+        if r1 == true then R.summons[player] = vehicle:getId() end
+        return r1, r2
+    end
+    R.marks[w] = true
+    if R.wrapped["startSummon"] then O.audit("WARN", "ADAPTER_REWRAPPED", { reason = "MinidoracatAutoDriveAPI.startSummon" }) end
+    R.wrapped["startSummon"] = true
+    api.startSummon = w
+end
+
 -- dedicated：所有 MOD 的 server Lua 載完後才有 OnServerStarted；SP：進遊戲才載入 server Lua
 if Events.OnServerStarted then Events.OnServerStarted.Add(function() G.install("OnServerStarted") end) end
 Events.OnGameStart.Add(function() if not isServer() then G.install("OnGameStart") end end)
@@ -282,7 +310,27 @@ Events.EveryOneMinute.Add(function() G.install("recheck") end)
 -- ------------------------------------------------------------------ watchdog ---
 -- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人。
 -- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上的人解
--- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查
+-- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查。召喚者另外每秒重驗（summonCheck）
+
+-- 召喚途中召喚者沒有 DRIVE 了（收回分享、租用鎖定、轉讓、陣營暫停、途中被別人綁定）：停掉召喚，同上車要 DRIVE。
+-- 每秒走一次放行過的召喚者（不經 S.players：SP 那份只有第 0 位，分割畫面其他位置也召喚得了）
+local function summonCheck(player)
+    local vid = R.summons[player]
+    local api = MinidoracatAutoDriveAPI
+    local v = vid and getVehicleById(vid)
+    local info = v and type(api) == "table" and type(api.summonInfo) == "function" and api.summonInfo(v)
+    if not info or info.by ~= player:getUsername() then R.summons[player] = nil; return end -- 已結束或換人召喚（只對 session，不是授權）
+    local ok, reason, rec = O.canUse(player, v, "DRIVE", { silent = true })
+    if ok then return end
+    R.summons[player] = nil -- 先清：停止時的 onEnd 可能當場替同一人開新的召喚（wrapSummon 記下新的那台）
+    if type(api.stopSummon) ~= "function" or api.stopSummon(v, "AUTH") ~= true then
+        if R.summons[player] == nil then R.summons[player] = vid end -- 沒停成：下一秒再試
+        return
+    end
+    enforce(player, "SUMMON", reason, rec and rec.oid)
+    O.audit("WARN", "SUMMON_STOPPED", { actor = O.principal(player), oid = rec and rec.oid, owner = rec and rec.ownerUser, reason = reason })
+end
+
 local function occupantCheck(player)
     local v = player:getVehicle()
     if v == nil or O.principal(player) == nil then return end
@@ -339,9 +387,22 @@ function G.watchdog()
             occupantCheck(player)
         end
     end
-    -- 離線玩家的到期紀錄每秒清一次（留著只佔記憶體，不影響誰被查）
+    -- 每秒：召喚者重驗；離線玩家的到期紀錄清掉（留著只佔記憶體，不影響誰被查）
     if t - R.lastPrune < 1000 then return end
     R.lastPrune = t
+    local summoners = {}
+    for player in pairs(R.summons) do summoners[#summoners + 1] = player end
+    for _, player in ipairs(summoners) do
+        local vid = R.summons[player]
+        local ok, err = pcall(summonCheck, player)
+        if not ok then -- 其他 MOD 的函式出錯：不卡住巡查，紀錄留著下一秒再試，同一台只記一次 log
+            if R.summons[player] == nil then R.summons[player] = vid end
+            if not R.summonErrs[vid] then
+                R.summonErrs[vid] = true
+                MVM.log("summon recheck failed vid=" .. tostring(vid) .. ": " .. tostring(err))
+            end
+        end
+    end
     local gone = nil
     for player, at in pairs(R.seen) do
         if at ~= t then gone = gone or {}; gone[#gone + 1] = player end
