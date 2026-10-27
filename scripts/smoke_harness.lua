@@ -6125,7 +6125,7 @@ dog()
 check(AD.stop == "AUTH" and G.R.summons[P1] == nil, "SP 第 2 位玩家途中失去 DRIVE：照樣以 AUTH 停掉")
 MVM.clientReceive = keepReceive
 serverMode = true
--- stopSummon 沒停成：不通知、不寫稽核，下一秒再試；summonInfo 出錯：不卡住巡查，丟掉這筆
+-- stopSummon 沒停成：不通知、不寫稽核，下一秒再試
 r.grants = { { user = "sdrv", bits = AC.DRIVE } }
 AD.stop, AD.sessions = nil, {}
 check(API.startSummon(DR, car) == true, "成員再召喚")
@@ -6157,8 +6157,23 @@ check(okDog and G.R.summons[DR] == car.id and AD.sessions[car] ~= nil and AD.ses
     and failedLogs:find("summon recheck failed vid=91", 1, true) ~= nil and failedLogs:find("summon recheck failed vid=93", 1, true) == nil,
     "一台的 summonInfo 出錯：巡查不中斷、另一位照樣停掉，出錯那筆留著並記 log")
 API.summonInfo = info
+AD.stop, e0 = nil, GH.count(DR, "enforcement")
 dog()
-check(AD.stop == "AUTH" and AD.sessions[car] == nil and G.R.summons[DR] == nil, "恢復後下一秒：照樣以 AUTH 停掉")
+check(AD.stop == "AUTH" and AD.sessions[car] == nil and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1,
+    "恢復後下一秒：照樣以 AUTH 停掉並通知")
+-- stopSummon 出錯（紀錄已先清）：放回紀錄、下一秒再試
+r.grants = { { user = "sdrv", bits = AC.DRIVE } }
+AD.stop, AD.sessions = nil, {}
+check(API.startSummon(DR, car) == true, "成員再召喚一次")
+r.grants = {}
+API.stopSummon = function() error("boom") end
+MVM.log = function() end
+okDog = pcall(dog) and pcall(dog)
+MVM.log = mlog
+check(okDog and G.R.summons[DR] == car.id and AD.sessions[car] ~= nil, "stopSummon 出錯：巡查不中斷，紀錄放回")
+API.stopSummon, e0 = stop, GH.count(DR, "enforcement")
+dog()
+check(AD.stop == "AUTH" and G.R.summons[DR] == nil and GH.count(DR, "enforcement") == e0 + 1, "恢復後：停掉並通知")
 -- 停止時 onEnd 當場替同一人開另一台：新的那台照樣受重驗
 r.grants, r2.grants = { { user = "sdrv", bits = AC.DRIVE } }, { { user = "sdrv", bits = AC.DRIVE } }
 AD.stop, AD.sessions = nil, {}
