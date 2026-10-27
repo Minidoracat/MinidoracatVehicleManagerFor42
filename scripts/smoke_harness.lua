@@ -6002,8 +6002,9 @@ local OW, DR, TR, ST = player("sown", 1, 1), player("sdrv", 1, 1), player("strk"
 local car, loose = GH.car(91), GH.car(92)
 local pt = car.parts
 local r = rec(claim(OW, car).oid)
-cmd(OW, "addMember", { expectedOid = r.oid, username = "sdrv", actionBits = AC.DRIVE })
-cmd(OW, "addMember", { expectedOid = r.oid, username = "strk", actionBits = AC.TRACK + AC.PASSENGER })
+check(cmd(OW, "addMember", { expectedOid = r.oid, username = "sdrv", actionBits = AC.DRIVE }).ok
+    and cmd(OW, "addMember", { expectedOid = r.oid, username = "strk", actionBits = AC.TRACK + AC.PASSENGER }).ok
+    and O.grantBits(r, "strk") == AC.TRACK + AC.PASSENGER, "車主分享：sdrv 駕駛、strk 查看位置＋搭乘")
 local opts = { mode = "target", x = 5, y = 6 }
 local ok, why = API.startSummon(OW, car, opts)
 check(ok == true and AD.calls == 1 and AD.opts == opts, "車主：交給 AutoDrive，opts 原樣傳過去")
@@ -6019,13 +6020,21 @@ r.lock = "RENT"
 ok, why = API.startSummon(OW, car)
 check(ok == false and why == "IGUI_MVM_Reason_RENT_LOCKED" and AD.calls == 4, "租用到期鎖住：車主也拒絕，回 RENT_LOCKED 的翻譯鍵")
 r.lock = nil
+local AM = player("sadm", 1, 1, { admin = true })
+ok, why = API.startSummon(AM, car)
+check(ok == false and why == "IGUI_MVM_ProtectedAdmin" and AD.calls == 4, "沒開越權的管理員：拒絕，回提示開越權的翻譯鍵")
+local state = O.state
+O.state = function() return nil end -- 帳本還沒就緒（開機窗口）
+ok, why = API.startSummon(OW, car)
+O.state = state
+check(ok == false and why == "IGUI_MVM_Reason_NOT_READY" and AD.calls == 4, "帳本還沒就緒：拒絕（不像裝置槽那樣放行），AutoDrive 沒被呼叫")
 -- 拒絕可能回的翻譯鍵，16 種語言都要有
 local missing = {}
 for _, lang in ipairs({ "AR", "CH", "CN", "DE", "EN", "ES", "ES_CL", "ES_MX", "FR", "JP", "KO", "PL", "PT", "PTBR", "RU", "TR" }) do
     local f = assert(io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json", "rb"))
     local text = f:read("*a")
     f:close()
-    for _, key in ipairs({ "IGUI_MVM_Protected", "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_QUARANTINED",
+    for _, key in ipairs({ "IGUI_MVM_Protected", "IGUI_MVM_ProtectedAdmin", "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_QUARANTINED",
         "IGUI_MVM_Reason_FACTION_PAUSED", "IGUI_MVM_Reason_NOT_READY" }) do
         if not text:find('"' .. key .. '"', 1, true) then missing[#missing + 1] = lang .. ":" .. key end
     end
@@ -6059,6 +6068,38 @@ check(GH.armed(car) and pt.DoorFrontLeft.cond == 55, "召喚結束：重新布�
 pt.DoorFrontLeft.cond = 40
 GH.tick(P.RESTORE_MS)
 check(pt.DoorFrontLeft.cond == 55, "結束後停著被打：照常補回新基準")
+
+-- summonInfo 出錯：保全不再追蹤這台車，拉高的 durability 要寫回（之後重新追蹤才不會把 BIG 記成原值）
+API.summonInfo = function() error("boom") end
+GH.tick()
+check(P.R.tracked[91] == nil and pt.Engine.dur == 5 and pt.DoorFrontLeft.dur == 4, "檢查出錯：停止追蹤並寫回 durability")
+API.summonInfo = function(v) return AD.sessions[v] end
+P.discover(car)
+GH.tick()
+check(GH.armed(car), "重新追蹤：照常布防")
+
+-- 召喚途中重驗 DRIVE（watchdog）：分享收回就以 AUTH 停掉召喚、通知召喚者
+API.startSummon = function(p, v) AD.sessions[v] = { by = p:getUsername(), phase = "starting" }; return true end
+API.stopSummon = function(v, code) AD.stop = code; AD.sessions[v] = nil; return true end
+G.install("recheck")
+AD.sessions, G.R.summons = {}, {}
+local function dog() nowMs = nowMs + 1000; G.watchdog() end
+check(API.startSummon(DR, car) == true and G.R.summons[DR] == car.id, "成員召喚：記下召喚者")
+dog()
+check(AD.stop == nil and AD.sessions[car] ~= nil, "還有 DRIVE：繼續召喚")
+local e0 = GH.count(DR, "enforcement")
+check(cmd(OW, "removeMember", { expectedOid = r.oid, username = "sdrv" }).ok, "車主收回分享")
+l0 = #logLines
+dog()
+local enf = lastOf(DR, "enforcement")
+check(AD.stop == "AUTH" and AD.sessions[car] == nil and G.R.summons[DR] == nil, "召喚途中失去 DRIVE：以 AUTH 停掉召喚")
+check(GH.count(DR, "enforcement") == e0 + 1 and enf.action == "SUMMON" and enf.reason == "NOT_AUTHORIZED"
+    and GH.logged(l0, "SUMMON_STOPPED", "sdrv"), "通知召喚者原因、寫稽核")
+AD.stop = nil
+check(API.startSummon(OW, car) == true, "車主召喚")
+AD.sessions[car] = { by = "someone", phase = "driving" } -- 召喚結束後別人接著召喚同一台
+dog()
+check(AD.stop == nil and G.R.summons[OW] == nil, "召喚已換人：不替別人的召喚判權限，清掉舊紀錄")
 MinidoracatAutoDriveAPI = nil
 end)();
 out("")

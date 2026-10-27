@@ -34,8 +34,8 @@ local INTENTS_PER_ACTOR = 16
 -- 每人照沙盒 WatchdogIntervalSeconds 到期；到期後最慢 0.25 秒內查到（舊做法 0.1 秒）
 local WATCHDOG_MS, WATCHDOG_BATCH = 250, 25
 
--- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）
-local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
+-- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）；summons：IsoPlayer → 經本 MOD 放行的召喚車 id
+local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, summons = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
 G.R = R
 
 local function now() return getTimestampMs() end
@@ -276,17 +276,24 @@ function G.wrapAutoDrive()
 end
 
 -- 召喚（車上沒人、AutoDrive 代開：到召喚者這裡、到指定地點、直線前進／後退）：呼叫端是其他 MOD 的伺服器 Lua，
--- player 是發出召喚的玩家。要 DRIVE；沒紀錄的車照 AutoDrive。回 false 時第二個值是翻譯鍵，由呼叫端顯示
+-- player 是發出召喚的玩家。要 DRIVE；沒紀錄的車照 AutoDrive，缺 player／vehicle 交給 AutoDrive 拒絕。
+-- 回 false 時第二個值是翻譯鍵，由呼叫端顯示。放行後記下召喚者，watchdog 在召喚途中重驗（summonCheck）
+local function summonKey(player, reason)
+    if reason ~= "NOT_AUTHORIZED" then return "IGUI_MVM_Reason_" .. tostring(reason) end
+    return O.isAdmin(player) and "IGUI_MVM_ProtectedAdmin" or "IGUI_MVM_Protected"
+end
+
 function G.wrapSummon()
     local api = MinidoracatAutoDriveAPI
     if type(api) ~= "table" or type(api.startSummon) ~= "function" or R.marks[api.startSummon] then return end
     local orig = api.startSummon
     local w = function(player, vehicle, opts)
-        if player ~= nil and vehicle ~= nil then -- 缺參數交給 AutoDrive 自己拒絕
-            local ok, reason = O.canUse(player, vehicle, "DRIVE", { op = "summon", mod = "MinidoracatAutoDrive" })
-            if not ok then return false, reason == "NOT_AUTHORIZED" and "IGUI_MVM_Protected" or "IGUI_MVM_Reason_" .. tostring(reason) end
-        end
-        return orig(player, vehicle, opts)
+        if player == nil or vehicle == nil then return orig(player, vehicle, opts) end
+        local ok, reason = O.canUse(player, vehicle, "DRIVE", { op = "summon", mod = "MinidoracatAutoDrive" })
+        if not ok then return false, summonKey(player, reason) end
+        local r1, r2 = orig(player, vehicle, opts)
+        if r1 == true then R.summons[player] = vehicle:getId() end
+        return r1, r2
     end
     R.marks[w] = true
     if R.wrapped["startSummon"] then O.audit("WARN", "ADAPTER_REWRAPPED", { reason = "MinidoracatAutoDriveAPI.startSummon" }) end
@@ -303,9 +310,26 @@ Events.EveryOneMinute.Add(function() G.install("recheck") end)
 -- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人。
 -- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上的人解
 -- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查
+
+-- 召喚途中召喚者沒有 DRIVE 了（收回分享、租用鎖定、轉讓、陣營暫停、途中被別人綁定）：停掉召喚，同上車要 DRIVE
+local function summonCheck(player)
+    local vid = R.summons[player]
+    local api = MinidoracatAutoDriveAPI
+    local v = vid and getVehicleById(vid)
+    local info = v and type(api) == "table" and type(api.summonInfo) == "function" and api.summonInfo(v)
+    if not info or info.by ~= player:getUsername() then R.summons[player] = nil; return end -- 已結束或換人召喚（只對 session，不是授權）
+    local ok, reason, rec = O.canUse(player, v, "DRIVE", { silent = true })
+    if ok then return end
+    R.summons[player] = nil
+    if type(api.stopSummon) == "function" then api.stopSummon(v, "AUTH") end
+    enforce(player, "SUMMON", reason, rec and rec.oid)
+    O.audit("WARN", "SUMMON_STOPPED", { actor = O.principal(player), oid = rec and rec.oid, owner = rec and rec.ownerUser, reason = reason })
+end
+
 local function occupantCheck(player)
     local v = player:getVehicle()
-    if v == nil or O.principal(player) == nil then return end
+    if v == nil then return summonCheck(player) end
+    if O.principal(player) == nil then return end
     local seat = v:getSeat(player)
     local ok, reason, rec = O.canUse(player, v, seat == 0 and "DRIVE" or "PASSENGER", { silent = true })
     if rec ~= nil and not ok then
@@ -366,7 +390,7 @@ function G.watchdog()
     for player, at in pairs(R.seen) do
         if at ~= t then gone = gone or {}; gone[#gone + 1] = player end
     end
-    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player] = nil, nil end
+    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player], R.summons[player] = nil, nil, nil end
 end
 
 Events.OnTick.Add(G.watchdog)

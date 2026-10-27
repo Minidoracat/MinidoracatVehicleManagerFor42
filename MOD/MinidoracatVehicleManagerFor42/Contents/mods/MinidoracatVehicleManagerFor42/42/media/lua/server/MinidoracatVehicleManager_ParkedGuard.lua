@@ -1,5 +1,5 @@
 -- 停車保全（server-only，SP 也跑）：PlayerHitVehicle 在 Java 直接扣零件耐久、中間沒有 Lua 入口（guards.md 已知坑），
--- 所以對「停著、沒有授權者在車上、沒被拖」的受保全車：
+-- 所以對「停著、沒有授權者在車上、沒被拖、不在 AutoDrive 召喚中」的受保全車：
 --   1. 布防：記下每個零件的基準（耐久、原件 id、型別、是否車窗、durability），durability > 0 的零件拉到 BIG
 --      （武器傷害＝damage*50*(doorDamage/10)/durability 取整 → 0；durability <= 0 的 setDurability 不收，照原樣）
 --   2. 每 RESTORE_MS 復原：同一原件（或兩次都沒有原件的零件，例：引擎、暖氣；槍擊從車頭會打到）耐久補回基準、
@@ -359,9 +359,12 @@ function P.tick()
             n = n + 1
             e.due = t + P.CHECK_MS
             local ok, res = pcall(check, e, t)
-            if not ok and not R.errors[e.oid] then
-                R.errors[e.oid] = true
-                MVM.log("parked guard check failed (dropped) oid=" .. tostring(e.oid) .. ": " .. tostring(res))
+            if not ok then
+                pcall(disarm, e) -- 不再追蹤：拉高的 durability 要寫回，否則之後重新追蹤會把 BIG 記成原值
+                if not R.errors[e.oid] then
+                    R.errors[e.oid] = true
+                    MVM.log("parked guard check failed (dropped) oid=" .. tostring(e.oid) .. ": " .. tostring(res))
+                end
             end
             if not ok or res then gone = gone or {}; gone[#gone + 1] = e end
         end
