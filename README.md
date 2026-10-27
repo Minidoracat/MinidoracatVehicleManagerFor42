@@ -137,6 +137,15 @@ Steam 伺服器上，本 MOD 會確認「帳號名稱」和「登入的 Steam �
 - 驗證閘門：`uv run scripts/verify_mod.py`（靜態檢查）、`lua scripts/smoke_harness.lua`（行為測試）
 - 上游監控：`.github/workflows/upstream-watch.yml` 每天查 `upstream.json` 登記的第三方 MOD（Vehicle Repair Overhaul、tsarslib、rSemiTruck、damnlib）有沒有更新，有就開一張 `upstream-update` issue，附上檔案差異與要重新核對的規則。照 issue 重核完、本機訂閱也是最新版後，執行 `python scripts/check_upstream.py --ack <Workshop ID>` 記下新基準（只存檔案 hash，不存第三方檔案內容），commit `upstream.json` 與 `upstream/` 再關閉 issue
 
+### 給其他 MOD 的介面
+
+全域表 `MinidoracatVehicleManagerAPI`（不必寫進 `require=`；用 `type(api.<名稱>) == "function"` 偵測）。授權只以伺服器的回答為準，客戶端的只供介面顯示。
+
+- `canUse(player, vehicle, action, context?)` → `allowed, reason`：伺服器是權威判斷；`action` 是 `PASSENGER`、`DRIVE`、`CARGO`、`FUEL`、`REPAIR`、`SALVAGE`、`TOW`、`TRACK`、`MANAGE`；沒綁定的車回 `true, "UNCLAIMED"`。`context.silent = true` 時管理員越權不寫稽核（每秒或每幾秒輪詢用）。客戶端版本只看自己收到的資料。
+- `canTrackKeyId(player, keyId)` → `allowed, reason`（伺服器）：用車鑰匙編號判 `TRACK`，不需要車子載入，規則和 `canUse(…, "TRACK")` 相同（車主、分享、陣營、租用到期鎖定、管理員越權）；沒綁定回 `true, "UNCLAIMED"`。不寫越權稽核，可以輪詢。
+- `listOwned(playerNum)` → 陣列或 `nil`（客戶端）：這位玩家車隊裡看得到、還沒結束的車，每筆 `{ oid, script, name?, keyId?, x?, y?, z?, ageMs?, mine }`（`script` 是完整車型，例 `Base.CarNormal`；位置只給車主與有 `TRACK` 的人，有 10 秒內的即時位置就用它，`ageMs` 是位置多舊；`mine` 是自己綁的）。只讀已收到的車隊資料，不另外向伺服器查詢；還沒收到時回 `nil`。
+- `getLocalClaimProjection(playerNum, vehicle)`（客戶端）：這台已載入車輛在本機車隊資料裡的那一列；別人的車回 `role = "OTHER"` 的簡表，沒綁定回 `nil`。
+
 ### 發布到 Workshop
 
 雙擊 `Publish_Workshop.bat`：先確認 Steam 用戶端已以作者帳號登入（未登入會喚起 Steam 並等你登入後重試），

@@ -356,6 +356,32 @@ function MVM.clientProjection(playerNum, vehicle)
         publicBits = MVM.clientPublicBits(playerNum, w.oid) }
 end
 
+-- 其他 MOD 用（例 Tesla 手機 App 的車輛清單）：這位玩家車隊裡看得到、還沒結束的車（自己綁的＋分享給他的），
+-- 只讀已收到的車隊資料、不另外問伺服器，只供 UX（授權照舊由伺服器判）。位置只給車主與有 TRACK 的人（同小地圖車標）：
+-- 10 秒內的即時位置優先，否則最後已知位置；ageMs＝位置多舊。還沒收到車隊資料回 nil
+local LIVE_MS = 10000
+local ENDED = { RELEASED = true, ORPHANED = true, DESTROYED = true }
+function MinidoracatVehicleManagerAPI.listOwned(playerNum)
+    local who = principal(playerNum or 0)
+    local b = who and C.buckets[who]
+    if b == nil or b.streamId == nil then return nil end
+    local now, out = getTimestampMs(), {}
+    for oid, row in pairs(b.rows) do
+        if not ENDED[row.state] then
+            local mine = row.role == "OWNER"
+            local x, y, z, t
+            if mine or MVM.bitsAllow(row.myBits or 0, "TRACK") then
+                local live = b.track and b.track[oid]
+                if live and now - live.t <= LIVE_MS then x, y, z, t = live.x, live.y, live.z, live.t
+                elseif row.lastKnownX then x, y, z, t = row.lastKnownX, row.lastKnownY, row.lastKnownZ, row.lastKnownAtMs end
+            end
+            out[#out + 1] = { oid = oid, script = row.script, name = row.name ~= "" and row.name or nil, keyId = row.keyId,
+                x = x, y = y, z = z, ageMs = MVM.isInt(t) and t > 0 and math.max(0, now - t) or nil, mine = mine }
+        end
+    end
+    return out
+end
+
 -- 本機玩家在 server 開著管理員越權（adminSnapshot 與 setAdminOverride ACK；重新登入後 client 狀態也歸零）
 function MVM.clientOverride(playerNum)
     local who = principal(playerNum or 0)

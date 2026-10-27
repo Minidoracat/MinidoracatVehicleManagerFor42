@@ -949,10 +949,33 @@ function O.hasCargo(rec)
     return false
 end
 
+-- 用車鑰匙編號（keyId）問 TRACK，不需要車子載入（其他 MOD 對沒載入的車輪詢最後位置用，例 Tesla 手機 App 每 2 秒）：
+-- 這個 keyId 的可授權紀錄每筆都照 O.allowsRecord 判（車主、分享、陣營、鎖定、越權規則同 canUse）；沒有紀錄＝沒綁定，
+-- 回 true, "UNCLAIMED"（同 canUse）。keyId 撞號（兩筆以上）要每筆都過，回第一個拒絕原因。一律 silent：輪詢不寫 ADMIN_BYPASS
+-- ponytail: 每次掃整本帳本（R.byKeyId 一個 keyId 只記一個 sqlId，撞號會漏、暫時不在世界上的也不在裡面）；紀錄上萬時改 keyId 多值索引
+local SILENT = { silent = true }
+function O.canTrackKeyId(actor, keyId)
+    if actor == nil or not MVM.isInt(keyId) then return false, "BAD_TARGET" end
+    local st = O.state()
+    if st == nil then return false, "NOT_READY" end
+    local reason = "UNCLAIMED"
+    for _, rec in pairs(st.recordsByOid) do
+        if rec.keyIdHint == keyId and O.AUTHORIZABLE[rec.recordState] then
+            local ok, why = O.allowsRecord(actor, rec, "TRACK", SILENT)
+            if not ok then return false, why end
+            reason = why
+        end
+    end
+    return true, reason
+end
+
 -- server 端公開 API 換成權威實作（§8.1.1）
 MinidoracatVehicleManagerAPI.canUse = function(actor, vehicle, actionCode, context)
     local ok, reason = O.canUse(actor, vehicle, actionCode, context)
     return ok, reason
+end
+MinidoracatVehicleManagerAPI.canTrackKeyId = function(actor, keyId)
+    return O.canTrackKeyId(actor, keyId)
 end
 
 -- ----------------------------------------------------------- maintenance ---

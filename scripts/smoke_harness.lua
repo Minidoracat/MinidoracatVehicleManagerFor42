@@ -5882,6 +5882,90 @@ for _, lang in ipairs({ "CH", "CN", "EN", "JP" }) do
 end
 check(#missing == 0, "陣營分享暫停與恢復的文字四語都有（缺：" .. table.concat(missing, ",") .. "）")
 end)();
+(function()
+out("情境 KT：其他 MOD 的介面（伺服器 canTrackKeyId 用 keyId 問 TRACK、客戶端 listOwned 列車隊）")
+boot()
+local AC, API = MVM.ACTIONS, MinidoracatVehicleManagerAPI
+local OW, MB, ST = player("kown", 1, 1), player("kmem", 1, 1), player("kstr", 1, 1)
+local AD, FM = player("kadm", 1, 1, { admin = true }), player("kfac", 1, 1)
+for _, p in ipairs({ OW, MB, ST, AD, FM }) do cmd(p, "fleetSubscribe", {}, false) end
+local car, car2 = vehicle(71, 9701, 97001, "Base.CarNormal", 1, 1), vehicle(72, 9702, 97002, "Base.CarNormal", 1, 1)
+local r, r2 = rec(claim(OW, car).oid), rec(claim(OW, car2).oid)
+cmd(OW, "addMember", { expectedOid = r.oid, username = "kmem", actionBits = AC.DRIVE + AC.TRACK })
+newFaction("KWolves", "kown", { "kfac" })
+cmd(OW, "setFactionShare", { expectedOid = r.oid, expectedEpoch = r.epoch, enabled = true, actionBits = AC.TRACK })
+O.setState(r2, "QUARANTINED", "TEST")
+check(type(API.canTrackKeyId) == "function" and type(API.listOwned) == "function", "兩個介面都掛在公開 API 表上")
+local same, total = true, 0
+for round = 1, 2 do
+    if round == 2 then O.setOverride(AD, true) end
+    for _, actor in ipairs({ OW, MB, ST, AD, FM }) do
+        for _, v in ipairs({ car, car2 }) do
+            total = total + 1
+            local a1, w1 = O.canUse(actor, v, "TRACK")
+            local a2, w2 = API.canTrackKeyId(actor, v.keyId)
+            if a1 ~= a2 or w1 ~= w2 then same = false end
+        end
+    end
+end
+check(same and total == 20, "車主／成員／陌生人／管理員（越權開關）／陣營 × 一般與隔離紀錄：和 canUse(TRACK) 結果與原因相同")
+local n0 = #logLines
+for _ = 1, 3 do API.canTrackKeyId(AD, car.keyId) end
+local bypass = 0
+for i = n0 + 1, #logLines do if logLines[i]:find("ADMIN_BYPASS", 1, true) then bypass = bypass + 1 end end
+O.setOverride(AD, false)
+check(select(2, API.canTrackKeyId(AD, car2.keyId)) == "QUARANTINED" and bypass == 0, "越權中輪詢不寫 ADMIN_BYPASS；關掉越權回原本的拒絕原因")
+local ok, why = API.canTrackKeyId(ST, 12345)
+check(ok and why == "UNCLAIMED", "沒有紀錄的 keyId＝沒綁定：true, UNCLAIMED（同 canUse）")
+check(select(2, API.canTrackKeyId(OW, 1.5)) == "BAD_TARGET" and select(2, API.canTrackKeyId(nil, car.keyId)) == "BAD_TARGET",
+    "keyId 不是整數、沒有玩家：拒絕")
+-- 車不在世界上（拖車載走、被移除）：紀錄還在就照樣判
+O.onPermanentlyRemove(car)
+check(r.removedAtMs and API.canTrackKeyId(MB, car.keyId) and not API.canTrackKeyId(ST, car.keyId), "車不在世界上：成員照樣可以、陌生人照樣不行")
+cmd(OW, "removeMember", { expectedOid = r.oid, username = "kmem" })
+ok, why = API.canTrackKeyId(MB, car.keyId)
+check(not ok and why == "NOT_AUTHORIZED", "收回分享後：NOT_AUTHORIZED（不因車沒載入就放行）")
+r.lock = "RENT"
+check(select(2, API.canTrackKeyId(OW, car.keyId)) == "RENT_LOCKED", "租用到期鎖住：車主也 RENT_LOCKED（同 allowsRecord）")
+r.lock = nil
+-- keyId 撞號：兩筆紀錄同一個 keyId，每筆都要過
+local twin = vehicle(73, 9703, 97001, "Base.CarNormal", 1, 1)
+local rt = rec(claim(MB, twin).oid)
+check(rt and not API.canTrackKeyId(OW, 97001) and not API.canTrackKeyId(MB, 97001), "keyId 撞號：只過其中一筆的人都被拒")
+
+-- 客戶端：餵伺服器送給車主的真快照（S.row 帶 keyId）
+local savedIsClient = isClient
+isClient = function() return true end
+cmd(MB, "fleetSubscribe", {}, false)
+O.setState(r2, "ACTIVE", "TEST")
+cmd(OW, "addMember", { expectedOid = r2.oid, username = "kmem", actionBits = AC.DRIVE })
+cmd(OW, "fleetSubscribe", {}, false)
+MVM.Client.buckets = {}
+check(API.listOwned(0) == nil, "還沒收到車隊資料：nil")
+MVM.clientReceive("fleetSnapshot", lastOf(OW, "fleetSnapshot"))
+local list, by = API.listOwned(0), {}
+for _, c in ipairs(list) do by[c.oid] = c end
+check(#list == 2 and by[r.oid] and by[r.oid].keyId == 97001 and by[r.oid].mine and by[r.oid].script == "Base.CarNormal"
+    and by[r.oid].x == r.lastKnownX and by[r.oid].ageMs and by[r2.oid].keyId == 97002, "車主：兩台都在、帶 keyId、車型、最後位置與多舊")
+MVM.clientReceive("trackDelta", { to = "kown", oid = r2.oid, x = 55, y = 66, z = 0, t = nowMs })
+for _, c in ipairs(API.listOwned(0)) do by[c.oid] = c end
+check(by[r2.oid].x == 55 and by[r2.oid].ageMs == 0, "10 秒內的即時位置優先")
+MVM.Client.buckets = {}
+online[1], online[2] = MB, OW
+cmd(MB, "fleetSubscribe", {}, false)
+MVM.clientReceive("fleetSnapshot", lastOf(MB, "fleetSnapshot"))
+MVM.clientReceive("trackDelta", { to = "kmem", oid = r2.oid, x = 55, y = 66, z = 0, t = nowMs })
+list, by = API.listOwned(0), {}
+for _, c in ipairs(list) do by[c.oid] = c end
+check(by[rt.oid] and by[rt.oid].mine and by[r2.oid] and not by[r2.oid].mine and by[r2.oid].x == nil and by[r2.oid].ageMs == nil
+    and by[r.oid] == nil, "分享給我（沒有 TRACK）：在清單裡但沒有位置；收回分享的車不在清單")
+MVM.clientReceive("fleetDelta", { to = "kmem", streamId = lastOf(MB, "fleetSnapshot").streamId, seq = 1,
+    upserts = { { oid = rt.oid, role = "OWNER", state = "RELEASED", name = "", script = "Base.CarNormal" } }, removes = {} })
+list = API.listOwned(0)
+check(#list == 1 and list[1].oid == r2.oid, "已結束（解除綁定）的車不列")
+isClient = savedIsClient
+MVM.Client.buckets = {}
+end)();
 out("")
 if failures > 0 then
     out(failures .. " 項失敗，" .. passes .. " 項通過")

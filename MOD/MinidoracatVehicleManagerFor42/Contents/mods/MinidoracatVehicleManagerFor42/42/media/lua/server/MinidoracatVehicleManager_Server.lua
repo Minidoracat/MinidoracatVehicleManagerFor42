@@ -76,11 +76,12 @@ end
 
 -- 收件者可見的一列；不可見回 nil。非 owner 不給 epoch、grants、陣營設定；沒有 TRACK 不給位置。
 -- removedAtMs：車暫時不在世界上（拖車裝走或被移除，OwnershipSystem O.onPermanentlyRemove）。
--- guard：停車保全狀態（車主看 ON／OVER，其他人只看 ON）；lock／lockUntilMs：租用名額到期鎖定（RentLock.lua）
+-- guard：停車保全狀態（車主看 ON／OVER，其他人只看 ON）；lock／lockUntilMs：租用名額到期鎖定（RentLock.lua）。
+-- keyId：給 API.listOwned（其他 MOD 用車鑰匙編號對自己的車，例 Tesla 手機 App），授權不看它
 function S.row(rec, who)
     local base = { oid = rec.oid, state = rec.recordState, name = rec.customName or "", script = rec.vehicleScript,
         witnessPartId = rec.witnessPartId, removedAtMs = rec.removedAtMs, lock = rec.lock, lockUntilMs = rec.lockUntilMs,
-        endReason = rec.endReason }
+        endReason = rec.endReason, keyId = rec.keyIdHint }
     local guard = MVM.Parked and MVM.Parked.state(rec) or nil
     if who == rec.ownerUser then
         base.role = "OWNER"
