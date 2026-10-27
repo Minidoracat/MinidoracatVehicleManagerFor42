@@ -147,6 +147,8 @@ Steam 伺服器上，本 MOD 會確認「帳號名稱」和「登入的 Steam �
 - `getLocalClaimProjection(playerNum, vehicle)`（客戶端）：這台已載入車輛在本機車隊資料裡的那一列；別人的車回 `role = "OTHER"` 的簡表，沒綁定回 `nil`。
 - `MinidoracatVehicleManager.clientMenuHooks`（客戶端）：陣列，放 `function(player, sub, vehicle, row)`；本 MOD 建車外右鍵「車輛管理」子選單（只給第一位本機玩家）時，在自己的選項之後依序呼叫，`sub` 是那個子選單、`row` 是 `getLocalClaimProjection` 的結果（可能是 `nil`）。在 `OnGameStart` 之後再加，避免載入順序問題。
 
+本 MOD 在場時，AutoDrive 的召喚 `MinidoracatAutoDriveAPI.startSummon(player, vehicle, opts)`（伺服器）先照 `canUse(player, vehicle, "DRIVE")` 判；不准時回 `false, <本 MOD 的翻譯鍵>`（用 `getText` 顯示），不會呼叫 AutoDrive。召喚中（`summonInfo(vehicle)` 有值）的車不套用防破壞。
+
 ### 發布到 Workshop
 
 雙擊 `Publish_Workshop.bat`：先確認 Steam 用戶端已以作者帳號登入（未登入會喚起 Steam 並等你登入後重試），

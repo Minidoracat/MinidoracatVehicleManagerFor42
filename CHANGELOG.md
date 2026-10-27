@@ -20,6 +20,10 @@
 
 > 技術要點：伺服器的 `MinidoracatVehicleManagerAPI.canTrackKeyId(player, keyId, script?)` 用車鑰匙編號（給車型時只看那個車型）判 TRACK，不需要車子載入，結果和 `canUse(…, "TRACK")` 相同（沒綁定回 `true, "UNCLAIMED"`；同一個編號有兩筆以上紀錄時每筆都要准），不寫管理員越權稽核，可以輪詢；客戶端的 `MinidoracatVehicleManagerAPI.listOwned(playerNum)` 只讀已收到的車隊資料、不另外向伺服器查詢，只供介面顯示。車隊資料每一列多帶車鑰匙編號。介面清單見 README「給其他 MOD 的介面」。
 
+- **AutoDrive 的召喚也照綁車權限**：用 AutoDrive 讓沒人坐的車自己開過來（召喚）時，召喚的人要有這台車的「駕駛」權限；只分享查看位置或搭乘的人叫不動。召喚途中的車不算停著的車，和有人在開一樣沒有防破壞；車停好、召喚結束後，防破壞自動恢復。
+
+> 技術要點：伺服器包住 `MinidoracatAutoDriveAPI.startSummon(player, vehicle, opts)`，照 `canUse(player, vehicle, "DRIVE")` 判，不准時回 `false, <本 MOD 的翻譯鍵>`、不呼叫 AutoDrive；沒綁定的車照 AutoDrive。`MinidoracatAutoDriveAPI.summonInfo(vehicle)` 有值的車，防破壞當成有人在開、解除。AutoDrive 沒裝或沒有這兩個函式時都不動。
+
 ## [42.21.0-0.10.2] - 2026-10-27
 
 ### 修正

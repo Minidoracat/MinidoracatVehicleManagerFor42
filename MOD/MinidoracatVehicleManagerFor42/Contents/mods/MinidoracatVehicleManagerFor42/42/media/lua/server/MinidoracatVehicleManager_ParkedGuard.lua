@@ -5,7 +5,7 @@
 --   2. 每 RESTORE_MS 復原：同一原件（或兩次都沒有原件的零件，例：引擎、暖氣；槍擊從車頭會打到）耐久補回基準、
 --      車窗原件不見了換一片同型新玻璃（清掉布防後才出現的碎玻璃）、
 --      其他換件改認目前的為基準；durability 被重設（車重新載入、換件）就再拉高。油、電、貨物一律不補
---   3. 解除（有授權者上車、被拖、紀錄結束、模式不保全）：把拉高的 durability 寫回原值
+--   3. 解除（有授權者上車、被拖、AutoDrive 召喚中、紀錄結束、模式不保全）：把拉高的 durability 寫回原值
 -- 模式（沙盒 ParkedGuard）每次檢查重讀：OFF 不保全、ALL 所有綁定車、SLOTS 依保全名額：車主沒關掉的車（rec.guard ~= false）
 -- 依順序前 limit 台生效（ON），其餘 OVER。limit＝基本（guardOverrides 或沙盒）＋付費；順序見 ranked。
 -- 追蹤：生車、綁定成功、每 SCAN_MS 掃已載入車（O.R.bySqlId 先篩）→ discover；授權突變後 touch → 下次檢查重記基準。
@@ -227,6 +227,12 @@ local function occupied(v, rec)
     return false
 end
 
+-- AutoDrive 召喚中（車上沒人、自己在開）不是停著的車：照開車處理，撞到要扣損，結束後以當下車況重新布防
+local function summoned(v)
+    local api = MinidoracatAutoDriveAPI
+    return type(api) == "table" and type(api.summonInfo) == "function" and api.summonInfo(v) ~= nil
+end
+
 local function drop(e)
     R.tracked[e.id] = nil
     if R.byOid[e.oid] == e then R.byOid[e.oid] = nil end
@@ -253,7 +259,7 @@ local function check(e, t)
         disarm(e)
         return true
     end
-    local want = P.state(rec) == "ON" and v:getVehicleTowedBy() == nil and not occupied(v, rec)
+    local want = P.state(rec) == "ON" and v:getVehicleTowedBy() == nil and not occupied(v, rec) and not summoned(v)
     if want and e.base == nil then
         capture(e)
         e.nextRestore = t + P.RESTORE_MS

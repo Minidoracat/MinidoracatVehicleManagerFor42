@@ -5978,6 +5978,89 @@ check(#list == 1 and list[1].oid == r2.oid, "已結束（解除綁定）的車�
 isClient = savedIsClient
 MVM.Client.buckets = {}
 end)();
+(function()
+out("情境 SUM：AutoDrive 召喚（startSummon 要 DRIVE；召喚中的車不當停著的車保全）")
+boot()
+local G, P, AC = MVM.Guards, MVM.Parked, MVM.ACTIONS
+SB.ParkedGuard = MVM.GUARD.ALL
+-- 沒裝 AutoDrive、或 AutoDrive 舊版沒有召喚：什麼都不做
+MinidoracatAutoDriveAPI = nil
+G.install("SUM")
+MinidoracatAutoDriveAPI = { navDeviceApiVersion = 1 }
+G.install("SUM")
+check(MinidoracatAutoDriveAPI.startSummon == nil, "沒裝 AutoDrive、或 API 沒有 startSummon：不出錯、不加函式")
+-- 假 AutoDrive：startSummon 記呼叫次數、summonInfo 回 sessions 表
+local AD = { calls = 0, sessions = {} }
+MinidoracatAutoDriveAPI.startSummon = function(p, v, opts)
+    AD.calls, AD.opts = AD.calls + 1, opts
+    if p == nil or v == nil then return false, "UI_AD_BadArgs" end
+    return true
+end
+G.install("SUM")
+local API = MinidoracatAutoDriveAPI
+local OW, DR, TR, ST = player("sown", 1, 1), player("sdrv", 1, 1), player("strk", 1, 1), player("sstr", 1, 1)
+local car, loose = GH.car(91), GH.car(92)
+local pt = car.parts
+local r = rec(claim(OW, car).oid)
+cmd(OW, "addMember", { expectedOid = r.oid, username = "sdrv", actionBits = AC.DRIVE })
+cmd(OW, "addMember", { expectedOid = r.oid, username = "strk", actionBits = AC.TRACK + AC.PASSENGER })
+local opts = { mode = "target", x = 5, y = 6 }
+local ok, why = API.startSummon(OW, car, opts)
+check(ok == true and AD.calls == 1 and AD.opts == opts, "車主：交給 AutoDrive，opts 原樣傳過去")
+check(API.startSummon(DR, car) == true and AD.calls == 2, "有 DRIVE 的成員：可以召喚")
+ok, why = API.startSummon(TR, car)
+check(ok == false and why == "IGUI_MVM_Protected" and AD.calls == 2, "只有 TRACK（和搭乘）的成員：拒絕、回綁車翻譯鍵，AutoDrive 沒被呼叫")
+ok, why = API.startSummon(ST, car)
+check(ok == false and why == "IGUI_MVM_Protected" and AD.calls == 2, "陌生人：拒絕")
+check(API.startSummon(ST, loose) == true and AD.calls == 3, "沒綁定的車：照 AutoDrive")
+ok, why = API.startSummon(nil, car)
+check(ok == false and why == "UI_AD_BadArgs" and AD.calls == 4, "缺玩家：交給 AutoDrive 自己拒絕")
+r.lock = "RENT"
+ok, why = API.startSummon(OW, car)
+check(ok == false and why == "IGUI_MVM_Reason_RENT_LOCKED" and AD.calls == 4, "租用到期鎖住：車主也拒絕，回 RENT_LOCKED 的翻譯鍵")
+r.lock = nil
+-- 拒絕可能回的翻譯鍵，16 種語言都要有
+local missing = {}
+for _, lang in ipairs({ "AR", "CH", "CN", "DE", "EN", "ES", "ES_CL", "ES_MX", "FR", "JP", "KO", "PL", "PT", "PTBR", "RU", "TR" }) do
+    local f = assert(io.open(MEDIA .. "/shared/Translate/" .. lang .. "/IG_UI.json", "rb"))
+    local text = f:read("*a")
+    f:close()
+    for _, key in ipairs({ "IGUI_MVM_Protected", "IGUI_MVM_Reason_RENT_LOCKED", "IGUI_MVM_Reason_QUARANTINED",
+        "IGUI_MVM_Reason_FACTION_PAUSED", "IGUI_MVM_Reason_NOT_READY" }) do
+        if not text:find('"' .. key .. '"', 1, true) then missing[#missing + 1] = lang .. ":" .. key end
+    end
+end
+check(#missing == 0, "拒絕回的翻譯鍵 16 語都有（缺：" .. table.concat(missing, " ") .. "）")
+local w1 = API.startSummon
+G.install("again")
+API.startSummon(OW, car)
+check(API.startSummon == w1 and AD.calls == 5, "重跑 install：不重包（一次召喚只呼叫 AutoDrive 一次）")
+local l0 = #logLines
+API.startSummon = function() AD.calls = AD.calls + 100; return true end -- 後載的 MOD 換掉
+G.install("recheck")
+check(API.startSummon(ST, car) == false and AD.calls == 5 and GH.logged(l0, "ADAPTER_REWRAPPED", "startSummon"), "被換掉：重包並稽核，陌生人照樣被擋")
+
+-- 停車保全：summonInfo 有值＝召喚中，不是停著的車
+GH.tick()
+check(GH.armed(car), "還沒有 summonInfo：照常布防")
+API.summonInfo = function(v) return AD.sessions[v] end
+GH.tick()
+check(GH.armed(car), "有 summonInfo、這台沒在召喚：照常布防")
+AD.sessions[car] = { by = "sown", phase = "driving", startedMs = nowMs }
+GH.tick()
+check(not GH.armed(car) and pt.Engine.dur == 5 and pt.DoorFrontLeft.dur == 4, "召喚中：解除，durability 寫回原值")
+pt.DoorFrontLeft.cond = 55 -- 召喚途中撞到
+GH.tick(P.RESTORE_MS)
+check(pt.DoorFrontLeft.cond == 55 and not GH.armed(car), "召喚中撞到的車損：不補回")
+AD.sessions[car] = nil
+GH.tick()
+GH.tick(P.RESTORE_MS)
+check(GH.armed(car) and pt.DoorFrontLeft.cond == 55, "召喚結束：重新布防，以當下車況為基準（撞到的不補）")
+pt.DoorFrontLeft.cond = 40
+GH.tick(P.RESTORE_MS)
+check(pt.DoorFrontLeft.cond == 55, "結束後停著被打：照常補回新基準")
+MinidoracatAutoDriveAPI = nil
+end)();
 out("")
 if failures > 0 then
     out(failures .. " 項失敗，" .. passes .. " 項通過")

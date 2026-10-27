@@ -2,7 +2,7 @@
 --   1. 原版 timed action 的 server lifecycle 包裝：第一個突變前 canUse，拒絕就不呼叫原函式並推回權威狀態
 --   2. actor intent（§8.1.3）：NetTimedAction 的 character 可被冒充，受保護車的動作要求該連線先送過 prepareAction
 --   3. 虛擬鑰匙三個 adapter（發動／解鎖／開門免警報，Phase 0 gate 15 實證）
---   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）
+--   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）；召喚 MinidoracatAutoDriveAPI.startSummon 要 DRIVE
 --   5. 佔座 watchdog 與拖掛對帳（事後偵測，D 級）
 --   6. 放行的 complete／裝置槽變更之後通知停車保全重記基準（MVM.Parked.touch）
 -- 未受保護的車（無紀錄）一律照原版走，不要求 intent。
@@ -244,6 +244,7 @@ function G.install(reason)
         end
     end
     G.wrapAutoDrive()
+    G.wrapSummon()
     if reason ~= "recheck" then MVM.log("action guards installed (" .. tostring(reason) .. ")") end
 end
 
@@ -272,6 +273,25 @@ function G.wrapAutoDrive()
     if R.wrapped["MDAD.applyDeviceChange"] then O.audit("WARN", "ADAPTER_REWRAPPED", { reason = "MDAD.applyDeviceChange" }) end
     R.wrapped["MDAD.applyDeviceChange"] = true
     MDAD.applyDeviceChange = w
+end
+
+-- 召喚（車上沒人、AutoDrive 代開：到召喚者這裡、到指定地點、直線前進／後退）：呼叫端是其他 MOD 的伺服器 Lua，
+-- player 是發出召喚的玩家。要 DRIVE；沒紀錄的車照 AutoDrive。回 false 時第二個值是翻譯鍵，由呼叫端顯示
+function G.wrapSummon()
+    local api = MinidoracatAutoDriveAPI
+    if type(api) ~= "table" or type(api.startSummon) ~= "function" or R.marks[api.startSummon] then return end
+    local orig = api.startSummon
+    local w = function(player, vehicle, opts)
+        if player ~= nil and vehicle ~= nil then -- 缺參數交給 AutoDrive 自己拒絕
+            local ok, reason = O.canUse(player, vehicle, "DRIVE", { op = "summon", mod = "MinidoracatAutoDrive" })
+            if not ok then return false, reason == "NOT_AUTHORIZED" and "IGUI_MVM_Protected" or "IGUI_MVM_Reason_" .. tostring(reason) end
+        end
+        return orig(player, vehicle, opts)
+    end
+    R.marks[w] = true
+    if R.wrapped["startSummon"] then O.audit("WARN", "ADAPTER_REWRAPPED", { reason = "MinidoracatAutoDriveAPI.startSummon" }) end
+    R.wrapped["startSummon"] = true
+    api.startSummon = w
 end
 
 -- dedicated：所有 MOD 的 server Lua 載完後才有 OnServerStarted；SP：進遊戲才載入 server Lua
