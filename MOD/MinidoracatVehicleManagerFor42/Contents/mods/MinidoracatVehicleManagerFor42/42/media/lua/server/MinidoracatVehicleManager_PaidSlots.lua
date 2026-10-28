@@ -300,7 +300,7 @@ end
 function PS.tick()
     if E.status ~= "READY" then return end
     local t = getTimestampMs()
-    if t - PS.lastPollMs < PS.POLL_MS then return end
+    if MVM.recent(t, PS.lastPollMs, PS.POLL_MS) then return end
     PS.lastPollMs = t
     for _, product in ipairs(MVM.PRODUCTS) do PS.poll(product) end
 end

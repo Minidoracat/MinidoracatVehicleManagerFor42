@@ -254,7 +254,7 @@ end
 -- 逾期未對上車的待轉項刪除並寫入報告（audit）
 function M.expire(force)
     local t = now()
-    if not force and t - M.lastMaintMs < 60000 then return end
+    if not force and MVM.recent(t, M.lastMaintMs, 60000) then return end
     M.lastMaintMs = t
     local st = O.state()
     if st == nil or not O.ready() then return end

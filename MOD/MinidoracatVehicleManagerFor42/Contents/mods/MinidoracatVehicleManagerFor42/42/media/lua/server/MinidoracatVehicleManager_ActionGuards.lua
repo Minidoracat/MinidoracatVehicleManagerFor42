@@ -369,7 +369,7 @@ function G.watchdog()
     -- 重啟後可能還沒有任何命令觸發載入判定：由 watchdog 自己觸發，否則沒人操作前完全不巡查
     if O.state() == nil then return end
     local t = now()
-    if t - R.lastRun < WATCHDOG_MS then return end
+    if MVM.recent(t, R.lastRun, WATCHDOG_MS) then return end
     -- 觸發載入判定；RECOVERY_REQUIRED 時帳本不可寫，但仍以記憶體帳本唯讀執法（lookup 的唯讀分支）
     O.ready()
     R.lastRun = t
@@ -380,7 +380,7 @@ function G.watchdog()
         local player = list:get(i)
         R.seen[player] = t
         local due = R.due[player]
-        if due == nil then due = t; R.due[player] = t end
+        if due == nil or due > t + interval then due = t; R.due[player] = t end -- 比一個週期還遠：時鐘往回跳過，重排
         if due <= t and checked < WATCHDOG_BATCH then
             checked = checked + 1
             R.due[player] = t + interval
@@ -388,7 +388,7 @@ function G.watchdog()
         end
     end
     -- 每秒：召喚者重驗；離線玩家的到期紀錄清掉（留著只佔記憶體，不影響誰被查）
-    if t - R.lastPrune < 1000 then return end
+    if MVM.recent(t, R.lastPrune, 1000) then return end
     R.lastPrune = t
     local summoners = {}
     for player in pairs(R.summons) do summoners[#summoners + 1] = player end

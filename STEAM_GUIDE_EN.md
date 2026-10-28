@@ -229,6 +229,10 @@ Edited right in the Admin tab; these are the same settings as the sandbox option
 [*] [b]Red frame[/b]: the steering wheel icon in the family toolbar gets a red frame while it's on.
 [*] [b]Turns off automatically[/b]: when you log in again or the server restarts.
 [/list]
+[h3]Identity check (SteamID)[/h3]
+[list]
+[*] [b]Run it once after installing[/b]: on a Steam server, press "Import accounts from the whitelist" under "Identity check (SteamID)" in the Admin tab soon after installing this mod, to bind existing accounts to the Steam account they log in with. Until then, accounts that aren't bound yet are matched by name only; players who register later are bound automatically when they create a character, so you don't need to press it again.
+[/list]
 [h3]Split-screen and AllowCoop[/h3]
 [list]
 [*] [b]Impersonation risk[/b]: in vanilla, split-screen players type their own name and the server doesn't verify it, while vanilla safehouses and factions trust names, so other players can be impersonated.

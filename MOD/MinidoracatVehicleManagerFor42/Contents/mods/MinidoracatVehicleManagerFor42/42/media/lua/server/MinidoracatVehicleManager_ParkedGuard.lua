@@ -209,7 +209,7 @@ local function restore(e)
     O.audit("WARN", "GUARD_RESTORE", { actor = "SYSTEM", role = "GUARD", oid = e.oid, owner = rec and rec.ownerUser,
         reason = table.concat(log, " "), x = v:getX(), y = v:getY(), z = v:getZ() })
     local t = now()
-    if rec and t - (R.repairNotified[e.oid] or 0) >= P.NOTICE_MS then
+    if rec and not MVM.recent(t, R.repairNotified[e.oid], P.NOTICE_MS) then
         R.repairNotified[e.oid] = t
         notify(rec.ownerUser, { key = "IGUI_MVM_Guard_Repaired", oid = e.oid, bad = false })
     end
@@ -272,7 +272,7 @@ local function check(e, t)
         capture(e)
     end
     e.touched = false
-    if e.base ~= nil and t >= e.nextRestore then
+    if e.base ~= nil and (t >= e.nextRestore or e.nextRestore > t + P.RESTORE_MS) then -- 後者：時鐘往回跳過
         e.nextRestore = t + P.RESTORE_MS
         restore(e)
     end
@@ -314,7 +314,7 @@ function P.onAttack(attacker, oid)
     local who = O.principal(attacker) or tostring(attacker and attacker:getUsername())
     if rec and rec.ownerUser and rec.ownerUser ~= who then -- 車主自己被擋（太遠）不算被攻擊
         local key, t = oid .. "|" .. who, now()
-        if t - (R.attackNotified[key] or 0) >= P.NOTICE_MS then
+        if not MVM.recent(t, R.attackNotified[key], P.NOTICE_MS) then
             R.attackNotified[key] = t
             notify(rec.ownerUser, { key = guarded and "IGUI_MVM_Attack_Guarded" or "IGUI_MVM_Attack_Unguarded", oid = oid,
                 who = who, bad = true })
@@ -326,7 +326,7 @@ end
 -- ------------------------------------------------------------------ tick ---
 local function prune(map, t)
     local old = {}
-    for k, at in pairs(map) do if t - at >= P.NOTICE_MS then old[#old + 1] = k end end
+    for k, at in pairs(map) do if not MVM.recent(t, at, P.NOTICE_MS) then old[#old + 1] = k end end
     for _, k in ipairs(old) do map[k] = nil end
 end
 
@@ -344,9 +344,9 @@ end
 
 function P.tick()
     local t = now()
-    if t - R.lastTick < P.TICK_MS or O.state() == nil then return end
+    if MVM.recent(t, R.lastTick, P.TICK_MS) or O.state() == nil then return end
     R.lastTick = t
-    if t - R.lastScan >= P.SCAN_MS then
+    if not MVM.recent(t, R.lastScan, P.SCAN_MS) then
         R.lastScan = t
         P.scan(t)
     end
@@ -358,7 +358,7 @@ function P.tick()
         if i < 1 or i > size then i = 1 end
         local e = order[i]
         i = i + 1
-        if not e.gone and e.due <= t then
+        if not e.gone and (e.due <= t or e.due > t + P.CHECK_MS) then -- 後者：時鐘往回跳過
             n = n + 1
             e.due = t + P.CHECK_MS
             local ok, res = pcall(check, e, t)
