@@ -283,7 +283,7 @@ local function notify(player, label, reason, oid, guard)
     local S = MVM.Srv
     if S == nil or not instanceof(player, "IsoPlayer") then return end
     local key, t = tostring(player:getUsername()), getTimestampMs()
-    if t - (R.notified[key] or 0) < CG.NOTIFY_MS then return end
+    if MVM.recent(t, R.notified[key], CG.NOTIFY_MS) then return end
     R.notified[key] = t
     S.send(player, "enforcement", { action = label, reason = reason, oid = oid, guard = guard })
 end

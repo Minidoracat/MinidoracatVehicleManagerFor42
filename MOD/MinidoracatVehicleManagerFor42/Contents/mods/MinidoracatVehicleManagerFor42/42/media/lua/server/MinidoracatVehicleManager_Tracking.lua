@@ -58,7 +58,7 @@ function T.sample(vehicle, force)
     local last = T.last[rec.oid]
     if not force and last then
         local moved = math.abs(x - last.x) + math.abs(y - last.y) >= 1
-        if t - last.t < SAMPLE_MS or (not moved and t - last.t < HEARTBEAT_MS) then return end
+        if MVM.recent(t, last.t, SAMPLE_MS) or (not moved and MVM.recent(t, last.t, HEARTBEAT_MS)) then return end
     end
     if last then last.x, last.y, last.z, last.t = x, y, z, t
     else T.last[rec.oid] = { x = x, y = y, z = z, t = t } end
@@ -104,7 +104,7 @@ end
 
 function T.tick()
     local t = now()
-    if t - T.lastRun < SAMPLE_MS then return end
+    if MVM.recent(t, T.lastRun, SAMPLE_MS) then return end
     T.lastRun = t
     if O.state() == nil then return end
     O.ready() -- 觸發載入判定；RECOVERY_REQUIRED 仍唯讀追蹤（lookup 唯讀分支、observeVehicle 自己擋寫入）

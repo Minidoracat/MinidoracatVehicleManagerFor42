@@ -1358,6 +1358,12 @@ for i = 1, 25 do
 end
 limited = lastOf(A, "mutationAck")
 check(limited.reason == "RATE_LIMITED", "短時間大量請求 → RATE_LIMITED")
+-- 系統時鐘往回跳（getTimestampMs 是 System.currentTimeMillis）：視窗要重開，不能限流到時鐘追回來
+nowMs = nowMs - 3600000
+fire("OnClientCommand", MVM.MODULE, "reportLost", A, { protocol = MVM.PROTOCOL, requestId = "req-rate-back", expectedOid = "uuid-none0001" })
+check(lastOf(A, "mutationAck").requestId == "req-rate-back" and lastOf(A, "mutationAck").reason ~= "RATE_LIMITED",
+    "時鐘往回跳 → 限流視窗重開")
+nowMs = nowMs + 3600000
 
 
 out("情境 P3：車隊視窗純邏輯")
@@ -2299,6 +2305,13 @@ for _, due in pairs(G.R.due) do if due > t1 then cnt = cnt + 1 end end
 t1 = G.R.lastRun
 nowMs = nowMs + 100; G.watchdog()
 check(cnt == 100 and G.R.lastRun == t1, "100 位在線玩家、每 0.25 秒 25 人：1 秒內全數檢查過，0.25 秒內不重跑")
+-- 系統時鐘往回跳：watchdog 照樣巡查、每人的下次檢查時間重排，不停到時鐘追回來
+nowMs = nowMs - 3600000
+for _ = 1, 4 do nowMs = nowMs + 250; G.watchdog() end
+cnt = 0
+for _, due in pairs(G.R.due) do if due > nowMs - 1000 and due <= nowMs + 1000 then cnt = cnt + 1 end end
+check(G.R.lastRun == nowMs and cnt == 100, "時鐘往回跳 → watchdog 照樣每 0.25 秒跑、1 秒內 100 人全數重查")
+nowMs = nowMs + 3600000
 
 out("情境 P2-11：燒毀車拆解入口不能拆受保護車")
 boot()
@@ -2520,6 +2533,14 @@ for _ = 1, 8 do nowMs = nowMs + 250; PG.tick() end
 local rearmed = 0
 for i = 151, 200 do if many[i].parts.Engine.dur >= PG.BIG then rearmed = rearmed + 1 end end
 check(#PG.R.order < 200 and live == 50 and rearmed == 50, "停車保全：移出世界的車清出輪詢順序（壓縮），剩下的照樣每秒檢查")
+-- 系統時鐘往回跳：停車保全照樣 tick、每台車照樣輪到
+nowMs = nowMs - 3600000
+for i = 151, 200 do many[i].parts.Engine.dur = 3; PG.touch(many[i]) end
+for _ = 1, 8 do nowMs = nowMs + 250; PG.tick() end
+rearmed = 0
+for i = 151, 200 do if many[i].parts.Engine.dur >= PG.BIG then rearmed = rearmed + 1 end end
+check(rearmed == 50, "時鐘往回跳 → 停車保全照樣每秒檢查、重新布防")
+nowMs = nowMs + 3600000
 end)(); -- 分號：下一個情境也是 IIFE
 
 (function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
@@ -4872,6 +4893,12 @@ check(pt.DoorFrontLeft.cond == 60 and GH.logged(l0, "GUARD_RESTORE", "DoorFrontL
 pt.Engine:setDurability(5) -- 車重新載入：doInventoryItemStats 把 durability 重設
 GH.tick(P.RESTORE_MS)
 check(pt.Engine.dur == BIG, "durability 被重設：下次復原再拉高")
+-- 系統時鐘往回跳：下次補回時間比一個 RESTORE_MS 還遠就重排，不停到時鐘追回來（沒有 touch，只能靠補回）
+nowMs = nowMs - 3600000
+pt.Engine:setDurability(5)
+GH.tick(P.RESTORE_MS)
+check(pt.Engine.dur == BIG, "時鐘往回跳 → 停車保全照樣每 RESTORE_MS 補回")
+nowMs = nowMs + 3600000
 SB.ParkedGuard = MVM.GUARD.OFF
 GH.tick()
 check(pt.DoorFrontLeft.dur == 6 and pt.Engine.dur == 5 and pt.WindowFrontLeft.dur == 3, "解除：寫回目前件的原值（換上的門＝6）")

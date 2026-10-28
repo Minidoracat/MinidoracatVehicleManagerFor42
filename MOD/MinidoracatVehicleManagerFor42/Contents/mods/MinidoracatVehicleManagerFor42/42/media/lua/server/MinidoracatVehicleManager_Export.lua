@@ -310,7 +310,7 @@ function X.tick()
         X.applyJournal()
     end
     local t = now()
-    if t - X.lastExportMs < EXPORT_MS or X.exportedRevision == st.ledgerRevision then return end
+    if MVM.recent(t, X.lastExportMs, EXPORT_MS) or X.exportedRevision == st.ledgerRevision then return end
     X.lastExportMs = t
     if X.writeExport() then X.exportedRevision = st.ledgerRevision end
 end

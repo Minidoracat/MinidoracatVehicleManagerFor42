@@ -118,7 +118,7 @@ function E.entitlement(owner, product)
     else ent = res.entitlement end
     if ent and count(ent.usable) then return ent end
     local now = getTimestampMs()
-    if lastReadErrorAt[product] == nil or now - lastReadErrorAt[product] >= 60000 then
+    if not MVM.recent(now, lastReadErrorAt[product], 60000) then
         lastReadErrorAt[product] = now
         MVM.log("Economy getEntitlement failed source=" .. MVM.ECON_SOURCE .. " product=" .. tostring(product)
             .. " owner=" .. owner .. ": " .. (reason or "invalid_usable"))
@@ -152,7 +152,7 @@ function E.guardPaid(owner)
     if type(owner) ~= "string" then return 0 end
     local t = getTimestampMs()
     local at = E.guardFresh[owner]
-    if at and t - at < E.GUARD_TTL_MS then return guardLast[owner] or 0 end
+    if MVM.recent(t, at, E.GUARD_TTL_MS) then return guardLast[owner] or 0 end
     local ent = E.entitlement(owner, MVM.GUARD_PRODUCT)
     if ent then guardLast[owner] = ent.usable end
     E.guardFresh[owner] = t

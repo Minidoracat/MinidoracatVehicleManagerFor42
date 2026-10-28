@@ -155,7 +155,7 @@ end
 function RL.minute()
     if O.R.status ~= "READY" then return end
     local t = getTimestampMs()
-    if t - RL.lastMs < 60000 then return end
+    if MVM.recent(t, RL.lastMs, 60000) then return end
     RL.lastMs = t
     local st = O.state()
     if E.status == "ABSENT" then

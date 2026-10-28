@@ -535,7 +535,7 @@ end
 local function rateLimited(who)
     local t = now()
     local r = R.rate[who]
-    if r == nil or t - r.start >= RATE_WINDOW_MS then r = { start = t, n = 0 }; R.rate[who] = r end
+    if r == nil or not MVM.recent(t, r.start, RATE_WINDOW_MS) then r = { start = t, n = 0 }; R.rate[who] = r end
     r.n = r.n + 1
     return r.n > RATE_MAX
 end
@@ -1075,7 +1075,7 @@ local function unverified(command, player, args)
     local known = H[command] ~= nil or QUERIES[command] ~= nil
     O.deny("?" .. name, known and command or "UNKNOWN_COMMAND", nil, "IDENTITY_UNVERIFIED")
     local t = now()
-    if t - (R.unverified[name] or 0) >= 60000 then
+    if not MVM.recent(t, R.unverified[name], 60000) then
         R.unverified[name] = t
         S.send(player, "mutationAck", { ok = false, reason = "IDENTITY_UNVERIFIED", requestKind = command,
             requestId = type(args) == "table" and args.requestId or nil })
@@ -1147,7 +1147,7 @@ function S.minute()
     local t = now()
     for who, att in pairs(R.attempts) do if t > att.expiresAtMs then R.attempts[who] = nil end end
     for who in pairs(R.streams) do if online[who] == nil then R.streams[who] = nil end end
-    for name, at in pairs(R.unverified) do if t - at >= 60000 then R.unverified[name] = nil end end
+    for name, at in pairs(R.unverified) do if not MVM.recent(t, at, 60000) then R.unverified[name] = nil end end
     O.maintain(false)
     O.scanLoaded(false)
     S.watchSandbox()

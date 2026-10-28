@@ -44,6 +44,12 @@ MVM.ACTION_ORDER = { "PASSENGER", "DRIVE", "CARGO", "FUEL", "REPAIR", "SALVAGE",
 
 function MVM.log(msg) print(MVM.LOG_PREFIX .. tostring(msg)) end
 
+-- t 距 at 不到 ms 毫秒；at 為 nil 或 t 早於 at 都算「已過」。getTimestampMs 是牆上時鐘（System.currentTimeMillis），
+-- 系統時鐘往回調時 t - at 是負的：「ms 內不再做」的節流與視窗只寫 t - at < ms 會卡到時鐘追回來，要用這個判斷。
+-- 有效期限（過了才失效或釋放：intent、claim 嘗試、KEYID_TOW 接續、閒置釋放、紀錄保留）不用它：往回跳只會延長，
+-- 改用 not MVM.recent 反而在時間往回調時立刻全部到期
+function MVM.recent(t, at, ms) return at ~= nil and t >= at and t - at < ms end
+
 function MVM.hasBit(bits, bit)
     if type(bits) ~= "number" or type(bit) ~= "number" then return false end
     return math.floor(bits / bit) % 2 == 1

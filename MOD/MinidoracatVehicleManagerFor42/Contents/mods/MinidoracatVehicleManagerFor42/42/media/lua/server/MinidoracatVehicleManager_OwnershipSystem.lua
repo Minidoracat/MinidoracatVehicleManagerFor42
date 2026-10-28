@@ -990,7 +990,7 @@ end
 local DOWNTIME_MS = 10 * 60000
 function O.maintain(force)
     local t = now()
-    if not force and t - R.lastMaintMs < 60000 then return end
+    if not force and MVM.recent(t, R.lastMaintMs, 60000) then return end
     R.lastMaintMs = t
     flushDenies()
     if not O.ready() then return end
@@ -1084,7 +1084,7 @@ end
 -- 每 10 分鐘掃一次已載入車輛；IsoCell.getVehicles 在 42.20.4 是 Set，只能用 iterator
 function O.scanLoaded(force)
     local t = now()
-    if not force and t - R.lastScanMs < 600000 then return end
+    if not force and MVM.recent(t, R.lastScanMs, 600000) then return end
     R.lastScanMs = t
     local it = getCell():getVehicles():iterator()
     while it:hasNext() do O.observeVehicle(it:next()) end
