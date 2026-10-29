@@ -112,7 +112,7 @@
       "wid": "3171167894",
       "mod_id": "damnlib",
       "name": "that DAMN Library",
-      "acked_time_updated": 1792520028,
+      "acked_time_updated": 1793126759,
       "affects": [
         "CG.RULES.that_damn_lib.setPartModData（一律拒絕）",
         "CG.RULES.that_damn_lib.silentPartInstall／updatePartConditions／savePartsCondition",
@@ -120,7 +120,7 @@
         "CG.RULES.vehicle.setDoorOpen（damnlib 門動畫同步）",
         "CG.neutralize NEG_IDS.that_damn_lib（_vehicleId、vehicle 改 -1）"
       ],
-      "recheck": "42.21 載入 common＋42.20：核對 DAMN_Server.lua 的 that_damn_lib 分派（_vehicleId 解析成 _vehicle、setDoorOpen 同步）、Commands/DAMN_Data.lua 的 setPartModData、DAMN_Parts.lua 的 silentPartInstall、DAMN_Armor.lua 的 updatePartConditions／savePartsCondition 的指令名與欄位，拒絕時把 _vehicleId 改 -1 是否仍讓處理器安靜結束；shared/DAMN_Parts.lua 與 client/DAMN_Armor_Client.lua 的 CTIS 是否仍以駕駛身分送 vehicle.setContainerContentAmount、值在容量內。出現新的改車伺服器指令（含改零件 modData）→ CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例。新增高於 42.20 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。",
+      "recheck": "42.21 載入 common＋42.20：核對 DAMN_Server.lua 的 that_damn_lib 分派（_vehicleId 解析成 _vehicle、setDoorOpen 同步）、Commands/DAMN_Data.lua 的 setPartModData、DAMN_Parts.lua 的 silentPartInstall、DAMN_Armor.lua 的 updatePartConditions／savePartsCondition 的指令名與欄位，拒絕時把 _vehicleId 改 -1 是否仍讓處理器安靜結束；shared/DAMN_Parts.lua 與 client/DAMN_Armor_Client.lua 的 CTIS 是否仍以駕駛身分送 vehicle.setContainerContentAmount、值在容量內。出現新的改車伺服器指令（含改零件 modData）→ CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例。新增高於 42.20 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。同一項目的子 MOD damnlibGlass（0.9879b 新增，車窗透明）目前只有客戶端檔（DAMN_DepthSorting 每 tick 改坐在車上的本機玩家 Z，伺服器不採信車上玩家的座標封包，不影響防火牆距離與樓層判定）；出現 server／shared Lua 要照上面重掃。",
       "watch_files": [
         "mods/damnlib/42.20/mod.info",
         "mods/damnlib/42.20/media/lua/server/DAMN_Server.lua",
