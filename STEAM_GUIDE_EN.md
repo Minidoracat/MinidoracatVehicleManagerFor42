@@ -34,6 +34,7 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [/list]
 [*] [b]When blocked[/b]: they see "This vehicle is claimed; you need the owner's share to use it" and the car stays as it was.
 [*] [b]While another car tows it[/b]: if someone without tow permission gets in the driver's seat of the car towing yours, your car is unhitched and stays where it is, and you get a notice. The towing car isn't protected unless it's claimed too, so it can be driven away.
+[*] [b]AutoDrive summon[/b]: calling the car over with AutoDrive needs the Drive permission for it; if the share is taken back mid-summon, the car stops.
 [*] [b]Who owns it[/b]: right-click next to the car and open Vehicle Manager: the first line shows the owner's account name; for cars shared with you or with everyone, the next line lists what you can do.
 [*] [b]Weapons aren't blocked[/b]: to keep a parked car safe from axes and guns, see "Damage guard".
 [*] [b]No key needed[/b]: owners can unlock, open doors (without the alarm) and start the car without a physical key (servers can turn this off).
@@ -49,8 +50,8 @@ They follow permissions; without permission they don't show up in the inventory.
 Claiming stops other players from driving, opening or stripping your car; damage guard is what keeps a parked car safe from axes and guns.
 [h3]When it works[/h3]
 [list]
-[*] [b]Active[/b]: while no owner or shared player is inside and the car isn't being towed, weapons (melee or guns) can't damage a claimed car.
-[*] [b]Paused[/b]: while someone is inside or the car is towed; it starts again when they get out.
+[*] [b]Active[/b]: while no owner or shared player is inside and the car isn't being towed or summoned by AutoDrive, weapons (melee or guns) can't damage a claimed car.
+[*] [b]Paused[/b]: while someone is inside, the car is towed or AutoDrive is summoning it; it starts again when they get out or the summon ends.
 [*] [b]While driving[/b]: crashes and zombies damage the car as usual, and that damage isn't repaired.
 [/list]
 [h3]Repairs[/h3]
