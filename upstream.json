@@ -112,7 +112,7 @@
       "wid": "3171167894",
       "mod_id": "damnlib",
       "name": "that DAMN Library",
-      "acked_time_updated": 1793126759,
+      "acked_time_updated": 1793302994,
       "affects": [
         "CG.RULES.that_damn_lib.setPartModData（一律拒絕）",
         "CG.RULES.that_damn_lib.silentPartInstall／updatePartConditions／savePartsCondition",
