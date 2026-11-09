@@ -176,8 +176,8 @@ function PS.path(product) return X.folder() .. PS.of[product or MVM.ECON_PRODUCT
 function PS.displayPath(product) return "Zomboid/Lua/" .. PS.path(product) end
 
 -- readLine 去掉行尾（含 \r）：比對用的文字一律以 \n 接回、不含最後換行。
--- 回 text，或 nil 與 "missing"／"unreadable"：getFileReader 把開檔的 IOException 吞掉回 nil（LuaManager.java:5949-5960），
--- 要用同一個 Lua 目錄根的 cacheFileExists（:5541-5549）分辨，讀不到的檔不能當成不存在而覆寫
+-- 回 text，或 nil 與 "missing"／"unreadable"：getFileReader 把開檔的 IOException 吞掉回 nil（LuaManager.java:5923-5934），
+-- 要用同一個 Lua 目錄根的 cacheFileExists（:5568-5576）分辨，讀不到的檔不能當成不存在而覆寫
 local function readText(path)
     local ok, r = pcall(getFileReader, path, false)
     if not ok or r == nil then

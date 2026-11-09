@@ -171,7 +171,7 @@ local SPECIAL = {
     ISStartVehicleEngine = { complete = function(a, orig)
         local v = a.character:getVehicle()
         if virtualKey(a) and v and v:isDriver(a.character) then
-            v:tryStartEngine(true) -- ACL DRIVE 取代實體鑰匙（BaseVehicle.java:7509-7535）
+            v:tryStartEngine(true) -- ACL DRIVE 取代實體鑰匙（BaseVehicle.java:7611-7637）
             return true
         end
         return orig(a)

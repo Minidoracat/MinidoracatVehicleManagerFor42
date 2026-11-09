@@ -1,7 +1,7 @@
 -- 伺服器 Lua 目錄下的兩個檔（Zomboid/Lua/MinidoracatVehicleManager/<伺服器名>/）：
 -- 1. vehicles.json：給人看的綁定清單。帳本版本號有變才重寫、最多每 10 秒一次；單向輸出，改它不會回寫帳本。
 -- 2. positions.txt：車輛位置日誌。帳本只在世界存檔時落盤，但引擎在上下車、車上斷線、區塊卸載時就把車的座標
---    commit 進 vehicles.db（BaseVehicle.java:2481-2483,2540-2542、VehiclesDB2.java:854-870）。這裡在同樣的時機
+--    commit 進 vehicles.db（BaseVehicle.java:2496-2498,2555-2557、VehiclesDB2.java:864-880）。這裡在同樣的時機
 --    追加一行，伺服器崩潰重啟時讀一次、把比帳本新的座標補回帳本，讓地圖與車隊清單指向車真正會出現的位置。
 --    平常只寫不讀；啟動時壓縮成每台車一行。
 -- ponytail: 管理員手動還原舊備份時，日誌裡的座標會比還原後的 vehicles.db 新：車被載入時會自動校正；

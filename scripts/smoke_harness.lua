@@ -290,7 +290,7 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:hasModData() return self.bodyMd ~= nil end
     function v:getModData() self.bodyMd = self.bodyMd or {}; return self.bodyMd end
     function v:transmitModData() count("body") end
-    -- 引擎 getClosestPointOnExtents：點到車身矩形四條邊的最近距離平方（BaseVehicle.java:4971-4997，點在車身內也是到最近的邊）。
+    -- 引擎 getClosestPointOnExtents：點到車身矩形四條邊的最近距離平方（BaseVehicle.java:5005-5031，點在車身內也是到最近的邊）。
     -- 假車不轉向：車身 x＝世界 x、車身 z＝世界 y（都相對車的位置）
     function v:getClosestPointOnExtents(wx, wy)
         local lx, lz = wx - self.x, wy - self.y

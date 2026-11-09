@@ -27,7 +27,7 @@
                            樣式（/home/ 路徑、IP、SteamID64、ssh、主機名）當最後防線。
                            攻擊配方與玩家識別資訊機器認不出來，靠撰寫規則（AGENTS.md）
  12. client 物品名稱用 getItemName — getItemNameFromFullType 只回翻譯表的物品名；原版背包顯示車輛零件時再接上車型，
-                          getItemName 照同一規則（LuaManager.java:8745-8763）。BigGasTank1／2／3 因此都顯示「油箱 (大型)」
+                          getItemName 照同一規則（LuaManager.java:8681-8699）。BigGasTank1／2／3 因此都顯示「油箱 (大型)」
                           （Economy、UIFor42 2026-10-18）。不拿來顯示或不會出現車輛零件的用法寫進 verify_ignore.txt 並註明查證依據
 
 新增檢查時：同步把對應的坑記進 AGENTS.md 踩坑錄，並依「踩坑進化協議」回流到
@@ -271,7 +271,7 @@ fail("MOD/ 樹無雜物（AI 狀態目錄／.gitkeep）", junk) if junk \
     else ok("MOD/ 樹無雜物（AI 狀態目錄／.gitkeep）")
 
 # ---- 7b. mod.info 多值欄位語法 ----
-# ChooseGameInfo.java:224/226/228/230 用 contains("key=") 後直接 split(",")。
+# ChooseGameInfo.java:229/231/233/235 用 contains("key=") 後直接 split(",")。
 manifest_bad = []
 multi_keys = ("require", "incompatible", "loadModAfter", "loadModBefore")
 canonical_re = re.compile(
@@ -305,9 +305,9 @@ fail("mod.info 多值欄位語法", manifest_bad) if manifest_bad \
     else ok("mod.info 多值欄位語法")
 
 # ---- 7c. MOD 清單封面（poster=）----
-# 主選單「模組」的封面走一般貼圖，只畫 poster= 的第一張（ChooseGameInfo.java:519-536）。
+# 主選單「模組」的封面走一般貼圖，只畫 poster= 的第一張（ChooseGameInfo.java:524-541）。
 # APNG 在這條路上只解出各幀、主貼圖是空的，畫成空白也不報錯（ImageData.java:136-191）；
-# poster= 找不到檔一樣是空白。路徑照引擎：先找版本資料夾，沒有再找 common/（ChooseGameInfo.java:210-219）。
+# poster= 找不到檔一樣是空白。路徑照引擎：先找版本資料夾，沒有再找 common/（ChooseGameInfo.java:215-224）。
 # 有 preview.png 的項目（要上 Workshop）版本資料夾的 mod.info 一定要有 poster=；還沒做封面的開發中 MOD 不擋。
 # 2026-10-26 Zones 玩家回報後盤點：24 個 MOD 的封面都是 APNG，SafeSpawn 的 42/mod.info 沒有 poster=。
 def png_animated(path):
@@ -555,7 +555,7 @@ else:
 
 # ---- 12. client 顯示物品名稱用 getItemName ----
 # getItemNameFromFullType 只回翻譯表的物品名；原版背包顯示車輛零件時再接上車型，getItemName 照同一規則
-# （LuaManager.java:8745-8763；getItemNameFromFullType 在 :8579-8583）。BigGasTank1／2／3 因此都顯示「油箱 (大型)」
+# （LuaManager.java:8681-8699；getItemNameFromFullType 在 :8539-8543）。BigGasTank1／2／3 因此都顯示「油箱 (大型)」
 # （Economy、UIFor42 物品挑選器 2026-10-18，家族 pitfalls.md「UI」）。不拿來顯示、或那裡不會出現車輛零件的用法：
 # 把 finding 寫進 scripts/verify_ignore.txt（寫到檔名加冒號就好，不寫行號），上一行用 # 註明查證依據。
 _LONG_COMMENT = re.compile(r"--\[(=*)\[.*?\]\1\]", re.DOTALL)

@@ -217,7 +217,7 @@ end
 
 -- ------------------------------------------------------------------ track ---
 -- 有授權者在車上（車主或有該座位權限的人）就不布防；沒權限的乘客不算（佔座由 watchdog 處理）。
--- 停著的車幾乎都是空的：先用 hasPassenger 一次問完（BaseVehicle.java:1836-1845，任一座位有角色），有人才逐座看
+-- 停著的車幾乎都是空的：先用 hasPassenger 一次問完（BaseVehicle.java:1848-1857，任一座位有角色），有人才逐座看
 local function occupied(v, rec)
     if not v:hasPassenger() then return false end
     for seat = 0, v:getMaxPassengers() - 1 do

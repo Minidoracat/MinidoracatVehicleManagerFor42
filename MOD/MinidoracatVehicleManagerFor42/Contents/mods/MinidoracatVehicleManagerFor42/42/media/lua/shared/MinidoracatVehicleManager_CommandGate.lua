@@ -1,8 +1,8 @@
 -- 伺服器端車輛指令防火牆：原版與第三方 MOD 依客戶端指定的車輛 id 改車的 OnClientCommand 處理器，先在這裡檢查權限與距離
--- （各規則旁註出處）。專用伺服器先對所有 MOD 跑完 shared 再跑 server（GameServer.java:1469-1471；每一輪內原版檔在前、
--- 再依 MOD 順序，LuaManager.java:1151-1193），Event.trigger 依 Add 順序呼叫、所有回呼拿到同一個 args table
+-- （各規則旁註出處）。專用伺服器先對所有 MOD 跑完 shared 再跑 server（GameServer.java:1509-1511；每一輪內原版檔在前、
+-- 再依 MOD 順序，LuaManager.java:1152-1194），Event.trigger 依 Add 順序呼叫、所有回呼拿到同一個 args table
 -- （Event.java:52-63）：本檔在 shared 註冊的回呼一定排在那些 server 檔處理器前面，拒絕時把 args 消掉，後面的處理器
--- 就安靜結束。伺服器上的 sendClientCommand 直接觸發本機 OnClientCommand（LuaManager.java:8936-8938）：TimedAction 的
+-- 就安靜結束。伺服器上的 sendClientCommand 直接觸發本機 OnClientCommand（LuaManager.java:8872-8874）：TimedAction 的
 -- complete 回送（ATAISLoadVehicle.lua:45、ISOpenTent.lua:46）也經過這裡，判定與 adapter 相同（同一人、同一台車）。
 -- 沒有規則的指令立刻放行；目標都不受保護照原版；受保護的目標要有權限、送指令的人要在附近。
 -- 放行後通知停車保全目標車是授權改的（MVM.Parked.touch）；拒絕砸窗與客戶端回報打到車（CG.onHit）時問停車保全這台車有沒有布防
@@ -13,7 +13,7 @@ require "MinidoracatVehicleManager_Actions"
 local MVM = MinidoracatVehicleManager
 local CG = {}
 
--- 距離量到車身（CG.within）、同一樓層；10 格同原版掛拖車的遠距警告（BaseVehicle.java:10050-10057，原版只記 log 不擋）
+-- 距離量到車身（CG.within）、同一樓層；10 格同原版掛拖車的遠距警告（BaseVehicle.java:10099-10106，原版只記 log 不擋）
 CG.NEAR = 10
 CG.LAUNCH_NEAR = 15 -- Autotsar 卸車的生車座標由客戶端決定（CommonCommands.lua:1001），受保護時限制在拖車附近
 CG.NOTIFY_MS = 2000
@@ -21,7 +21,7 @@ CG.NOTIFY_MS = 2000
 local R = { notified = {}, logged = {} }
 CG.R = R
 
--- id 不是整數：處理器的 getVehicleById 會把小數截斷成別台車（KahluaNumberConverter.java:28-31、LuaManager.java:10279-10281），一律拒絕
+-- id 不是整數：處理器的 getVehicleById 會把小數截斷成別台車（KahluaNumberConverter.java:28-31、LuaManager.java:10229-10231），一律拒絕
 local BAD = false
 local function veh(id)
     if id == nil then return nil end
@@ -124,23 +124,24 @@ end
 -- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因。
 -- 目標清單可帶 anchor／loaded／spawn（距離錨點）與 check（權限、距離都通過後的額外條件，回拒絕原因或 nil）
 local RULES = {
-    -- 原版 server/Vehicles/VehicleCommands.lua。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用
+    -- 原版 server/Vehicles/VehicleCommands.lua（行號是 42.22.2）。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用。
+    -- fixPart／setTirePressure／setDoorOpen 是 42.21 以前的原版處理器（42.22 刪除；versionMin 涵蓋的舊版伺服器仍有，規則留著）
     vehicle = {
-        fixPart = one("REPAIR"), -- :28-58 設定零件耐久
-        setContainerContentAmount = amount("amount", false), -- :76-89（damnlib CTIS 也用它補胎壓，DAMN_Parts.lua:463-469）
-        setTirePressure = amount("psi", true), -- :132-148
-        setDoorOpen = function(_, a) -- :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
+        fixPart = one("REPAIR"), -- 42.21 :28-58 設定零件耐久
+        setContainerContentAmount = amount("amount", false), -- :44-57（damnlib CTIS 也用它補胎壓，DAMN_Parts.lua:463-469）
+        setTirePressure = amount("psi", true), -- 42.21 :132-148
+        setDoorOpen = function(_, a) -- 42.21 :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
             local v = veh(a.vehicle)
             return { { vehicle = v, action = MVM.doorAction({ part = v and v:getPartById(a.part) or nil }) } }
         end,
-        damageWindow = one("SALVAGE"), -- :169-185
-        putKeyOnDoor = one("PASSENGER"), removeKeyFromDoor = one("PASSENGER"), -- :264-280
-        attachTrailer = function(_, a) -- :399-411
+        damageWindow = one("SALVAGE"), -- :100-116
+        putKeyOnDoor = one("PASSENGER"), removeKeyFromDoor = one("PASSENGER"), -- :195-211
+        attachTrailer = function(_, a) -- :330-342
             return { { vehicle = veh(a.vehicleA), action = "TOW" }, { vehicle = veh(a.vehicleB), action = "TOW" } }
         end,
-        detachTrailer = tows("vehicle"), detachTrailerSpontaneous = tows("vehicle"), -- :413-429
-        setHSV = one("REPAIR"), setSkinIndex = one("REPAIR"), setBloodIntensity = one("REPAIR"), -- :339-346,440-458
-        remove = one("MANAGE"), -- :372-379 移除整台車
+        detachTrailer = tows("vehicle"), detachTrailerSpontaneous = tows("vehicle"), -- :344-360
+        setHSV = one("REPAIR"), setSkinIndex = one("REPAIR"), setBloodIntensity = one("REPAIR"), -- :270-277,371-389
+        remove = one("MANAGE"), -- :303-310 移除整台車
     },
     -- tsarslib common/media/lua/server/CommonTemplates/CommonCommands.lua
     commonlib = {
@@ -210,7 +211,7 @@ local function once(key, msg)
 end
 
 -- (x, y, z) 在車 o 的車身 d 格內、同一樓層（z＝nil 不比樓層）；NaN 一律不算近。量到車身矩形（引擎 getClosestPointOnExtents：
--- 腳本 extents＋centerOfMassOffset、依車身朝向，BaseVehicle.java:4971-4997），不是物理原點：半掛拖車的原點在車身後段，
+-- 腳本 extents＋centerOfMassOffset、依車身朝向，BaseVehicle.java:5005-5031），不是物理原點：半掛拖車的原點在車身後段，
 -- tsarslib 拖車選單與引擎自動脫鉤都從牽引車駕駛座送（W900＋貨櫃拖車掛正時駕駛座離拖車原點 9.9～11.4 格、離車身 1.3～2.7 格）。
 -- 指令防火牆、Autotsar adapter、打車回報與綁定距離（Server.lua near、F.findLoaded）共用
 local closest = nil

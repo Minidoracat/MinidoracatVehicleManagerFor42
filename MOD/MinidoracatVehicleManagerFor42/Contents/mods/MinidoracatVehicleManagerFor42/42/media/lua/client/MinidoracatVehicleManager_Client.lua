@@ -137,7 +137,7 @@ local function accessChanged()
 end
 
 -- 伺服器存好新的沙盒選項（全服預設名額、閒置天數、停車保全模式、保全名額）後通知（沒有原版 Lua 廣播）：本機沙盒選項跟著改並投影到 SandboxVars，
--- 否則之後從原版沙盒 UI 存檔會把舊值整份送回伺服器（GameServer.java:1694-1708）。不是整數的欄位不動
+-- 否則之後從原版沙盒 UI 存檔會把舊值整份送回伺服器（GameServer.java:1732-1746）。不是整數的欄位不動
 local SYNCED = { claimsPerPlayer = "MinidoracatVehicleManager.ClaimsPerPlayer",
     releaseDays = "MinidoracatVehicleManager.InactivityReleaseDays",
     parkedGuard = "MinidoracatVehicleManager.ParkedGuard",
@@ -414,8 +414,8 @@ function MVM.clientCanUse(actor, vehicle, action)
     return false, "NOT_AUTHORIZED"
 end
 
--- 本機玩家有車輛管理權限：與 server O.isAdmin 同一個 Capability（IsoPlayer.getRole：IsoPlayer.java:7562、
--- Role.hasCapability：Role.java:185；原版 ISChat.lua:469 同法）。client 的 checkPermissions 一律回 true（LuaManager.java:3048-3057），不能用
+-- 本機玩家有車輛管理權限：與 server O.isAdmin 同一個 Capability（IsoPlayer.getRole：IsoPlayer.java:7575、
+-- Role.hasCapability：Role.java:185；原版 ISChat.lua:469 同法）。client 的 checkPermissions 一律回 true（LuaManager.java:3075-3084），不能用
 function MVM.clientIsAdmin(player)
     if not (isClient() and player and Capability) then return false end
     local role = player:getRole()
@@ -536,7 +536,7 @@ local function reissue(player, vehicle, row)
     C.request(player, "reissueWitness", { vehicleId = vehicle:getId(), expectedOid = row.oid })
 end
 
--- 原版車外選單之後附加一個子選單（ISVehicleMenu.lua:594）
+-- 原版車外選單之後附加一個子選單（ISVehicleMenu.lua:596）
 local fillOutside = ISVehicleMenu.FillMenuOutsideVehicle
 function ISVehicleMenu.FillMenuOutsideVehicle(playerNum, context, vehicle, test)
     local result = fillOutside(playerNum, context, vehicle, test)

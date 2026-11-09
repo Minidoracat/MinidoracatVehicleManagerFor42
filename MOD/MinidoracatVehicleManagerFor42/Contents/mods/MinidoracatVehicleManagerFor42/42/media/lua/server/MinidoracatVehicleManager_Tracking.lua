@@ -77,7 +77,7 @@ function T.leave(vehicle)
 end
 
 -- 玩家離開座位（下車、換車、身分變了、離線）：最後一次取樣並寫入帳本 lastKnown（低頻持久化，§7.3）；
--- 引擎在下車與車上斷線時也把車與拖掛寫進 vehicles.db（GameServer.java:2594-2595）
+-- 引擎在下車與車上斷線時也把車與拖掛寫進 vehicles.db（GameServer.java:2646-2647）
 local function unseat(player)
     local prev = T.seat[player]
     T.seat[player], T.who[player], T.seen[player] = nil, nil, nil

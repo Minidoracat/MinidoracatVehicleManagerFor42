@@ -256,8 +256,8 @@ if first then
 end
 
 -- ------------------------------------------------------- vehicle storage ---
--- 下列原版 Lua 容器入口會先問 BaseVehicle.canAccessContainer（BaseVehicle.java:8329-8347 → 容器的 Lua test）：物品欄列容器
--- （ISInventoryPage.lua:1585,1609,1764）、製作取材、搬重物與屍體、開門後自動打開後車廂都走它。MOD 車的 test 函式各自命名、
+-- 下列原版 Lua 容器入口會先問 BaseVehicle.canAccessContainer（BaseVehicle.java:8439-8457 → 容器的 Lua test）：物品欄列容器
+-- （ISInventoryPage.lua:1585,1609,1765）、製作取材、搬重物與屍體、開門後自動打開後車廂都走它。MOD 車的 test 函式各自命名、
 -- 名稱存在沒有 getter 的 VehicleScript 欄位（VehicleScript.java:2169-2173），無法逐一包，所以包 Java 方法表：
 -- Kahlua 把類別方法放在全域 __classmetatables[類別].__index（KahluaUtil.java:132-134、LuaJavaClassExposer.java:224-231），
 -- `BaseVehicle.class` 是公開的類別物件（LuaJavaClassExposer.java:287）。只影響 Lua 呼叫端；Java 內部的二次檢查不經過這裡。

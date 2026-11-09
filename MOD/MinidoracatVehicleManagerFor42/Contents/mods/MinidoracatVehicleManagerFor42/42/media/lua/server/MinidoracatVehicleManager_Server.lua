@@ -276,7 +276,7 @@ end
 
 -- 全服預設名額＝沙盒 ClaimsPerPlayer、閒置釋放天數＝沙盒 InactivityReleaseDays、停車保全模式＝ParkedGuard、
 -- 免費保全名額＝GuardSlotsPerPlayer（唯一真相，帳本不另存）。
--- R.sandboxSeen 是上次看到的值：原版沙盒 UI 送回整份選項（GameServer.java:1694-1708）會直接改掉它們，
+-- R.sandboxSeen 是上次看到的值：原版沙盒 UI 送回整份選項（GameServer.java:1732-1746）會直接改掉它們，
 -- 每分鐘比對一次，變了就重送快照（名額、期限與保全顯示即時更新）
 local DEFAULT_QUOTA_OPTION = "MinidoracatVehicleManager.ClaimsPerPlayer"
 local RELEASE_DAYS_OPTION = "MinidoracatVehicleManager.InactivityReleaseDays"
@@ -311,8 +311,8 @@ function S.watchSandbox()
     S.resnapshot(nil)
 end
 
--- SandboxOptions.set／toLua／saveServerLuaFile（SandboxOptions.java:572-582,279-285,683-685）：
--- 存檔是 FileWriter，I/O 錯誤時回 false（:862-962），只有回 true 才算寫入
+-- SandboxOptions.set／toLua／saveServerLuaFile（SandboxOptions.java:568-578,279-285,679-681）：
+-- 存檔是 FileWriter，I/O 錯誤時回 false（:858-958），只有回 true 才算寫入
 local function writeSandbox(opts, option, value)
     opts:set(option, value)
     opts:toLua()
@@ -338,7 +338,7 @@ local function saveSandbox(option, value, old)
 end
 
 -- 管理員總表分段送出。每條連線的送出緩衝區固定 1,000,000 bytes、不會擴充（UdpConnection.java:40-41），
--- sendServerCommand（GameServer.java:3460-3482）在 startPacket 上鎖（UdpConnection.java:198-201）後序列化、
+-- sendServerCommand（GameServer.java:3507-3529）在 startPacket 上鎖（UdpConnection.java:198-201）後序列化、
 -- 只接 IOException：超過時丟 BufferOverflowException，封包沒送、鎖不釋放（解鎖在 endPacket :303-305）。
 -- 所以每段最多 ADMIN_PART_ITEMS 筆（車輛列與玩家合計）：最壞一列約 0.5 KB（車名 64 bytes、帳號 50 字元），
 -- 每段遠低於 200 KB（harness 以 TableNetworkUtils 格式量測）。同一次總表各段帶同一個 id 與 part／parts，
@@ -1066,7 +1066,7 @@ end
 
 -- -------------------------------------------------------------- dispatch ---
 -- 主玩家沒通過 SteamID 驗證（principal 回 nil）：管理員仍可看總表、匯入身分修好自己（角色來自連線、不看名字：
--- GameServer.java:2841），以 "?帳號" 記稽核；其他命令聚合進 DENY，每分鐘最多回一次原因。分割畫面玩家不回
+-- GameServer.java:2869），以 "?帳號" 記稽核；其他命令聚合進 DENY，每分鐘最多回一次原因。分割畫面玩家不回
 local UNVERIFIED_ADMIN = { adminList = true, adminIdentity = true }
 local function unverified(command, player, args)
     if not isServer() or player == nil or player:getPlayerNum() ~= 0 then return nil end
@@ -1156,8 +1156,8 @@ end
 Events.EveryOneMinute.Add(S.minute)
 
 -- 新生與 DB 載入的車都觸發（Phase 0 gate 10）：即時 reconcile 身分、取消 PENDING_RELEASE。
--- 拖車 MOD 卸車用 addVehicleDebug，本事件在它呼叫 addToWorld 時就觸發（42.21 LuaManager.java:10821 → BaseVehicle.java:7964
--- createPhysics → :904），此時還沒配 sqlId（:10822 才 VehiclesDB2.addVehicle），車身與零件 modData 也是之後才還原
+-- 拖車 MOD 卸車用 addVehicleDebug，本事件在它呼叫 addToWorld 時就觸發（42.22.2 LuaManager.java:10821 → BaseVehicle.java:8013
+-- createPhysics → :913），此時還沒配 sqlId（:10822 才 VehiclesDB2.addVehicle），車身與零件 modData 也是之後才還原
 -- （MSW_Common_Commands.lua launchVehicle 先 addVehicleDebug、再 restoreSlotDataToVehicle；ATAISLaunchVehicle.lua:66 生車、
 -- :88-93 還原零件）：有「已移出世界」的紀錄（接回帶見證的車）或 MVCK 待轉項（車身 SQLID 是還原後才有）時，下一個 tick 再看一次。
 -- 停車保全在這兩處開始追蹤（還沒有 sqlId 的車由 ParkedGuard 每分鐘掃描補上）

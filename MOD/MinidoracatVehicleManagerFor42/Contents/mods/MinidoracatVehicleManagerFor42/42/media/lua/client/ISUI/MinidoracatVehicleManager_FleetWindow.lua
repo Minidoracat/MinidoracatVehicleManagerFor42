@@ -1787,7 +1787,7 @@ function FleetWindow:onImportMVCK()
 end
 
 -- 身分匯入：向伺服器要帳號清單（requestUsers 需 SeeNetworkUsers：RequestNetworkUsersPacket.java:15；沒有能力送出，
--- 伺服器會記成越權封包：PacketTypes.java:300-312，所以先在本機擋），收到後只取 isInWhitelist 的帳號。不在 whitelist 的列是在線的
+-- 伺服器會記成越權封包：PacketTypes.java:294-306，所以先在本機擋），收到後只取 isInWhitelist 的帳號。不在 whitelist 的列是在線的
 -- 分割畫面／改名名字，封包配的是該連線的 SteamID（NetworkUsersPacket.java:35-47）。原版管理面板同樣讀 getUsers（ISUsersList.lua:156,268,376）
 local USERS_WAIT_MS = 30000
 function FleetWindow:onImportIdentity()
@@ -2048,7 +2048,7 @@ local function syncEntry()
 end
 
 -- MainOptions 只在載入當下已有 ModOptions 資料時建 MODS 分頁（MainOptions.lua:409-411），所以檔案載入時就註冊。
--- ModOptions.ini 只由 PZAPI.ModOptions:load() 讀回，原版唯一呼叫點是建立選項畫面（MainOptions.lua:2796）；不押在它的
+-- ModOptions.ini 只由 PZAPI.ModOptions:load() 讀回，原版唯一呼叫點是建立選項畫面（MainOptions.lua:2791）；不押在它的
 -- 建立時機上，註冊後自己讀一次（load 只照 ini 覆寫 option.value，重複呼叫無害）。沒有 PZAPI、讀不到或沒有值一律顯示
 local function registerOptions()
     local options = PZAPI.ModOptions:getOptions("MinidoracatVehicleManager")
@@ -2056,7 +2056,7 @@ local function registerOptions()
         options = PZAPI.ModOptions:create("MinidoracatVehicleManager", "ContextMenu_MVM_Menu")
         options:addTickBox("ShowButton", "IGUI_MVM_Opt_ShowButton", true, "IGUI_MVM_Opt_ShowButton_tooltip")
     end
-    -- 按「套用」時 MainOptions 先把畫面值寫回 option 再呼叫 apply（MainOptions.lua:3760-3763）
+    -- 按「套用」時 MainOptions 先把畫面值寫回 option 再呼叫 apply（MainOptions.lua:3755-3758）
     function options:apply()
         showButton = self:getOption("ShowButton"):getValue() ~= false
         syncEntry()

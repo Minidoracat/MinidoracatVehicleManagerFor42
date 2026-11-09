@@ -52,7 +52,7 @@ local BUILTIN = {
     { class = "ISOpenVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
     { class = "ISCloseVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
     { class = "ISOpenCloseVehicleWindow", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },
-    -- 燒毀車拆解會產出材料並永久刪車（ISRemoveBurntVehicle.lua:60-143）。
+    -- 燒毀車拆解會產出材料並永久刪車（ISRemoveBurntVehicle.lua:60-145）。
     -- 受保護的車只准車主／管理員拆（MANAGE）；燒毀車本身不可綁定，所以一般燒毀車照原版
     { class = "ISRemoveBurntVehicle", action = "MANAGE", vehicleOf = ownVehicle, stages = { "serverStart", "complete" } },
     -- 砸窗：以 VehicleWindow:getPart() 解析，不信 vehiclePart 欄位；建築窗戶不經本 MOD
