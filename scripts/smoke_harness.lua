@@ -4164,6 +4164,36 @@ check(ctis and ctisOver == nil and ctisFuel == nil and ctisOut == nil,
     "只有 DRIVE 的駕駛：容量內補胎壓（KI5 CTIS）放行；超過容量、油箱、不在駕駛座都擋")
 check(armor and armorAny == nil and armorLogic == nil and armorNone == nil and armorSeat1 == nil and armorOut == nil,
     "只有 DRIVE 的駕駛：W900 裝甲補償只放行 rLib 裝甲零件、耐久等於裝甲表 condition；其他值、其他 logic、沒有裝甲表、非駕駛座、不在車上都要 REPAIR")
+-- 乘客的客戶端自動補胎壓（CTIS 每次更新重送）：照樣拒絕、照樣記 DENY，但不提示送的人；減壓、不在車上的人照樣提示
+local function toasts(p)
+    local n = 0
+    for _, msg in ipairs(outbox[p.name] or {}) do if msg.command == "enforcement" then n = n + 1 end end
+    return n
+end
+local function denyCount(label)
+    local n = 0
+    for key, count in pairs(O.R.denyAgg) do if key:find(label, 1, true) and key:find("fmem", 1, true) then n = n + count end end
+    return n
+end
+local TIRE_UP = { part = "TireFrontLeft", amount = 35 }
+grant(MVM.ACTIONS.PASSENGER)
+MB.vehicle, pv.seats[1] = pv, MB
+nowMs = nowMs + 3000
+local q0, d0 = toasts(MB), denyCount("CMD:vehicle.setContainerContentAmount")
+local quietUp = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
+local quietPsi = send(MB, "vehicle", "setTirePressure", { vehicle = pv.id, part = "TireFrontLeft", psi = 35 }).hit
+local q1, d1 = toasts(MB), denyCount("CMD:vehicle.setContainerContentAmount")
+local loudDown = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 0 }).hit
+local q2 = toasts(MB)
+MB.vehicle, pv.seats[1] = nil, nil
+nowMs = nowMs + 3000
+local loudOut = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
+local q3 = toasts(MB)
+rp.grants = {}
+check(quietUp == nil and quietPsi == nil and d1 == d0 + 1 and q1 == q0,
+    "只有 PASSENGER 的乘客：自動補胎壓照樣拒絕、照樣記 DENY，不提示（CTIS 每次更新重送，提示會一直跳）")
+check(loudDown == nil and q2 == q0 + 1 and loudOut == nil and q3 == q0 + 2,
+    "乘客放氣、不在車上的人補胎壓：拒絕並照常提示")
 local savedOwn = MVM.Own
 MVM.Own = nil
 prints = 0
@@ -5188,6 +5218,36 @@ local handheld = { _cls = "Radio" }
 check(stage(A("ISRadioAction", { character = ST, mode = "RemoveHeadphones", device = handheld }), "complete") == true and ran() == n + 4,
     "手持／擺在地上的收音機（不是車輛零件）：照原版")
 ISRadioAction = nil
+end)();
+
+(function()
+out("情境 G4b：車上收音機的 CD（ISDeviceMediaAction adapter：置物；格子上沒有車、手持裝置不管）")
+boot()
+vclass("ISDeviceMediaAction", { "complete" })
+G.install("G4b")
+local OW, ST, MB, CM = player("mdown", 1, 1), player("mdstr", 1, 1), player("mdmem", 1, 1), player("mdcar", 1, 1)
+local v = vehicle(113, 1103, 9103, "Base.CarNormal", 1, 1, { "Engine", "Radio" })
+local r = rec(claim(OW, v).oid)
+cmd(OW, "addMember", { expectedOid = r.oid, username = "mdmem", actionBits = MVM.ACTIONS.PASSENGER })
+cmd(OW, "addMember", { expectedOid = r.oid, username = "mdcar", actionBits = MVM.ACTIONS.CARGO })
+-- 原版送的 parameter：車上收音機＝車所在的格子（IsoGridSquare.getDeviceData 先找壓在那格上的車）；手持裝置＝物品 id
+local onCar = { _cls = "IsoGridSquare", getVehicleContainer = function() return v end }
+local noCar = { _cls = "IsoGridSquare", getVehicleContainer = function() return nil end }
+local function media(p, isRemove, parameter)
+    intent(p, "ISDeviceMediaAction", v)
+    return stage(A("ISDeviceMediaAction", { character = p, isRemove = isRemove, parameter = parameter or onCar }), "complete")
+end
+local function ran() return calls("ISDeviceMediaAction.complete") end
+local n = ran()
+check(media(ST, true) == false and media(ST, false) == false and ran() == n and lastOf(ST, "enforcement").reason == "NOT_AUTHORIZED",
+    "陌生人：受保護車上收音機的 CD 取出、放入都拒絕，原版 complete 沒跑")
+check(media(MB, true) == false and media(MB, false) == false and ran() == n, "只有搭乘權限的成員：不能取出或放入 CD（要置物）")
+check(media(OW, true) == true and media(CM, false) == true and ran() == n + 2, "車主、有置物權限的成員：放行")
+check(stage(A("ISDeviceMediaAction", { character = OW, isRemove = true, parameter = onCar }), "complete") == false and ran() == n + 2,
+    "車主沒有 intent（冒充）：拒絕")
+check(media(ST, true, noCar) == true and media(ST, true, 12345) == true and ran() == n + 4,
+    "格子上沒有車（地上的收音機、電視）或手持裝置（物品 id）：照原版")
+ISDeviceMediaAction = nil
 end)();
 
 (function()

@@ -99,7 +99,9 @@ end
 
 -- 容量類零件（setContainerContentAmount／setTirePressure）依真實零件分類：輪胎加壓 REPAIR、減壓 SALVAGE，
 -- 駕駛自己的客戶端（KI5 CTIS 自動補胎壓，DAMN_Armor_Client.lua:30-48）在容量內只要 DRIVE；其他零件（油箱等）FUEL，
--- setTirePressure 對非輪胎零件一律拒絕（原版只有輪胎會送）
+-- setTirePressure 對非輪胎零件一律拒絕（原版只有輪胎會送）。
+-- 乘客的客戶端也會自動送補胎壓（DAMN_Client.lua:88-89 任何座位都跑、每次更新重送）：照樣要 REPAIR、照樣記拒絕，
+-- 只是不提示送的人（quiet）：他沒有做任何操作，提示會一直跳
 local function amount(field, tireOnly)
     return function(p, a)
         local v = veh(a.vehicle)
@@ -112,7 +114,10 @@ local function amount(field, tireOnly)
         if part == nil then return { { vehicle = v, action = tireOnly and "REPAIR" or "FUEL" } } end
         local ok = type(n) == "number" and n >= 0 and n <= part:getContainerCapacity()
         if ok and isDriver(p, v) then return { { vehicle = v, action = "DRIVE" } } end
-        return { { vehicle = v, action = (ok and n >= part:getContainerContentAmount()) and "REPAIR" or "SALVAGE" } }
+        local up = ok and n >= part:getContainerContentAmount()
+        local out = { { vehicle = v, action = up and "REPAIR" or "SALVAGE" } }
+        out.quiet = up and p:getVehicle() == v
+        return out
     end
 end
 
@@ -223,7 +228,7 @@ function CG.within(o, x, y, z, d)
 end
 local function near(p, o, d) return CG.within(o, p:getX(), p:getY(), p:getZ(), d) end
 
--- 回 allow, reason, oid
+-- 回 allow, reason, oid, quiet（quiet＝目標表要求權限不足時不提示送指令的人）
 function CG.decide(rule, module, command, player, args)
     local O = MVM.Own
     local targets, onAllow, refuse = rule(player, args)
@@ -242,7 +247,7 @@ function CG.decide(rule, module, command, player, args)
         end
         if rec ~= nil then
             guarded = true
-            if not ok then return false, reason, rec.oid end
+            if not ok then return false, reason, rec.oid, targets.quiet end
             if t.vehicle and not near(player, t.vehicle, CG.NEAR) then return false, "TOO_FAR", rec.oid end
         end
     end
@@ -295,16 +300,17 @@ function CG.onCommand(module, command, player, args)
     if rule == nil or type(args) ~= "table" then return end
     local O = MVM.Own
     if O == nil then return once("NO_LEDGER", "command gate inactive: ownership system not loaded") end
-    local ok, allow, reason, oid = pcall(CG.decide, rule, module, command, player, args)
+    local ok, allow, reason, oid, quiet = pcall(CG.decide, rule, module, command, player, args)
     local label = "CMD:" .. module .. "." .. command
     if not ok then
         once("ERR " .. label, "command gate error (refused) " .. label .. ": " .. tostring(allow))
-        allow, reason, oid = false, "GATE_ERROR", nil
+        allow, reason, oid, quiet = false, "GATE_ERROR", nil, nil
     end
     if allow then return end
     CG.neutralize(module, args)
     reason = reason or "NOT_AUTHORIZED"
     O.deny(O.principal(player) or ("?" .. tostring(player and player:getUsername())), label, oid, reason)
+    if quiet then return end
     -- 車主通知的節流在 ParkedGuard（同一台車＋同一攻擊者），這裡每次拒絕都要問
     local guard = nil
     if label == "CMD:vehicle.damageWindow" then guard = MVM.Parked and MVM.Parked.onAttack(player, oid) or false end

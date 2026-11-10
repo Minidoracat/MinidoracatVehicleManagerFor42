@@ -118,6 +118,14 @@ local BUILTIN = {
       action = function(a) return (a.mode == "AddHeadphones" or a.mode == "RemoveHeadphones") and { "CARGO" } or { "PASSENGER" } end,
       vehicleOf = function(a) return a.device ~= nil and instanceof(a.device, "VehiclePart") and a.device:getVehicle() or nil end,
       partOf = function(a) return a.device ~= nil and instanceof(a.device, "VehiclePart") and a.device or nil end },
+    -- 收音機的 CD／錄影帶（TimedActions/ISDeviceMediaAction.lua:13-32）：伺服器在 complete 把媒體交給執行者或放進裝置。
+    -- parameter 是裝置所在的格子（車上收音機＝車所在的格子，IsoGridSquare.getDeviceData 先找壓在那格上的車，
+    -- IsoGridSquare.java:9903-9911）或手持裝置的物品 id（ISDeviceBatteryAction.lua:33-54）→ 只管格子上有車的
+    { class = "ISDeviceMediaAction", action = "CARGO", stages = { "complete" },
+      vehicleOf = function(a)
+          local sq = a.parameter
+          return sq ~= nil and instanceof(sq, "IsoGridSquare") and sq:getVehicleContainer() or nil
+      end },
 }
 
 local byClass = {}
