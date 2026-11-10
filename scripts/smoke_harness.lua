@@ -4189,7 +4189,7 @@ local q2 = toasts(MB)
 nowMs = nowMs + 3000
 local loudOver = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 99 }).hit -- 超過容量
 local q3 = toasts(MB)
-MB.vehicle, pv.seats[1] = nil, nil
+MB.vehicle, pv.seats[1] = uv, nil -- 坐在別台車上：不算「坐在這台車上」
 nowMs = nowMs + 3000
 local loudOut = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
 local q4 = toasts(MB)
@@ -4213,7 +4213,7 @@ rp.grants = {}
 check(quietUp == nil and quietSame == nil and quietPsi == nil and d1 == d0 + 2 and q1 == q0,
     "只有 PASSENGER 的乘客：自動補胎壓（到容量內、不低於現值）照樣拒絕、照樣記 DENY，不提示（CTIS 每次更新重送，提示會一直跳）")
 check(loudDown == nil and q2 == q0 + 1 and loudOver == nil and q3 == q0 + 2 and loudOut == nil and q4 == q0 + 3,
-    "乘客放氣、乘客灌超過容量、不在車上的人補胎壓：拒絕並照常提示")
+    "乘客放氣、乘客灌超過容量、坐在別台車上的人補胎壓：拒絕並照常提示")
 check(quietDriver == nil and q5 == q4 and loudDriverDown == nil and q6 == q4 + 1,
     "駕駛座上沒有 DRIVE 的人：補胎壓拒絕、不提示；放氣拒絕並提示")
 check(repairUp and quietLocked == nil and lockedDeny and q7 == q6,

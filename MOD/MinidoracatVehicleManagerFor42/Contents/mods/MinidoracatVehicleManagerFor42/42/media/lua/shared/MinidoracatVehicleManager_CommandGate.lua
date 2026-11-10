@@ -98,9 +98,9 @@ local function unload(carried, x, y, z)
 end
 
 -- 容量類零件（setContainerContentAmount／setTirePressure）依真實零件分類：輪胎加壓 REPAIR、減壓 SALVAGE，
--- 駕駛自己的客戶端（KI5 CTIS 自動補胎壓，DAMN_Armor_Client.lua:30-48）在容量內只要 DRIVE；其他零件（油箱等）FUEL，
+-- 駕駛自己的客戶端（KI5 CTIS 自動補胎壓，DAMN_Armor_Client.lua:29-49）在容量內只要 DRIVE；其他零件（油箱等）FUEL，
 -- setTirePressure 對非輪胎零件一律拒絕（原版只有輪胎會送）。
--- 車上的人的客戶端會自動送補胎壓（DAMN_Client.lua:74-117 上車時不分座位就掛上每次更新的工作，DAMN_Armor_Client.lua:29-49
+-- 車上的人的客戶端會自動送補胎壓（DAMN_Client.lua:75-118 上車時不分座位就掛上每次更新的工作，DAMN_Armor_Client.lua:29-49
 -- 胎壓不足就重送）：權限不足時照樣拒絕、照樣記拒絕，只是不提示送的人（quiet）：他沒有做任何操作，提示會一直跳。
 -- 駕駛座上被拒的人（例：車被租用鎖定）也一樣
 local function amount(field, tireOnly)
