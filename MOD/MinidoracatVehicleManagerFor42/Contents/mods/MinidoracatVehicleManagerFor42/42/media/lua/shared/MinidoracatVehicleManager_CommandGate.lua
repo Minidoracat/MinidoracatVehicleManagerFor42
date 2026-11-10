@@ -100,8 +100,9 @@ end
 -- 容量類零件（setContainerContentAmount／setTirePressure）依真實零件分類：輪胎加壓 REPAIR、減壓 SALVAGE，
 -- 駕駛自己的客戶端（KI5 CTIS 自動補胎壓，DAMN_Armor_Client.lua:30-48）在容量內只要 DRIVE；其他零件（油箱等）FUEL，
 -- setTirePressure 對非輪胎零件一律拒絕（原版只有輪胎會送）。
--- 乘客的客戶端也會自動送補胎壓（DAMN_Client.lua:74-117 上車時不分座位就掛上每次更新的工作，DAMN_Armor_Client.lua:29-49
--- 胎壓不足就重送）：照樣要 REPAIR、照樣記拒絕，只是不提示送的人（quiet）：他沒有做任何操作，提示會一直跳
+-- 車上的人的客戶端會自動送補胎壓（DAMN_Client.lua:74-117 上車時不分座位就掛上每次更新的工作，DAMN_Armor_Client.lua:29-49
+-- 胎壓不足就重送）：權限不足時照樣拒絕、照樣記拒絕，只是不提示送的人（quiet）：他沒有做任何操作，提示會一直跳。
+-- 駕駛座上被拒的人（例：車被租用鎖定）也一樣
 local function amount(field, tireOnly)
     return function(p, a)
         local v = veh(a.vehicle)
@@ -113,9 +114,8 @@ local function amount(field, tireOnly)
         end
         if part == nil then return { { vehicle = v, action = tireOnly and "REPAIR" or "FUEL" } } end
         local ok = type(n) == "number" and n >= 0 and n <= part:getContainerCapacity()
-        if ok and isDriver(p, v) then return { { vehicle = v, action = "DRIVE" } } end
         local up = ok and n >= part:getContainerContentAmount()
-        local out = { { vehicle = v, action = up and "REPAIR" or "SALVAGE" } }
+        local out = { { vehicle = v, action = (ok and isDriver(p, v)) and "DRIVE" or (up and "REPAIR" or "SALVAGE") } }
         out.quiet = up and p:getVehicle() == v
         return out
     end

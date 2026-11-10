@@ -4193,11 +4193,31 @@ MB.vehicle, pv.seats[1] = nil, nil
 nowMs = nowMs + 3000
 local loudOut = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
 local q4 = toasts(MB)
+-- 駕駛座上被拒的人（沒有 DRIVE）與租用鎖定的車上有 REPAIR 的乘客：補胎壓一樣不提示；駕駛放氣照常提示
+nowMs = nowMs + 3000
+MB.vehicle, pv.seats[0] = pv, MB
+local quietDriver = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
+local q5 = toasts(MB)
+local loudDriverDown = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 0 }).hit
+local q6 = toasts(MB)
+pv.seats[0], pv.seats[1] = nil, MB
+grant(MVM.ACTIONS.REPAIR)
+local repairUp = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit ~= nil
+rp.lock = "RENT"
+nowMs = nowMs + 3000
+local quietLocked = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
+local q7, lockedDeny = toasts(MB), denied("CMD:vehicle.setContainerContentAmount", "RENT_LOCKED")
+rp.lock = nil
+MB.vehicle, pv.seats[1] = nil, nil
 rp.grants = {}
 check(quietUp == nil and quietSame == nil and quietPsi == nil and d1 == d0 + 2 and q1 == q0,
     "只有 PASSENGER 的乘客：自動補胎壓（到容量內、不低於現值）照樣拒絕、照樣記 DENY，不提示（CTIS 每次更新重送，提示會一直跳）")
 check(loudDown == nil and q2 == q0 + 1 and loudOver == nil and q3 == q0 + 2 and loudOut == nil and q4 == q0 + 3,
     "乘客放氣、乘客灌超過容量、不在車上的人補胎壓：拒絕並照常提示")
+check(quietDriver == nil and q5 == q4 and loudDriverDown == nil and q6 == q4 + 1,
+    "駕駛座上沒有 DRIVE 的人：補胎壓拒絕、不提示；放氣拒絕並提示")
+check(repairUp and quietLocked == nil and lockedDeny and q7 == q6,
+    "有 REPAIR 的乘客補胎壓放行；車被租用鎖定時拒絕（RENT_LOCKED）、照樣記 DENY、不提示")
 local savedOwn = MVM.Own
 MVM.Own = nil
 prints = 0
