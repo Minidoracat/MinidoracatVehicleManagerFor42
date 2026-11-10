@@ -42,7 +42,7 @@ local function seated(field, outside)
     end
 end
 
--- damnlib 的裝甲同步（DAMN_Client.lua:75-118 上車時存零件耐久、:36-39 車上每秒同步、:141 下車時再送一次，多半是空的）：
+-- damnlib 的裝甲同步（DAMN_Client.lua:75-118 上車時存零件耐久、:36-39 車上有耐久變動時最多每秒送一次、:141 下車時再送一次，多半是空的）：
 -- 都是車上的人的客戶端自動送的。照樣要 REPAIR、照樣記拒絕，只是不提示送的人（quiet，同下面的 amount()）；
 -- 不在這台車上又帶著耐久值的照常提示
 local function armorSync(p, a)

@@ -4238,11 +4238,24 @@ nowMs = nowMs + 3000
 local armorOther = send(MB, "that_damn_lib", "savePartsCondition", { _vehicleId = pv.id }).hit
 local a4 = toasts(MB)
 MB.vehicle = nil
+-- 空的同步只蓋掉「權限不足」的提示：離太遠、id 不是整數照常提示
+local mbX = MB.x
+grant(MVM.ACTIONS.REPAIR)
+MB.x = 40
+nowMs = nowMs + 3000
+local armorFar = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id, conditions = {} }).hit
+local a5, farDeny = toasts(MB), denied("CMD:that_damn_lib.updatePartConditions", "TOO_FAR")
+MB.x = mbX
+nowMs = nowMs + 3000
+local armorFrac = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id + 0.5, conditions = {} }).hit
+local a6, fracDeny = toasts(MB), denied("CMD:that_damn_lib.updatePartConditions", "BAD_ID")
 rp.grants = {}
 check(armorSave == nil and armorSeated == nil and armorExit == nil and ad1 == ad0 + 3 and a1 == a0,
     "只有 PASSENGER 的乘客：damnlib 上車存耐久、車上同步、下車送的空同步照樣拒絕、照樣記 DENY，不提示")
 check(armorOut == nil and a2 == a0 + 1 and armorSaveOut == nil and a3 == a0 + 2 and armorOther == nil and a4 == a0 + 3,
     "不在這台車上的人送帶耐久值的同步、存耐久，坐在別台車上的人存耐久：拒絕並照常提示")
+check(armorFar == nil and farDeny and a5 == a4 + 1 and armorFrac == nil and fracDeny and a6 == a5 + 1,
+    "空的同步離車太遠（TOO_FAR）、id 不是整數（BAD_ID）：拒絕並照常提示")
 local savedOwn = MVM.Own
 MVM.Own = nil
 prints = 0
