@@ -100,8 +100,8 @@ end
 -- 容量類零件（setContainerContentAmount／setTirePressure）依真實零件分類：輪胎加壓 REPAIR、減壓 SALVAGE，
 -- 駕駛自己的客戶端（KI5 CTIS 自動補胎壓，DAMN_Armor_Client.lua:30-48）在容量內只要 DRIVE；其他零件（油箱等）FUEL，
 -- setTirePressure 對非輪胎零件一律拒絕（原版只有輪胎會送）。
--- 乘客的客戶端也會自動送補胎壓（DAMN_Client.lua:88-89 任何座位都跑、每次更新重送）：照樣要 REPAIR、照樣記拒絕，
--- 只是不提示送的人（quiet）：他沒有做任何操作，提示會一直跳
+-- 乘客的客戶端也會自動送補胎壓（DAMN_Client.lua:74-117 上車時不分座位就掛上每次更新的工作，DAMN_Armor_Client.lua:29-49
+-- 胎壓不足就重送）：照樣要 REPAIR、照樣記拒絕，只是不提示送的人（quiet）：他沒有做任何操作，提示會一直跳
 local function amount(field, tireOnly)
     return function(p, a)
         local v = veh(a.vehicle)
@@ -127,7 +127,8 @@ local function lightbar(_, a)
 end
 
 -- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因。
--- 目標清單可帶 anchor／loaded／spawn（距離錨點）與 check（權限、距離都通過後的額外條件，回拒絕原因或 nil）
+-- 目標清單可帶 anchor／loaded／spawn（距離錨點）、check（權限、距離都通過後的額外條件，回拒絕原因或 nil）
+-- 與 quiet（權限不足時不提示送指令的人；照樣拒絕、照樣記 DENY，其他拒絕原因照常提示）
 local RULES = {
     -- 原版 server/Vehicles/VehicleCommands.lua（行號是 42.22.2）。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用。
     -- fixPart／setTirePressure／setDoorOpen 是 42.21 以前的原版處理器（42.22 刪除；versionMin 涵蓋的舊版伺服器仍有，規則留著）

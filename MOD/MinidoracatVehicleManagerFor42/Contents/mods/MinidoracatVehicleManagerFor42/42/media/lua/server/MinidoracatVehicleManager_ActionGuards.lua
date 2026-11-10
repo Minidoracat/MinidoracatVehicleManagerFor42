@@ -22,6 +22,7 @@ require "TimedActions/ISSmashWindow"
 require "TimedActions/Animals/ISAddAnimalInTrailer"
 require "TimedActions/Animals/ISRemoveAnimalFromTrailer"
 require "RadioCom/ISRadioAction"
+require "TimedActions/ISDeviceMediaAction"
 
 local MVM = MinidoracatVehicleManager
 local O, S = MVM.Own, MVM.Srv

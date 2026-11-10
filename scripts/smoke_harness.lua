@@ -4181,19 +4181,23 @@ MB.vehicle, pv.seats[1] = pv, MB
 nowMs = nowMs + 3000
 local q0, d0 = toasts(MB), denyCount("CMD:vehicle.setContainerContentAmount")
 local quietUp = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
+local quietSame = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 30 }).hit -- 等於現值
 local quietPsi = send(MB, "vehicle", "setTirePressure", { vehicle = pv.id, part = "TireFrontLeft", psi = 35 }).hit
 local q1, d1 = toasts(MB), denyCount("CMD:vehicle.setContainerContentAmount")
 local loudDown = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 0 }).hit
 local q2 = toasts(MB)
+nowMs = nowMs + 3000
+local loudOver = send(MB, "vehicle", "setContainerContentAmount", { vehicle = pv.id, part = "TireFrontLeft", amount = 99 }).hit -- 超過容量
+local q3 = toasts(MB)
 MB.vehicle, pv.seats[1] = nil, nil
 nowMs = nowMs + 3000
 local loudOut = send(MB, "vehicle", "setContainerContentAmount", args1(TIRE_UP)(pv)).hit
-local q3 = toasts(MB)
+local q4 = toasts(MB)
 rp.grants = {}
-check(quietUp == nil and quietPsi == nil and d1 == d0 + 1 and q1 == q0,
-    "只有 PASSENGER 的乘客：自動補胎壓照樣拒絕、照樣記 DENY，不提示（CTIS 每次更新重送，提示會一直跳）")
-check(loudDown == nil and q2 == q0 + 1 and loudOut == nil and q3 == q0 + 2,
-    "乘客放氣、不在車上的人補胎壓：拒絕並照常提示")
+check(quietUp == nil and quietSame == nil and quietPsi == nil and d1 == d0 + 2 and q1 == q0,
+    "只有 PASSENGER 的乘客：自動補胎壓（到容量內、不低於現值）照樣拒絕、照樣記 DENY，不提示（CTIS 每次更新重送，提示會一直跳）")
+check(loudDown == nil and q2 == q0 + 1 and loudOver == nil and q3 == q0 + 2 and loudOut == nil and q4 == q0 + 3,
+    "乘客放氣、乘客灌超過容量、不在車上的人補胎壓：拒絕並照常提示")
 local savedOwn = MVM.Own
 MVM.Own = nil
 prints = 0
@@ -5221,7 +5225,7 @@ ISRadioAction = nil
 end)();
 
 (function()
-out("情境 G4b：車上收音機的 CD（ISDeviceMediaAction adapter：置物；格子上沒有車、手持裝置不管）")
+out("情境 G4b：車上收音機的 CD（ISDeviceMediaAction adapter：置物；目標看動作建立時解出的裝置，不看格子現在壓著哪台車）")
 boot()
 vclass("ISDeviceMediaAction", { "complete" })
 G.install("G4b")
@@ -5230,23 +5234,30 @@ local v = vehicle(113, 1103, 9103, "Base.CarNormal", 1, 1, { "Engine", "Radio" }
 local r = rec(claim(OW, v).oid)
 cmd(OW, "addMember", { expectedOid = r.oid, username = "mdmem", actionBits = MVM.ACTIONS.PASSENGER })
 cmd(OW, "addMember", { expectedOid = r.oid, username = "mdcar", actionBits = MVM.ACTIONS.CARGO })
--- 原版送的 parameter：車上收音機＝車所在的格子（IsoGridSquare.getDeviceData 先找壓在那格上的車）；手持裝置＝物品 id
+-- 原版 new 由 parameter 解出裝置存在 deviceData，complete 只用它（ISDeviceMediaAction.lua:38-47）；
+-- parameter：車上收音機＝建立當時車所在的格子，手持裝置＝物品 id
+local function dev(parent) return { getParent = function() return parent end } end
+local carDev = dev(v.parts.Radio)
 local onCar = { _cls = "IsoGridSquare", getVehicleContainer = function() return v end }
 local noCar = { _cls = "IsoGridSquare", getVehicleContainer = function() return nil end }
-local function media(p, isRemove, parameter)
-    intent(p, "ISDeviceMediaAction", v)
-    return stage(A("ISDeviceMediaAction", { character = p, isRemove = isRemove, parameter = parameter or onCar }), "complete")
+local function media(p, isRemove, deviceData, parameter)
+    intent(p, "ISDeviceMediaAction", v, "Radio")
+    return stage(A("ISDeviceMediaAction", { character = p, isRemove = isRemove, deviceData = deviceData, parameter = parameter or onCar }), "complete")
 end
 local function ran() return calls("ISDeviceMediaAction.complete") end
 local n = ran()
-check(media(ST, true) == false and media(ST, false) == false and ran() == n and lastOf(ST, "enforcement").reason == "NOT_AUTHORIZED",
+check(media(ST, true, carDev) == false and media(ST, false, carDev) == false and ran() == n and lastOf(ST, "enforcement").reason == "NOT_AUTHORIZED",
     "陌生人：受保護車上收音機的 CD 取出、放入都拒絕，原版 complete 沒跑")
-check(media(MB, true) == false and media(MB, false) == false and ran() == n, "只有搭乘權限的成員：不能取出或放入 CD（要置物）")
-check(media(OW, true) == true and media(CM, false) == true and ran() == n + 2, "車主、有置物權限的成員：放行")
-check(stage(A("ISDeviceMediaAction", { character = OW, isRemove = true, parameter = onCar }), "complete") == false and ran() == n + 2,
+check(media(MB, true, carDev) == false and media(MB, false, carDev) == false and ran() == n, "只有搭乘權限的成員：不能取出或放入 CD（要置物）")
+check(media(MB, true, carDev, noCar) == false and media(ST, true, carDev, noCar) == false and ran() == n,
+    "動作建立後車開離原本那一格：照樣看建立時解出的那台車，拒絕")
+check(media(OW, true, carDev) == true and media(CM, false, carDev) == true and media(CM, true, carDev, noCar) == true and ran() == n + 3,
+    "車主、有置物權限的成員：放行（車開離原本那一格也一樣）")
+check(stage(A("ISDeviceMediaAction", { character = OW, isRemove = true, deviceData = carDev, parameter = onCar }), "complete") == false and ran() == n + 3,
     "車主沒有 intent（冒充）：拒絕")
-check(media(ST, true, noCar) == true and media(ST, true, 12345) == true and ran() == n + 4,
-    "格子上沒有車（地上的收音機、電視）或手持裝置（物品 id）：照原版")
+check(media(ST, true, dev({ _cls = "IsoWaveSignal" }), onCar) == true and media(ST, true, dev({ _cls = "Radio" }), 12345) == true
+    and media(ST, true, nil, noCar) == true and ran() == n + 6,
+    "地上的收音機、電視（就算受保護的車剛好壓到那一格）、手持裝置、解不出裝置：照原版")
 ISDeviceMediaAction = nil
 end)();
 

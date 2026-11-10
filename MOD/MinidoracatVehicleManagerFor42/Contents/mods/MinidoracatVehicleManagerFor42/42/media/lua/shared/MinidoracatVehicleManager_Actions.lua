@@ -16,6 +16,10 @@ local function partOf(field) return function(a) return a[field] end end
 local function ownVehicle(a) return a.vehicle end
 local function seatVehicle(a) return a.character and a.character:getVehicle() or nil end
 
+local function mediaPart(a)
+    local dev = a.deviceData and a.deviceData:getParent() or nil
+    return dev ~= nil and instanceof(dev, "VehiclePart") and dev or nil
+end
 -- 門：引擎蓋給維修／拆卸者開，後車廂給載貨者開，其他門是乘客權限
 local function doorAction(a)
     local id = a.part and a.part:getId() or ""
@@ -119,13 +123,11 @@ local BUILTIN = {
       vehicleOf = function(a) return a.device ~= nil and instanceof(a.device, "VehiclePart") and a.device:getVehicle() or nil end,
       partOf = function(a) return a.device ~= nil and instanceof(a.device, "VehiclePart") and a.device or nil end },
     -- 收音機的 CD／錄影帶（TimedActions/ISDeviceMediaAction.lua:13-32）：伺服器在 complete 把媒體交給執行者或放進裝置。
-    -- parameter 是裝置所在的格子（車上收音機＝車所在的格子，IsoGridSquare.getDeviceData 先找壓在那格上的車，
-    -- IsoGridSquare.java:9903-9911）或手持裝置的物品 id（ISDeviceBatteryAction.lua:33-54）→ 只管格子上有車的
+    -- 實際被改的裝置是 new 時由 parameter 解出、存在 deviceData 的那一個（:38-47；之後不再查格子，車開走了也一樣），
+    -- 所以目標看 deviceData:getParent()（DeviceData.java:210-212；車上收音機＝VehiclePart，VehiclePart.java:732-764），
+    -- 不看 parameter 的格子現在壓著哪台車。手持或擺在地上的裝置不是車 → 照原版
     { class = "ISDeviceMediaAction", action = "CARGO", stages = { "complete" },
-      vehicleOf = function(a)
-          local sq = a.parameter
-          return sq ~= nil and instanceof(sq, "IsoGridSquare") and sq:getVehicleContainer() or nil
-      end },
+      vehicleOf = function(a) local part = mediaPart(a); return part and part:getVehicle() or nil end, partOf = mediaPart },
 }
 
 local byClass = {}
