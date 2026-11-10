@@ -4218,6 +4218,31 @@ check(quietDriver == nil and q5 == q4 and loudDriverDown == nil and q6 == q4 + 1
     "駕駛座上沒有 DRIVE 的人：補胎壓拒絕、不提示；放氣拒絕並提示")
 check(repairUp and quietLocked == nil and lockedDeny and q7 == q6,
     "有 REPAIR 的乘客補胎壓放行；車被租用鎖定時拒絕（RENT_LOCKED）、照樣記 DENY、不提示")
+-- damnlib 裝甲同步（上車存耐久、車上同步、下車送空的）：照樣拒絕、照樣記 DENY，不提示；不在這台車上又帶耐久值的照常提示
+grant(MVM.ACTIONS.PASSENGER)
+MB.vehicle, pv.seats[1] = pv, MB
+nowMs = nowMs + 3000
+local a0, ad0 = toasts(MB), denyCount("CMD:that_damn_lib.")
+local armorSave = send(MB, "that_damn_lib", "savePartsCondition", { _vehicleId = pv.id }).hit
+local armorSeated = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id, conditions = { Engine = 1 } }).hit
+MB.vehicle, pv.seats[1] = nil, nil
+local armorExit = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id, conditions = {} }).hit
+local a1, ad1 = toasts(MB), denyCount("CMD:that_damn_lib.")
+local armorOut = send(MB, "that_damn_lib", "updatePartConditions", { _vehicleId = pv.id, conditions = { Engine = 1 } }).hit
+local a2 = toasts(MB)
+nowMs = nowMs + 3000
+local armorSaveOut = send(MB, "that_damn_lib", "savePartsCondition", { _vehicleId = pv.id }).hit
+local a3 = toasts(MB)
+MB.vehicle = uv
+nowMs = nowMs + 3000
+local armorOther = send(MB, "that_damn_lib", "savePartsCondition", { _vehicleId = pv.id }).hit
+local a4 = toasts(MB)
+MB.vehicle = nil
+rp.grants = {}
+check(armorSave == nil and armorSeated == nil and armorExit == nil and ad1 == ad0 + 3 and a1 == a0,
+    "只有 PASSENGER 的乘客：damnlib 上車存耐久、車上同步、下車送的空同步照樣拒絕、照樣記 DENY，不提示")
+check(armorOut == nil and a2 == a0 + 1 and armorSaveOut == nil and a3 == a0 + 2 and armorOther == nil and a4 == a0 + 3,
+    "不在這台車上的人送帶耐久值的同步、存耐久，坐在別台車上的人存耐久：拒絕並照常提示")
 local savedOwn = MVM.Own
 MVM.Own = nil
 prints = 0

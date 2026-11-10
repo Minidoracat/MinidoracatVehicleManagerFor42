@@ -42,6 +42,20 @@ local function seated(field, outside)
     end
 end
 
+-- damnlib 的裝甲同步（DAMN_Client.lua:75-118 上車時存零件耐久、:36-39 車上每秒同步、:141 下車時再送一次，多半是空的）：
+-- 都是車上的人的客戶端自動送的。照樣要 REPAIR、照樣記拒絕，只是不提示送的人（quiet，同下面的 amount()）；
+-- 不在這台車上又帶著耐久值的照常提示
+local function armorSync(p, a)
+    local v = veh(a._vehicleId)
+    local out = { { vehicle = v, action = "REPAIR" } }
+    out.quiet = v and p:getVehicle() == v
+    if not out.quiet and type(a.conditions) == "table" then
+        out.quiet = true
+        for _ in pairs(a.conditions) do out.quiet = false; break end
+    end
+    return out
+end
+
 -- 駕駛自己的客戶端自動送的（W900 裝甲補償 ArmorSync.dispatchRepair、KI5 CTIS 胎壓）：駕駛只要 DRIVE，否則要 outside
 local function isDriver(p, v) return v and v.isDriver and v:isDriver(p) end
 
@@ -195,8 +209,8 @@ local RULES = {
         silentPartInstall = function(_, a) -- DAMN_Parts.lua:14-63：把零件換成指定的新物品（_vehicle 由 _vehicleId 解析，DAMN_Server.lua:24-34）
             return { { vehicle = veh(a._vehicleId), action = "REPAIR" } }
         end,
-        updatePartConditions = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:52-74：設定零件耐久
-        savePartsCondition = on("_vehicleId", "REPAIR"), -- DAMN_Armor.lua:14-50
+        updatePartConditions = armorSync, -- DAMN_Armor.lua:52-74：設定零件耐久
+        savePartsCondition = armorSync, -- DAMN_Armor.lua:14-50
     },
     -- Vehicle Repair Overhaul（Workshop 2757712197）42/media/lua/server：修零件、重組引擎、修暖氣與警示燈都直接改零件耐久
     VRO_vehicle = { doFix = on("vehicleId", "REPAIR") }, -- VRO_VehicleCommands.lua:502-619
