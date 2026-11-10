@@ -1,19 +1,20 @@
-[h1]Minidoracat Vehicle Manager for B42 42.21.0-0.11.0[/h1]
-[i]2026-10-29[/i]
+[h1]Minidoracat Vehicle Manager for B42 42.22.2-0.11.1[/h1]
+[i]2026-11-10[/i]
 
-[h3]✨ 新增[/h3]
+[b]English summary[/b]
 [list]
-[*] [b]AutoDrive 召喚也要有綁車權限[/b]：用 AutoDrive 把沒人坐的車叫過來時，要有這台車的「駕駛」權限；只被分享搭乘或查看位置的人叫不動，召喚途中分享被收回，車會停下。
-[*] [b]召喚中的車暫停防破壞[/b]：被召喚開過來的車和有人在開一樣，暫時沒有防破壞；車停好、召喚結束後自動恢復。
-[*] [b]Tesla Collection 這類 MOD 可以看你的車隊[/b]：它們的介面能列出你自己綁的與分享給你的車，車在遠處沒載入時也能確認你還能不能查看位置。分享被收回或別人綁的車照樣看不到；本 MOD 自己的畫面與保護沒有改變。
+[*] Supports Project Zomboid 42.22.2. Nothing to change in your settings.
+[*] Riding in a KI5 vehicle with CTIS (automatic tire inflation) no longer shows "This vehicle is claimed" again and again while the engine runs. Permissions are unchanged.
+[*] Taking the CD out of a car radio, or putting one in, now needs the Trunk permission, like the headphones.
+[/list]
+
+[h3]🔄 變更[/h3]
+[list]
+[*] [b]支援 Project Zomboid 42.22.2[/b]：已對照 42.22.2 的遊戲改動逐項檢查，並在 42.22.2 的多人伺服器重新測過綁定車的操作防護、防破壞、拖車裝卸、被拖車時自動解除拖曳、車上容器與玩家身分。功能照常運作，設定不用改；42.21 的伺服器也照常能用。
 [/list]
 
 [h3]🔧 修正[/h3]
 [list]
-[*] [b]伺服器時間往回調後，車輛操作一直回「操作太頻繁，請稍候」[/b]：伺服器電腦的系統時間往回調後，車輛操作會一直被擋，防破壞、坐上別人車的巡查、自動解除綁定與名額到期檢查也會停下，要等時間走回原點才恢復。現在時間往回調後照常運作，不用做任何設定。
-[/list]
-
-[h3]📢 給服主[/h3]
-[list]
-[*] Steam 伺服器裝好或更新本 MOD 後，請到車隊視窗管理頁「身分驗證（SteamID）」按一次「從白名單匯入帳號」；匯入前，還沒綁定的帳號只看名稱、不看 Steam 帳號。
+[*] [b]坐在別人分享給你的 KI5 軍用車上，一直跳「這台車已被綁定…」[/b]：遊戲更新到 42.22 後，有自動補胎壓（CTIS）的 KI5 車在引擎發動、胎壓不足時，車上沒有「安裝與修理零件」權限的人每兩秒就跳一次紅字提示，自己什麼都沒按也一樣。現在不再跳提示。權限沒有變：沒有這個權限的人一樣不能改胎壓。
+[*] [b]車上收音機的 CD 加強驗證[/b]：取出或放入車上收音機的 CD、錄影帶，現在和耳機一樣要「後車廂」權限；只被分享「搭乘」的人不能拿走。擺在地上或拿在手上的收音機不受影響。
 [/list]

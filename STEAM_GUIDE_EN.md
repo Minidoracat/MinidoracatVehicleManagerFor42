@@ -30,7 +30,7 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [*] open or close doors, unlock, get in, start the engine
 [*] add or siphon fuel, deflate tires
 [*] install or remove parts, repair, smash windows, tow
-[*] install/remove AutoDrive GPS and autopilot modules, or take the headphones out of the car radio
+[*] install/remove AutoDrive GPS and autopilot modules, or take the headphones or the CD out of the car radio
 [/list]
 [*] [b]When blocked[/b]: they see "This vehicle is claimed; you need the owner's share to use it" and the car stays as it was.
 [*] [b]While another car tows it[/b]: if someone without tow permission gets in the driver's seat of the car towing yours, your car is unhitched and stays where it is, and you get a notice. The towing car isn't protected unless it's claimed too, so it can be driven away.
