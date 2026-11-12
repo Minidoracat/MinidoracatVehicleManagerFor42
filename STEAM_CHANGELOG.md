@@ -1,22 +1,18 @@
-[h1]Minidoracat Vehicle Manager for B42 42.22.2-0.11.1[/h1]
-[i]2026-11-10[/i]
+[h1]Minidoracat Vehicle Manager for B42 42.22.2-0.11.2[/h1]
+[i]2026-11-12[/i]
 
 [b]English summary[/b]
 [list]
-[*] Supports Project Zomboid 42.22.2. Nothing to change in your settings.
-[*] Riding in a KI5 vehicle with CTIS (automatic tire inflation) no longer shows "This vehicle is claimed" again and again while the engine runs. Permissions are unchanged.
-[*] Getting in or out of an armored KI5 vehicle no longer shows that message either.
-[*] Taking the CD out of a car radio, or putting one in, now needs the Trunk permission, like the headphones.
-[/list]
-
-[h3]🔄 變更[/h3]
-[list]
-[*] [b]支援 Project Zomboid 42.22.2[/b]：已對照 42.22.2 的遊戲改動逐項檢查，並在 42.22.2 的多人伺服器重新測過綁定車的操作防護、防破壞、拖車裝卸、被拖車時自動解除拖曳、車上容器與玩家身分。功能照常運作，設定不用改；42.21 的伺服器也照常能用。
+[*] Keeps up with the November 2026 update of Vehicle Repair Overhaul: on servers that run it, only the owner (or an admin with override on) can salvage a whole claimed vehicle. Servers that run Vehicle Repair Overhaul should update to this version.
+[*] The cover in the in-game mod list is now a gameplay screenshot. No gameplay change.
 [/list]
 
 [h3]🔧 修正[/h3]
 [list]
-[*] [b]坐在別人分享給你的 KI5 軍用車上，一直跳「這台車已被綁定…」[/b]：遊戲更新到 42.22 後，有自動補胎壓（CTIS）的 KI5 車在引擎發動、胎壓不足時，車上沒有「安裝與修理零件」權限的人每兩秒就跳一次紅字提示，自己什麼都沒按也一樣。現在不再跳提示。權限沒有變：沒有這個權限的人一樣不能改胎壓。
-[*] [b]上下 KI5 裝甲車時跳「這台車已被綁定…」[/b]：有裝甲的 KI5 車在你上車、下車時會自動同步零件耐久；車上沒有「安裝與修理零件」權限的人每次上下車都跳紅字提示。現在上車、坐在車上、下車都不再跳；只有下車前一秒內裝甲剛吸收過傷害時，下車還會跳一則。權限沒有變：沒有這個權限的人一樣不能改零件耐久。
-[*] [b]車上收音機的 CD 加強驗證[/b]：取出或放入車上收音機的 CD、錄影帶，現在和耳機一樣要「後車廂」權限；只被分享「搭乘」的人不能拿走。擺在地上或拿在手上的收音機不受影響。
+[*] [b]跟上 Vehicle Repair Overhaul 的新版[/b]：Vehicle Repair Overhaul 在 2026 年 11 月更新後，「回收車輛」（整台拆掉）的做法變了。伺服器同時裝了它的新版時，本 MOD 對別人綁定的車的整車拆解檢查已跟著更新，並強化了驗證：只有車主或開啟越權的管理員能整台拆掉。它的零件修理、引擎重組、暖氣與警示燈修理照舊要「安裝修理」權限。沒裝 Vehicle Repair Overhaul 的伺服器沒有影響；有裝的伺服器請更新到這一版。
+[/list]
+
+[h3]🔄 變更[/h3]
+[list]
+[*] [b]MOD 清單的封面換成實機畫面[/b]：遊戲內 MOD 清單的封面圖，從角色插畫換成遊戲畫面（別人綁定的車拉車門被擋下）。功能沒有改變。
 [/list]
