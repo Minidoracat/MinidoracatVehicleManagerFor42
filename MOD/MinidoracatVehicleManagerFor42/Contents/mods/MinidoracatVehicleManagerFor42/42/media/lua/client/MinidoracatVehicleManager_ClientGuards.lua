@@ -120,7 +120,7 @@ function MVM.guardThirdParty()
         return true
     end)
     guardOnce(MSW_ISLaunchVehicle, function(a) return allowed(a.character, a.trailer, "TOW") end)
-    -- Vehicle Repair Overhaul（Workshop 2757712197）：整車拆解（ISVehicleSalvage.lua:163 送 vehicle.remove）移除整台車，要 MANAGE；
+    -- Vehicle Repair Overhaul（Workshop 2757712197）：整車拆解（ISVehicleSalvage.lua:163 送 vro_salvage.removeVehicle）移除整台車，要 MANAGE；
     -- 車主拆自己綁定的車要先解除綁定，否則車移除後紀錄留成「不在場」、照算名額
     guardOnce(ISVehicleSalvage, function(a)
         local row = MVM.clientProjection(a.character:getPlayerNum(), a.vehicle)

@@ -3943,12 +3943,12 @@ local function strictFields(m, c)
     if m == "rLib" then return c == "SetVehicleBattery" and { vehicleId = "number", battery = "number" } or { vehicleId = "number", set = "boolean" } end
     if m == "that_damn_lib" and c == "setPartModData" then return { vehicle = "number" } end
     if m == "EER_vehicle" then return { vehicleId = "number" } end
-    if m == "EHR_vehicle" or m == "ELR_vehicle" then return { vehicle = "number" } end
+    if m == "EHR_vehicle" or m == "ELR_vehicle" or m == "vro_salvage" then return { vehicle = "number" } end
     return {}
 end
 local last = nil
 local MODS = { vehicle = true, commonlib = true, atatuning2 = true, msw = true, W900 = true, rLib = true, that_damn_lib = true,
-    VRO_vehicle = true, EER_vehicle = true, EHR_vehicle = true, ELR_vehicle = true }
+    VRO_vehicle = true, EER_vehicle = true, EHR_vehicle = true, ELR_vehicle = true, vro_salvage = true }
 local function third(m, c, _, args)
     if not MODS[m] then return end -- 不看 CG.RULES：拿掉規則的突變也要測得出來
     last = { hit = nil, err = false }
@@ -4042,6 +4042,7 @@ local CASES = {
     { "ELR_vehicle", "setLightbarLightsMode", args1({ mode = 1 }), { "DRIVE" } },
     { "ELR_vehicle", "setLightbarSirenMode", args1({ mode = 0 }), { "REPAIR" } },
     { "ELR_vehicle", "setLightbarSirenMode", args1({ mode = 2 }), { "DRIVE" } },
+    { "vro_salvage", "removeVehicle", args1({}), { "MANAGE" } },
 }
 local covered = { ["that_damn_lib.setPartModData"] = true } -- 一律拒絕，F2 另測
 for _, k in ipairs(CASES) do covered[k[1] .. "." .. k[2]] = true end

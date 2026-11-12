@@ -213,14 +213,16 @@ local RULES = {
         savePartsCondition = armorSync, -- DAMN_Armor.lua:14-50
     },
     -- Vehicle Repair Overhaul（Workshop 2757712197）42/media/lua/server：修零件、重組引擎、修暖氣與警示燈都直接改零件耐久
-    VRO_vehicle = { doFix = on("vehicleId", "REPAIR") }, -- VRO_VehicleCommands.lua:502-619
-    EER_vehicle = { rebuildEngine = on("vehicleId", "REPAIR") }, -- EER_VehicleCommands.lua:50-117（也改引擎品質）
+    VRO_vehicle = { doFix = on("vehicleId", "REPAIR") }, -- VRO_VehicleCommands.lua:505-629
+    EER_vehicle = { rebuildEngine = on("vehicleId", "REPAIR") }, -- EER_VehicleCommands.lua:43-110（也改引擎品質）
     EHR_vehicle = { repairHeater = one("REPAIR") }, -- EHR_VehicleCommands.lua:51-131
     ELR_vehicle = {
         repairLightbar = one("REPAIR"), -- ELR_VehicleCommands.lua:52-113
         -- :115-134；正常呼叫者是修警示燈前在車外關燈與警笛（ELRTurnOffLightbar.lua:51-52）
         setLightbarLightsMode = lightbar, setLightbarSirenMode = lightbar,
     },
+    -- 整車拆解子 MOD 42/media/lua/server/VRO_SalvageCommands.lua:205-210：移除整台車（ISVehicleSalvage.lua:163 最後送），同 vehicle.remove
+    vro_salvage = { removeVehicle = one("MANAGE") },
 }
 CG.RULES = RULES
 
@@ -288,7 +290,8 @@ end
 -- id 欄位改成 -1（VehicleIDMap.get 對負數回 null，VehicleIDMap.java:65-67，處理器安靜結束）；rLib 先 assert 其他欄位型別，
 -- 只改 id 不清空
 local NEG_IDS = { vehicle = { "vehicle", "vehicleA", "vehicleB" }, that_damn_lib = { "_vehicleId", "vehicle" }, rLib = { "vehicleId" },
-    VRO_vehicle = { "vehicleId" }, EER_vehicle = { "vehicleId" }, EHR_vehicle = { "vehicle" }, ELR_vehicle = { "vehicle" } }
+    VRO_vehicle = { "vehicleId" }, EER_vehicle = { "vehicleId" }, EHR_vehicle = { "vehicle" }, ELR_vehicle = { "vehicle" },
+    vro_salvage = { "vehicle" } }
 local KEEP = { rLib = true }
 function CG.neutralize(module, args)
     if not KEEP[module] then
