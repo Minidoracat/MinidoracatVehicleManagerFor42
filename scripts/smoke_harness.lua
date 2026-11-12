@@ -4063,8 +4063,12 @@ for _, k in ipairs(CASES) do
     local s = send(ST, m, c, mk(pv, ut))
     local okStranger = s.hit == nil and not s.err and denied(label, "NOT_AUTHORIZED")
     local okOwner = send(OW, m, c, mk(pv, ut)).hit ~= nil
-    local okMember = true
-    if need[1] ~= "MANAGE" then
+    local okMember
+    if need[1] == "MANAGE" then -- MANAGE 不能分享：拿到全部可分享權限的成員照樣擋
+        grant(MVM.SHAREABLE_MASK)
+        local mn = send(MB, m, c, mk(pv, ut))
+        okMember = mn.hit == nil and not mn.err
+    else
         grant(bitsOf({ need[1] }))
         okMember = send(MB, m, c, mk(pv, ut)).hit ~= nil
         local others = MVM.SHAREABLE_MASK - bitsOf(need)

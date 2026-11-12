@@ -4,14 +4,14 @@
       "wid": "2757712197",
       "mod_id": "VehicleRepairOverhaul, VehicleSalvageOverhaulB42",
       "name": "Vehicle Repair Overhaul",
-      "acked_time_updated": 1792489587,
+      "acked_time_updated": 1794479675,
       "affects": [
-        "CG.RULES.vehicle.remove（整車拆解最後送 vehicle.remove，MANAGE 擋）",
+        "CG.RULES.vro_salvage.removeVehicle（整車拆解最後送的移除指令，MANAGE 擋；2026-11 以前的版本送原版 vehicle.remove）",
         "CG.RULES.VRO_vehicle.doFix",
         "CG.RULES.EER_vehicle.rebuildEngine",
         "CG.RULES.EHR_vehicle.repairHeater",
         "CG.RULES.ELR_vehicle.repairLightbar／setLightbarLightsMode／setLightbarSirenMode",
-        "CG.neutralize NEG_IDS.VRO_vehicle／EER_vehicle（vehicleId）、EHR_vehicle／ELR_vehicle（vehicle）",
+        "CG.neutralize NEG_IDS.VRO_vehicle／EER_vehicle（vehicleId）、EHR_vehicle／ELR_vehicle／vro_salvage（vehicle）",
         "ClientGuards ISVehicleSalvage",
         "ClientGuards VRO.DoFixAction（Type VRO_DoFixAction）",
         "ClientGuards ISRebuildEngine",
@@ -19,7 +19,7 @@
         "ClientGuards ELRRepairLightbar",
         "ClientGuards ELRTurnOffLightbar"
       ],
-      "recheck": "VRO 的動作全在客戶端跑（沒有 complete），改車靠自己的伺服器指令：核對 VRO_vehicle.doFix（vehicleId／partId；doFixInventory 只修物品欄、不碰車）、EER_vehicle.rebuildEngine（vehicleId）、EHR_vehicle.repairHeater（vehicle）、ELR_vehicle.repairLightbar／setLightbarLightsMode／setLightbarSirenMode（vehicle、mode）的指令名、id 欄位與 CG.RULES 註解行號，處理器是否仍不檢查欄位就 getVehicleById（拒絕時 id 改 -1 讓它安靜結束）；vro_salvage.dropSalvage／drainTorch／addXp／doReturns 是否開始碰車；ISVehicleSalvage:perform 送指令的順序（dropSalvage 先、vehicle.remove 最後）；ClientGuards 包的類別名稱、vehicle／part／isCharacterOutside／vehicleId 欄位與 isValid 簽名；整車拆解選單（VRO Vehicle Salvage.lua）的入口函式；VRO_NearbyInventory.lua 的附近容器（_collect）是否開始包含車上容器。出現新的改車伺服器指令或新的改車 TimedAction → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例，或在 ClientGuards 補包。兩個 mod.info 的 versionMin 變了、或新增高於 42/ 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。",
+      "recheck": "VRO 的動作全在客戶端跑（沒有 complete），改車靠自己的伺服器指令：核對 VRO_vehicle.doFix（vehicleId／partId；doFixInventory 只修物品欄、不碰車）、EER_vehicle.rebuildEngine（vehicleId）、EHR_vehicle.repairHeater（vehicle）、ELR_vehicle.repairLightbar／setLightbarLightsMode／setLightbarSirenMode（vehicle、mode）的指令名、id 欄位與 CG.RULES 註解行號，處理器是否仍不檢查欄位就 getVehicleById（拒絕時 id 改 -1 讓它安靜結束）；vro_salvage.removeVehicle（vehicle 欄位、處理器有沒有改）；vro_salvage.dropSalvage／drainTorch／addXp／doReturns 是否開始碰車、vro_salvage 是否多了其他指令；ISVehicleSalvage:perform 送指令的順序（dropSalvage 先、removeVehicle 最後）；ClientGuards 包的類別名稱、vehicle／part／isCharacterOutside／vehicleId 欄位與 isValid 簽名；整車拆解選單（VRO Vehicle Salvage.lua）的入口函式；VRO_NearbyInventory.lua 的附近容器（_collect）是否開始包含車上容器。出現新的改車伺服器指令或新的改車 TimedAction → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例，或在 ClientGuards 補包。兩個 mod.info 的 versionMin 變了、或新增高於 42/ 的版本目錄（例如 42.21/）＝載入的檔案搬家，watch_files 與 CG.RULES 出處跟著改。",
       "watch_files": [
         "mods/Vehicle Repair Overhaul/42/mod.info",
         "mods/Vehicle Repair Overhaul/42/media/lua/server/VRO_VehicleCommands.lua",

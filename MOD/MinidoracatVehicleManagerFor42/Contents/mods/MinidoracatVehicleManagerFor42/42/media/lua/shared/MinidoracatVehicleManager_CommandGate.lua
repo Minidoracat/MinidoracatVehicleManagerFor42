@@ -288,7 +288,7 @@ end
 
 -- 消掉請求：先收集鍵再清（不邊 pairs 邊改）。原版、damnlib、Vehicle Repair Overhaul 不先檢查欄位就 getVehicleById，收到 nil 會在 Java 端報錯：
 -- id 欄位改成 -1（VehicleIDMap.get 對負數回 null，VehicleIDMap.java:65-67，處理器安靜結束）；rLib 先 assert 其他欄位型別，
--- 只改 id 不清空
+-- 只改 id 不清空；vro_salvage 的處理器會先查欄位，-1 只是照同一做法
 local NEG_IDS = { vehicle = { "vehicle", "vehicleA", "vehicleB" }, that_damn_lib = { "_vehicleId", "vehicle" }, rLib = { "vehicleId" },
     VRO_vehicle = { "vehicleId" }, EER_vehicle = { "vehicleId" }, EHR_vehicle = { "vehicle" }, ELR_vehicle = { "vehicle" },
     vro_salvage = { "vehicle" } }
