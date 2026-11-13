@@ -143,6 +143,7 @@ end
 -- 規則：(player, args) → 目標清單 { vehicle＝活車 或 rec＝帳本紀錄, action＝動作碼或清單 }, 放行後要做的事, 一律拒絕的原因。
 -- 目標清單可帶 anchor／loaded／spawn（距離錨點）、check（權限、距離都通過後的額外條件，回拒絕原因或 nil）
 -- 與 quiet（權限不足時不提示送指令的人；照樣拒絕、照樣記 DENY，其他拒絕原因照常提示）
+-- 目標清單 nil＝放行（不看權限、距離，也不通知停車保全）：只用在送指令的人已自證的情況（例：坐在這台車上開自己座位的門）
 local RULES = {
     -- 原版 server/Vehicles/VehicleCommands.lua（行號是 42.22.2）。用玩家目前座位的指令由座位防護涵蓋；UseMechanicsCheat 系列只有管理員能用。
     -- fixPart／setTirePressure／setDoorOpen 是 42.21 以前的原版處理器（42.22 刪除；versionMin 涵蓋的舊版伺服器仍有，規則留著）

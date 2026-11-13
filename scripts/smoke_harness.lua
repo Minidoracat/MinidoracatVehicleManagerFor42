@@ -1192,6 +1192,9 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     me.admin = true
     check(not can(bound, "TruckBed") and MVM.protectedText(me) == "IGUI_MVM_ProtectedAdmin",
         "管理員越權關閉：一樣不列出，提示多一句去管理頁開啟越權")
+    bound.seats[1], me.vehicle = me, bound
+    check(hot("make") == false and lastHot._mvmText == nil, "客戶端：沒開越權的管理員配鑰匙被擋，提示照舊是開啟越權")
+    bound.seats[1], me.vehicle = nil, nil
     d0 = dirty
     MVM.clientReceive("adminSnapshot", { to = "carl", id = "snap-c", part = 1, parts = 1, ok = true, rows = {}, players = {}, override = true })
     check(MVM.clientOverride(0) and dirty > d0 and can(bound, "TruckBed") and MVM.clientCanUse(me, bound, "DRIVE"),
@@ -5351,8 +5354,10 @@ v.parts.DoorFrontLeft.door.locked, v.previouslyEntered = true, nil
 check(door(ST, "ISOpenVehicleDoor", "DoorFrontLeft") == true and door(ST, "ISUnlockVehicleDoor", "DoorFrontLeft") == true,
     "陌生人坐在駕駛座：自己座位的門開得了、解得了鎖（原版下車要先開門）")
 check(v.parts.DoorFrontLeft.door.locked == false and v.previouslyEntered == true, "照樣走虛擬鑰匙：權威解鎖、開門不觸發警報")
-check(doorCmd(ST, "DoorFrontLeft", true) == true and doorCmd(ST, "DoorFrontLeft", false) == false and doorCmd(ST, "DoorFrontRight", true) == false,
-    "門動畫同步指令（setDoorOpen）：自己座位的門開門放行，關門與別的門照舊拒絕")
+check(doorCmd(ST, "DoorFrontLeft", true) == true and doorCmd(ST, "DoorFrontLeft", false) == false and doorCmd(ST, "DoorFrontRight", true) == false
+    and doorCmd(ST, "TrunkDoor", true) == false, "門動畫同步指令（setDoorOpen）：自己座位的門開門放行，關門、別的門、後車廂照舊拒絕")
+check(select(2, CG.decide(CG.RULES.vehicle.setDoorOpen, "vehicle", "setDoorOpen", ST, { vehicle = v.id + 0.5, part = "DoorFrontLeft", open = true })) == "BAD_ID",
+    "setDoorOpen 的車輛 id 不是整數：坐在車上也照樣 BAD_ID")
 check(door(ST, "ISOpenVehicleDoor", "DoorFrontRight") == false and door(ST, "ISOpenVehicleDoor", "TrunkDoor") == false
     and door(ST, "ISCloseVehicleDoor", "DoorFrontLeft") == false, "別的座位的門、後車廂、關門照舊拒絕")
 -- 用解鎖測：開門那類在車外被拒時留了一筆沒消費的 intent
