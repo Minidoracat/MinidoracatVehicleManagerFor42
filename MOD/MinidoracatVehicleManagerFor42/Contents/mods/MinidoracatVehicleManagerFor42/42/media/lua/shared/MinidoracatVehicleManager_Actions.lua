@@ -34,11 +34,12 @@ local function ownSeatDoor(a)
     local p, v = a.character, a.part and a.part:getVehicle()
     return p ~= nil and v ~= nil and p:getVehicle() == v and v:getPassengerDoor(v:getSeat(p)) == a.part
 end
--- 熱線類動作：帶 anycar.job == "make" 的是配鑰匙（Minidoracat AnyCar 沿用這個類別），做出實體鑰匙，要管理權限；
--- 原版熱線與拆除短接要駕駛權限
+MVM.ownSeatDoor = ownSeatDoor -- 指令防火牆的 vehicle.setDoorOpen 共用
+-- 熱線類動作：Minidoracat AnyCar 沿用這個類別、多帶 anycar = { job = … }。拆除短接（unwire）與原版熱線要駕駛權限；
+-- 其他 job（配鑰匙 make 做出實體鑰匙；沒看過的 job 一律從嚴）要管理權限
 local function hotwireAction(a)
     local extra = a.anycar
-    return { type(extra) == "table" and extra.job == "make" and "MANAGE" or "DRIVE" }
+    return { type(extra) == "table" and extra.job ~= "unwire" and "MANAGE" or "DRIVE" }
 end
 
 local ITEM_PUSH = { "item", "condition" }

@@ -6,6 +6,7 @@
     "IGUI_MVM_ProtocolMismatch": "Die Version der Fahrzeugverwaltung weicht vom Server ab. Bitte aktualisiere die Mod.",
     "IGUI_MVM_Protected": "Dieses Fahrzeug ist beansprucht; der Eigentümer muss es mit dir teilen, damit du es nutzen kannst",
     "IGUI_MVM_SalvageUnclaimFirst": "Das ist dein beanspruchtes Fahrzeug. Gib es zuerst frei, um das ganze Fahrzeug auszuschlachten.",
+    "IGUI_MVM_KeyOwnerOnly": "Nur der Eigentümer kann einen Schlüssel für dieses Fahrzeug anfertigen",
     "IGUI_MVM_FleetTitle": "Fuhrpark",
     "IGUI_MVM_Tab_OWNED": "Meine Fahrzeuge",
     "IGUI_MVM_Tab_SHARED": "Mit mir geteilt",

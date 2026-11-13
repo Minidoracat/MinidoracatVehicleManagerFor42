@@ -171,7 +171,7 @@ function G.decide(spec, a)
 end
 
 -- ------------------------------------------------------------------ wrapping ---
--- 特別處理：虛擬鑰匙三個 adapter（只對受保護且已授權的車）
+-- 特別處理：虛擬鑰匙三個 adapter（受保護的車：已授權的人，或坐在車上開、解鎖自己座位門的人）
 local function virtualKey(a) return MVM.sandbox("VirtualKey", true) and a._mvmRec ~= nil end
 
 local SPECIAL = {

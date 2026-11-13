@@ -6,6 +6,7 @@
     "IGUI_MVM_ProtocolMismatch": "Araç Yöneticisi sürümü sunucudakinden farklı. Lütfen modu güncelle.",
     "IGUI_MVM_Protected": "Bu araç sahiplenilmiş; kullanmak için sahibinin seninle paylaşması gerekir",
     "IGUI_MVM_SalvageUnclaimFirst": "Bu senin sahiplendiğin araç. Aracın tamamını sökmek için önce sahipliğini bırak.",
+    "IGUI_MVM_KeyOwnerOnly": "Bu araç için anahtarı yalnızca sahibi yapabilir",
     "IGUI_MVM_FleetTitle": "Araç Filosu",
     "IGUI_MVM_Tab_OWNED": "Araçlarım",
     "IGUI_MVM_Tab_SHARED": "Benimle paylaşılanlar",

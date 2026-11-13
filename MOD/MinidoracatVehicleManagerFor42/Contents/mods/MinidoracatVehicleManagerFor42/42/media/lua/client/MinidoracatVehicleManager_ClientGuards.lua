@@ -1,10 +1,10 @@
 -- Client 端（計畫 §8.1.3、§8.0 U 級）：
 --   1. 排入受保護類別的 timed action 時送 prepareAction（server 以連線身分記 intent）
---   2. 上車／換座／拖掛、MSW 拖車裝卸、Vehicle Repair Overhaul 拆車與修理是 client 端判定的動作：依投影快取在 isValid 擋下
---      （U 級；上車由 server watchdog 事後偵測，第三方動作送出的指令由指令防火牆判定）
+--   2. 上車／換座／拖掛、配鑰匙、MSW 拖車裝卸、Vehicle Repair Overhaul 拆車與修理：依投影快取在 isValid 擋下
+--      （U 級；上車由 server watchdog 事後偵測，配鑰匙由 server 再判，第三方動作送出的指令由指令防火牆判定）
 --   3. 虛擬鑰匙入口：無實體鑰匙的授權者可從選單發動、解鎖
 --   4. 顯示 server 送來的 enforcement；武器打到別人的車時回報 hitReport（server 據此通知車主）
---   5. 車上容器（後車廂、座位、置物箱…）依權限決定列不列出
+--   5. 車上容器（後車廂、座位、置物箱…）依權限決定列不列出（自己坐著的座位一律列出）
 -- 動作授權由 server 判定；容器限制僅作用於玩家端 Lua 存取入口，不是 server 搬物品權限驗證。
 require "MinidoracatVehicleManager_API"
 require "MinidoracatVehicleManager_Actions"
@@ -97,7 +97,10 @@ end)
 -- 配鑰匙（要管理權限）排入時就提示，不必等動作做完才被伺服器拒絕；原版熱線與拆除短接只由伺服器判定
 guardValid(ISHotwireVehicle, function(a)
     local act = MVM.requiredActions(MVM.adapterFor("ISHotwireVehicle"), a)[1]
-    return act ~= "MANAGE" or allowed(a.character, a.character:getVehicle(), act)
+    if act ~= "MANAGE" or allowed(a.character, a.character:getVehicle(), act) then return true end
+    -- 管理權限不能分享：不說「要車主的分享」；沒開越權的管理員照舊提示開越權
+    if not MVM.clientIsAdmin(a.character) then a._mvmText = getText("IGUI_MVM_KeyOwnerOnly") end
+    return false
 end)
 
 -- 第三方 MOD 只在客戶端跑的動作（沒有 complete）：perform 只送它自己的伺服器指令，由指令防火牆（shared/…_CommandGate.lua）判定；
@@ -281,9 +284,9 @@ end
 -- shortcut: 座位沒有容器的車型在這種情況仍會丟錯誤, 有人回報再改成補一個空容器鈕
 function MVM.storageAllowed(vehicle, partIndex, chr)
     if not (isClient() and instanceof(chr, "IsoPlayer") and chr:isLocalPlayer()) then return true end
-    local part = vehicle:getPartByIndex(partIndex)
+    local part, seat = vehicle:getPartByIndex(partIndex), vehicle:getSeat(chr)
     local act = MVM.containerAction(part)
-    if act == nil or (chr:getVehicle() == vehicle and part:getContainerSeatNumber() == vehicle:getSeat(chr)) then return true end
+    if act == nil or (seat >= 0 and part:getContainerSeatNumber() == seat) then return true end
     return (MVM.clientCanUse(chr, vehicle, act))
 end
 

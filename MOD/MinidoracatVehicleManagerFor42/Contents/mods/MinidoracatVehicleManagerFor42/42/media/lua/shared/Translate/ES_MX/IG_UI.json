@@ -6,6 +6,7 @@
     "IGUI_MVM_ProtocolMismatch": "La versión del Gestor de vehículos no coincide con la del servidor. Actualiza el mod.",
     "IGUI_MVM_Protected": "Este vehículo está reclamado; necesitas que el dueño lo comparta contigo para usarlo",
     "IGUI_MVM_SalvageUnclaimFirst": "Este es tu vehículo reclamado. Libéralo primero para desguazar el vehículo entero.",
+    "IGUI_MVM_KeyOwnerOnly": "Solo el dueño puede hacer una llave para este vehículo",
     "IGUI_MVM_FleetTitle": "Flota de vehículos",
     "IGUI_MVM_Tab_OWNED": "Mis vehículos",
     "IGUI_MVM_Tab_SHARED": "Compartidos conmigo",

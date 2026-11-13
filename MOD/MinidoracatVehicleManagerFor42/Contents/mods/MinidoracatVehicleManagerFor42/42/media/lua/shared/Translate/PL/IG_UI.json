@@ -6,6 +6,7 @@
     "IGUI_MVM_ProtocolMismatch": "Wersja Menedżera pojazdów różni się od wersji na serwerze. Zaktualizuj moda.",
     "IGUI_MVM_Protected": "Ten pojazd jest przypisany; aby go używać, właściciel musi ci go udostępnić",
     "IGUI_MVM_SalvageUnclaimFirst": "To twój przypisany pojazd. Najpierw go zwolnij, aby rozebrać cały pojazd.",
+    "IGUI_MVM_KeyOwnerOnly": "Tylko właściciel może dorobić klucz do tego pojazdu",
     "IGUI_MVM_FleetTitle": "Flota pojazdów",
     "IGUI_MVM_Tab_OWNED": "Moje pojazdy",
     "IGUI_MVM_Tab_SHARED": "Udostępnione mi",

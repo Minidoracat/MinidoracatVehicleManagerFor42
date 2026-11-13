@@ -150,9 +150,12 @@ local RULES = {
         fixPart = one("REPAIR"), -- 42.21 :28-58 設定零件耐久
         setContainerContentAmount = amount("amount", false), -- :44-57（damnlib CTIS 也用它補胎壓，DAMN_Parts.lua:463-469）
         setTirePressure = amount("psi", true), -- 42.21 :132-148
-        setDoorOpen = function(_, a) -- 42.21 :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
+        setDoorOpen = function(p, a) -- 42.21 :150-167（damnlib 另以同一指令同步門動畫，DAMN_Server.lua:37-44）
             local v = veh(a.vehicle)
-            return { { vehicle = v, action = MVM.doorAction({ part = v and v:getPartById(a.part) or nil }) } }
+            local part = v and v:getPartById(a.part) or nil
+            -- 坐在車上的人開自己座位的門不看權限（同 adapter 的 ownSeatDoor：下車要先開門）
+            if a.open == true and MVM.ownSeatDoor({ character = p, part = part }) then return nil end
+            return { { vehicle = v, action = MVM.doorAction({ part = part }) } }
         end,
         damageWindow = one("SALVAGE"), -- :100-116
         putKeyOnDoor = one("PASSENGER"), removeKeyFromDoor = one("PASSENGER"), -- :195-211

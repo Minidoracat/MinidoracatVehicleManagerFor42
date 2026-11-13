@@ -1128,9 +1128,9 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     __classmetatables = { BaseVehicleClass = { __index = vanilla } }
     assert(loadfile(MEDIA .. "/client/MinidoracatVehicleManager_ClientGuards.lua"))()
     local access = vanilla.canAccessContainer
-    -- 零件：座位（容器座號 1）、置物箱、車斗、MOD 貨箱、油箱（有 script 容器但不是物品容器）
-    local ids = { "Engine", "SeatFrontRight", "GloveBox", "TruckBed", "ModCargoBox", "GasTank" }
-    local spec = { SeatFrontRight = 1, GloveBox = -1, TruckBed = -1, ModCargoBox = -1 }
+    -- 零件：兩個座位（容器座號 0、1）、置物箱、車斗、MOD 貨箱、油箱（有 script 容器但不是物品容器）
+    local ids = { "Engine", "SeatFrontLeft", "SeatFrontRight", "GloveBox", "TruckBed", "ModCargoBox", "GasTank" }
+    local spec = { SeatFrontLeft = 0, SeatFrontRight = 1, GloveBox = -1, TruckBed = -1, ModCargoBox = -1 }
     local function car4(id)
         local v = vehicle(id, 900 + id, 9900 + id, "Base.PickUp", 1, 1, ids)
         for pid, seat in pairs(spec) do
@@ -1156,10 +1156,15 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
         and not can(bound, "GloveBox") and can(bound, "GasTank"), "他人的車：物品容器都不列出，油箱照原版")
     -- 坐在車上的人：自己的座位一律列得出來（否則原版物品欄每幀丟錯誤），其他容器照權限；配鑰匙排入時就擋
     bound.seats[1], me.vehicle = me, bound
-    check(can(bound, "SeatFrontRight") and not can(bound, "GloveBox") and not can(bound, "TruckBed"),
-        "沒權限的人坐在車上：自己坐的座位列得出來，置物箱與後車廂照樣不列")
-    local function hot(job) return ISHotwireVehicle.isValid({ character = me, anycar = job and { job = job } or nil }) end
-    check(hot("make") == false and hot("unwire") == true and hot(nil) == true, "客戶端：別人的車配鑰匙排入時就擋，熱線與拆除短接交給伺服器")
+    check(can(bound, "SeatFrontRight") and not can(bound, "SeatFrontLeft") and not can(bound, "GloveBox") and not can(bound, "TruckBed"),
+        "沒權限的人坐在車上：只有自己坐的座位列得出來，別的座位、置物箱與後車廂照樣不列")
+    local lastHot
+    local function hot(job)
+        lastHot = { character = me, anycar = job and { job = job } or nil }
+        return ISHotwireVehicle.isValid(lastHot)
+    end
+    check(hot("make") == false and lastHot._mvmText == "IGUI_MVM_KeyOwnerOnly" and hot("other") == false and hot("unwire") == true and hot(nil) == true,
+        "客戶端：別人的車配鑰匙排入時就擋並說只有車主能配，熱線與拆除短接交給伺服器")
     bound.seats[1], me.vehicle = nil, nil
     check(not can(bound, "SeatFrontRight"), "下車後：座位照權限不列出")
     local remote = player("dora", 1, 1)
@@ -1179,6 +1184,9 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     check(not can(bound, "TruckBed"), "原版 test 不給（門關著、距離）時照原版拒絕")
     bound.vanillaNo = nil
     check(can(bound, "TruckBed") and can(bound, "SeatFrontRight"), "車主：全部可用")
+    bound.seats[1], me.vehicle = me, bound
+    check(hot("make") == true, "客戶端：車主配鑰匙不擋")
+    bound.seats[1], me.vehicle = nil, nil
     MVM.clientReceive("fleetDelta", { to = "carl", streamId = "k1", seq = 3, removes = { "oS" }, upserts = {} })
     check(MVM.protectedText(me) == "IGUI_MVM_Protected", "一般玩家被擋：只說受車主保護")
     me.admin = true
@@ -5333,10 +5341,18 @@ local function door(p, cls, pid, noIntent)
     if not noIntent then intent(p, cls, v, pid) end
     return stage(A(cls, { character = p, part = v.parts[pid], vehicle = v }), "complete")
 end
-check(door(ST, "ISOpenVehicleDoor", "DoorFrontLeft") == false, "陌生人站在車外：開門照舊拒絕")
+local CG = MVM.CommandGate
+local function doorCmd(p, pid, open)
+    return (CG.decide(CG.RULES.vehicle.setDoorOpen, "vehicle", "setDoorOpen", p, { vehicle = v.id, part = pid, open = open }))
+end
+check(door(ST, "ISOpenVehicleDoor", "DoorFrontLeft") == false and doorCmd(ST, "DoorFrontLeft", true) == false, "陌生人站在車外：開門照舊拒絕")
 sit(ST, 0)
+v.parts.DoorFrontLeft.door.locked, v.previouslyEntered = true, nil
 check(door(ST, "ISOpenVehicleDoor", "DoorFrontLeft") == true and door(ST, "ISUnlockVehicleDoor", "DoorFrontLeft") == true,
     "陌生人坐在駕駛座：自己座位的門開得了、解得了鎖（原版下車要先開門）")
+check(v.parts.DoorFrontLeft.door.locked == false and v.previouslyEntered == true, "照樣走虛擬鑰匙：權威解鎖、開門不觸發警報")
+check(doorCmd(ST, "DoorFrontLeft", true) == true and doorCmd(ST, "DoorFrontLeft", false) == false and doorCmd(ST, "DoorFrontRight", true) == false,
+    "門動畫同步指令（setDoorOpen）：自己座位的門開門放行，關門與別的門照舊拒絕")
 check(door(ST, "ISOpenVehicleDoor", "DoorFrontRight") == false and door(ST, "ISOpenVehicleDoor", "TrunkDoor") == false
     and door(ST, "ISCloseVehicleDoor", "DoorFrontLeft") == false, "別的座位的門、後車廂、關門照舊拒絕")
 -- 用解鎖測：開門那類在車外被拒時留了一筆沒消費的 intent

@@ -6,6 +6,7 @@
     "IGUI_MVM_ProtocolMismatch": "La version du Gestionnaire de véhicules diffère de celle du serveur. Veuillez mettre à jour le mod.",
     "IGUI_MVM_Protected": "Ce véhicule est revendiqué ; le propriétaire doit vous le partager pour que vous puissiez l'utiliser",
     "IGUI_MVM_SalvageUnclaimFirst": "C'est votre véhicule revendiqué. Libérez-le d'abord pour démonter le véhicule entier.",
+    "IGUI_MVM_KeyOwnerOnly": "Seul le propriétaire peut fabriquer une clé pour ce véhicule",
     "IGUI_MVM_FleetTitle": "Flotte de véhicules",
     "IGUI_MVM_Tab_OWNED": "Mes véhicules",
     "IGUI_MVM_Tab_SHARED": "Partagés avec moi",
