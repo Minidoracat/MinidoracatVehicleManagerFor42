@@ -135,6 +135,8 @@ function G.decide(spec, a)
         elseif spec.free and spec.free(a) and (not isServer() or a._mvmIntent
             or takeIntent(O.principal(a.character), spec.class, vehicle, part)) then
             a._mvmIntent = true
+            local _
+            _, rec = O.lookup(vehicle) -- 照樣帶紀錄：虛擬鑰匙的解鎖與開門免警報對車上的人一樣適用
         else
             allow, reason, rec, act = judge(spec, a, vehicle, part, MVM.requiredActions(spec, a), "_mvmIntent")
             local guarded = rec ~= nil
