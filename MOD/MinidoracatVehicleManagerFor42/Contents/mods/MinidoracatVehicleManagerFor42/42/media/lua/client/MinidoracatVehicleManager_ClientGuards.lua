@@ -14,6 +14,7 @@ require "Vehicles/TimedActions/ISEnterVehicle"
 require "Vehicles/TimedActions/ISSwitchVehicleSeat"
 require "Vehicles/TimedActions/ISAttachTrailerToVehicle"
 require "Vehicles/TimedActions/ISDetachTrailerFromVehicle"
+require "Vehicles/TimedActions/ISHotwireVehicle"
 
 local MVM = MinidoracatVehicleManager
 local C = MVM.Client
@@ -92,6 +93,11 @@ guardValid(ISDetachTrailerFromVehicle, function(a)
     if v == nil then return true end
     return allowed(a.character, v, "TOW") and allowed(a.character, v:getVehicleTowing(), "TOW")
         and allowed(a.character, v:getVehicleTowedBy(), "TOW")
+end)
+-- 配鑰匙（要管理權限）排入時就提示，不必等動作做完才被伺服器拒絕；原版熱線與拆除短接只由伺服器判定
+guardValid(ISHotwireVehicle, function(a)
+    local act = MVM.requiredActions(MVM.adapterFor("ISHotwireVehicle"), a)[1]
+    return act ~= "MANAGE" or allowed(a.character, a.character:getVehicle(), act)
 end)
 
 -- 第三方 MOD 只在客戶端跑的動作（沒有 complete）：perform 只送它自己的伺服器指令，由指令防火牆（shared/…_CommandGate.lua）判定；
@@ -270,10 +276,15 @@ function MVM.containerAction(part)
     return "CARGO"
 end
 
+-- 自己坐著的座位一律列得出來：車上的人一個車上容器都列不出來時（分享被收回、租用到期鎖定時人還在車上），
+-- 原版物品欄每幀丟錯誤（ISInventoryPage.lua:533、1904 直接取最後一個容器鈕）
+-- shortcut: 座位沒有容器的車型在這種情況仍會丟錯誤, 有人回報再改成補一個空容器鈕
 function MVM.storageAllowed(vehicle, partIndex, chr)
     if not (isClient() and instanceof(chr, "IsoPlayer") and chr:isLocalPlayer()) then return true end
-    local act = MVM.containerAction(vehicle:getPartByIndex(partIndex))
-    return act == nil or (MVM.clientCanUse(chr, vehicle, act))
+    local part = vehicle:getPartByIndex(partIndex)
+    local act = MVM.containerAction(part)
+    if act == nil or (chr:getVehicle() == vehicle and part:getContainerSeatNumber() == vehicle:getSeat(chr)) then return true end
+    return (MVM.clientCanUse(chr, vehicle, act))
 end
 
 if isClient() then

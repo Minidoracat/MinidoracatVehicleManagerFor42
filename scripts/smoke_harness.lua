@@ -266,6 +266,7 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:tryStartEngine(haveKey) self.started = haveKey end
     function v:setPreviouslyEntered(b) self.previouslyEntered = b end
     function v:getSeat(chr) for i, c in pairs(self.seats) do if c == chr then return i end end return -1 end
+    function v:getPassengerDoor(seat) return self.seatDoors and self.seatDoors[seat] or nil end
     function v:isDriver(chr) return self.seats[0] == chr end
     function v:exit(chr) for i, c in pairs(self.seats) do if c == chr then self.seats[i] = nil end end chr.vehicle = nil end
     function v:getVehicleTowing() return self.towing end
@@ -343,6 +344,7 @@ for _, n in ipairs({ "ISInstallVehiclePart", "ISUninstallVehiclePart", "ISFixVeh
     "ISOpenVehicleDoor", "ISCloseVehicleDoor", "ISOpenCloseVehicleWindow", "ISAddAnimalInTrailer", "ISRemoveAnimalFromTrailer" }) do
     vclass(n, { "update", "complete" })
 end
+ISHotwireVehicle.isValid = function() return true end -- 客戶端的配鑰匙檢查包的是 isValid
 for _, n in ipairs({ "ISAddGasolineToVehicle", "ISTakeGasolineFromVehicle" }) do vclass(n, { "serverStart", "update", "complete", "serverStop" }) end
 for _, n in ipairs({ "ISRefuelFromGasPump", "ISDeflateTire", "ISInflateTire" }) do vclass(n, { "update", "complete", "serverStop" }) end
 vclass("ISSmashWindow", { "serverStart", "update", "complete" })
@@ -1152,6 +1154,14 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     check(can(free, "TruckBed") and can(free, "SeatFrontRight"), "未綁定的車：容器照原版開放")
     check(not can(bound, "TruckBed") and not can(bound, "ModCargoBox") and not can(bound, "SeatFrontRight")
         and not can(bound, "GloveBox") and can(bound, "GasTank"), "他人的車：物品容器都不列出，油箱照原版")
+    -- 坐在車上的人：自己的座位一律列得出來（否則原版物品欄每幀丟錯誤），其他容器照權限；配鑰匙排入時就擋
+    bound.seats[1], me.vehicle = me, bound
+    check(can(bound, "SeatFrontRight") and not can(bound, "GloveBox") and not can(bound, "TruckBed"),
+        "沒權限的人坐在車上：自己坐的座位列得出來，置物箱與後車廂照樣不列")
+    local function hot(job) return ISHotwireVehicle.isValid({ character = me, anycar = job and { job = job } or nil }) end
+    check(hot("make") == false and hot("unwire") == true and hot(nil) == true, "客戶端：別人的車配鑰匙排入時就擋，熱線與拆除短接交給伺服器")
+    bound.seats[1], me.vehicle = nil, nil
+    check(not can(bound, "SeatFrontRight"), "下車後：座位照權限不列出")
     local remote = player("dora", 1, 1)
     function remote:isLocalPlayer() return false end
     check(can(bound, "TruckBed", remote), "只管本機玩家：別人的角色照原版")
@@ -5285,6 +5295,58 @@ local handheld = { _cls = "Radio" }
 check(stage(A("ISRadioAction", { character = ST, mode = "RemoveHeadphones", device = handheld }), "complete") == true and ran() == n + 4,
     "手持／擺在地上的收音機（不是車輛零件）：照原版")
 ISRadioAction = nil
+end)();
+
+(function()
+out("情境 G5：配鑰匙要管理權限（熱線、拆除短接照駕駛權限）；坐在車上的人開得了自己座位的門")
+boot()
+G.install("G5")
+local OW, DR, ST = player("kyown", 1, 1), player("kydrv", 1, 1), player("kystr", 1, 1)
+local v = vehicle(112, 1102, 9102, "Base.CarNormal", 1, 1, { "Engine", "DoorFrontLeft", "DoorFrontRight", "TrunkDoor" })
+v.seatDoors = { [0] = v.parts.DoorFrontLeft, [1] = v.parts.DoorFrontRight }
+local r = rec(claim(OW, v).oid)
+cmd(OW, "addMember", { expectedOid = r.oid, username = "kydrv", actionBits = MVM.ACTIONS.DRIVE })
+local function sit(p, seat) v:exit(p); if seat then v.seats[seat], p.vehicle = p, v end end
+local function hot(p, anycar)
+    intent(p, "ISHotwireVehicle", v)
+    return stage(A("ISHotwireVehicle", { character = p, anycar = anycar }), "complete")
+end
+local function ran() return calls("ISHotwireVehicle.complete") end
+local function manageDenies()
+    local n = 0
+    for key, count in pairs(O.R.denyAgg) do if key:find("kydrv|MANAGE|", 1, true) then n = n + count end end
+    return n
+end
+sit(DR, 0)
+local n, d = ran(), manageDenies()
+check(hot(DR, { job = "make" }) == false and ran() == n and manageDenies() == d + 1 and lastOf(DR, "enforcement").reason == "NOT_AUTHORIZED",
+    "有駕駛權限的成員配鑰匙：拒絕（要管理權限），原版 complete 沒跑")
+check(hot(DR, { job = "unwire" }) == true and hot(DR, nil) == true and hot(DR, "make") == true and ran() == n + 3,
+    "有駕駛權限的成員：拆除短接、原版熱線（沒有 anycar 或不是表）照舊放行")
+sit(DR, nil); sit(ST, 0)
+check(hot(ST, nil) == false and hot(ST, { job = "make" }) == false and ran() == n + 3, "陌生人：熱線與配鑰匙都拒絕")
+sit(ST, nil); sit(OW, 0)
+check(hot(OW, { job = "make" }) == true and ran() == n + 4, "車主：配得到鑰匙")
+sit(OW, nil)
+-- 下車：沒權限的人坐在車上，只放行自己座位那扇門的開門與解鎖
+local function door(p, cls, pid, noIntent)
+    if not noIntent then intent(p, cls, v, pid) end
+    return stage(A(cls, { character = p, part = v.parts[pid], vehicle = v }), "complete")
+end
+check(door(ST, "ISOpenVehicleDoor", "DoorFrontLeft") == false, "陌生人站在車外：開門照舊拒絕")
+sit(ST, 0)
+check(door(ST, "ISOpenVehicleDoor", "DoorFrontLeft") == true and door(ST, "ISUnlockVehicleDoor", "DoorFrontLeft") == true,
+    "陌生人坐在駕駛座：自己座位的門開得了、解得了鎖（原版下車要先開門）")
+check(door(ST, "ISOpenVehicleDoor", "DoorFrontRight") == false and door(ST, "ISOpenVehicleDoor", "TrunkDoor") == false
+    and door(ST, "ISCloseVehicleDoor", "DoorFrontLeft") == false, "別的座位的門、後車廂、關門照舊拒絕")
+-- 用解鎖測：開門那類在車外被拒時留了一筆沒消費的 intent
+check(door(ST, "ISUnlockVehicleDoor", "DoorFrontLeft", true) == false, "沒有 intent（冒充車上的人）：拒絕")
+sit(ST, nil); sit(OW, 1)
+r.lock = "RENT"
+check(door(OW, "ISOpenVehicleDoor", "DoorFrontRight") == true and door(OW, "ISOpenVehicleDoor", "DoorFrontLeft") == false
+    and lastOf(OW, "enforcement").reason == "RENT_LOCKED", "租用到期鎖住時車主坐在車上：開得了自己座位的門，其他門照樣鎖住")
+r.lock = nil
+sit(OW, nil)
 end)();
 
 (function()

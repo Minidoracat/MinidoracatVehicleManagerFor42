@@ -120,7 +120,8 @@ end
 -- 每個突變 stage 都重新判定目前的目標與權限（中途撤權、轉讓、剛被綁定都要擋）；
 -- 只有 intent 的消費記在 action 實例上（一個動作只消費一次，雙層包裝也一樣）。一旦拒絕就整個動作都拒絕。
 -- spec.also 的車（例：拖吊的拖車）在主目標通過後逐台判定，規則相同；spec.carrier 的車載著的受保護紀錄
--- （拖車卸車時車不在世界上）各要 TOW，不要求 intent
+-- （拖車卸車時車不在世界上）各要 TOW，不要求 intent；spec.free(a) 成立的動作不看權限（坐在車上的人開自己座位的門），
+-- 伺服器上照樣要 intent，沒有就照一般規則判
 function G.decide(spec, a)
     if a._mvmAllow == false then return false end
     local allow, rec, reason, act = true, nil, nil, nil
@@ -131,6 +132,9 @@ function G.decide(spec, a)
             allow, reason = false, "TARGET_MISMATCH"
         elseif a.vehicle ~= nil and a.vehicle ~= vehicle then
             allow, reason = false, "TARGET_MISMATCH" -- action 自帶的 vehicle 與實際目標不一致
+        elseif spec.free and spec.free(a) and (not isServer() or a._mvmIntent
+            or takeIntent(O.principal(a.character), spec.class, vehicle, part)) then
+            a._mvmIntent = true
         else
             allow, reason, rec, act = judge(spec, a, vehicle, part, MVM.requiredActions(spec, a), "_mvmIntent")
             local guarded = rec ~= nil

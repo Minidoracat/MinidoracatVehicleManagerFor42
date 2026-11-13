@@ -28,6 +28,18 @@ local function doorAction(a)
     return { "PASSENGER" }
 end
 MVM.doorAction = doorAction -- 指令防火牆的 vehicle.setDoorOpen 共用
+-- 坐在這台車上的人開、解鎖自己座位的門不看權限：分享被收回、租用到期鎖定時人還在車上，原版下車要先開門
+-- （ISVehicleMenu.lua:1593-1611），擋下就下不了車
+local function ownSeatDoor(a)
+    local p, v = a.character, a.part and a.part:getVehicle()
+    return p ~= nil and v ~= nil and p:getVehicle() == v and v:getPassengerDoor(v:getSeat(p)) == a.part
+end
+-- 熱線類動作：帶 anycar.job == "make" 的是配鑰匙（Minidoracat AnyCar 沿用這個類別），做出實體鑰匙，要管理權限；
+-- 原版熱線與拆除短接要駕駛權限
+local function hotwireAction(a)
+    local extra = a.anycar
+    return { type(extra) == "table" and extra.job == "make" and "MANAGE" or "DRIVE" }
+end
 
 local ITEM_PUSH = { "item", "condition" }
 local TUNING_PUSH = { "item", "condition", "moddata" }
@@ -47,13 +59,13 @@ local BUILTIN = {
     { class = "ISInflateTire", action = "REPAIR", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete", "serverStop" }, push = { "moddata" } },
     { class = "ISAddAnimalInTrailer", action = "CARGO", vehicleOf = ownVehicle, stages = { "complete" } },
     { class = "ISRemoveAnimalFromTrailer", action = "CARGO", vehicleOf = ownVehicle, stages = { "complete" } },
-    { class = "ISHotwireVehicle", action = "DRIVE", vehicleOf = seatVehicle, stages = { "complete" } },
+    { class = "ISHotwireVehicle", action = hotwireAction, vehicleOf = seatVehicle, stages = { "complete" } },
     { class = "ISStartVehicleEngine", action = "DRIVE", vehicleOf = seatVehicle, stages = { "complete" } },
     { class = "ISShutOffVehicleEngine", action = "DRIVE", vehicleOf = seatVehicle, stages = { "complete" } },
     { class = "ISLockDoors", action = "PASSENGER", vehicleOf = ownVehicle, stages = { "complete" }, push = { "alldoors" } },
     { class = "ISLockVehicleDoor", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
-    { class = "ISUnlockVehicleDoor", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
-    { class = "ISOpenVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
+    { class = "ISUnlockVehicleDoor", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" }, free = ownSeatDoor },
+    { class = "ISOpenVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" }, free = ownSeatDoor },
     { class = "ISCloseVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
     { class = "ISOpenCloseVehicleWindow", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },
     -- 燒毀車拆解會產出材料並永久刪車（ISRemoveBurntVehicle.lua:60-145）。
