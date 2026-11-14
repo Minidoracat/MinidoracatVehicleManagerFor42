@@ -1141,16 +1141,33 @@ GOS.save()
 SGlobalObjects.others = 5
 boot(deepcopy(O.R.meta), true, true)
 check(#O.R.shards == 2 and O.ready() == true and records() == 30, "GOS 上限只擋那一場：減少其他 MOD 後重開，全部讀回、READY")
--- 版本回退：不認得 sizes 的舊版跑過一陣子（只推進 revision、留下過期的 sizes），再升回來：不比，不誤判
-local rolled = deepcopy(fullMeta)
-rolled.sizes[1][1] = rolled.sizes[1][1] + 5
-rolled.ledgerRevision = rolled.ledgerRevision + 3
+-- GOS 上限那一場：沒開的片，主檔原本記的片數與筆數照樣存回去
 GOS.disk = deepcopy(files)
+SGlobalObjects.others = 125
+boot(deepcopy(fullMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and O.R.meta.shardCount == 2 and O.R.meta.sizes[2] ~= nil and O.R.meta.sizes[2][1] == 10,
+    "GOS 上限那一場：沒開的第 2 片，主檔記的片數與筆數照樣留著")
+-- GOS 上限＋開得了的第 1 片被截空：照樣認得出來，而且記進存檔（不是只擋這一場）
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"] = {}
+boot(deepcopy(fullMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "GOS 上限＋第 1 片被截空：LEDGER_RECORDS_MISSING")
+GOS.save()
+SGlobalObjects.others = 5
+boot(deepcopy(O.R.meta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "其他 MOD 減少後重開：照樣 RECOVERY_REQUIRED")
+-- 合法的刪除不誤判：主檔沒寫成（較舊）、分片裡少了一筆其他項目（車主活動被清掉，沒有 bump），sentinel 同 revision
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"].data.ownerActivity.filler = nil
+boot(deepcopy(fullMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == true, "主檔較舊、分片少了一筆合法刪除的其他項目：READY（只有整片空才算掉資料）")
+-- 版本回退：不認得 sizes 的舊版跑過一陣子（只推進 revision、留下過期的 sizes），期間第 1 片合法地刪到空，再升回來：不比，不誤判
+local rolled = deepcopy(fullMeta)
+rolled.ledgerRevision = rolled.ledgerRevision + 3
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"] = { data = {} }
 boot(deepcopy(rolled), true, true); gmd = deepcopy(newGmd)
 check(O.ready() == true, "舊版跑過（sizesRev 對不上 revision）留下的過期筆數：不比，READY")
 rolled.sizesRev = rolled.ledgerRevision
 boot(deepcopy(rolled), true, true); gmd = deepcopy(newGmd)
-check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "對照：sizesRev 對得上時同樣的筆數差就判 RECOVERY")
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "對照：sizesRev 對得上時，主檔記有資料的片讀回來是空的就判 RECOVERY")
 O.SHARD_LIMITS.records = lim
 end)();
 

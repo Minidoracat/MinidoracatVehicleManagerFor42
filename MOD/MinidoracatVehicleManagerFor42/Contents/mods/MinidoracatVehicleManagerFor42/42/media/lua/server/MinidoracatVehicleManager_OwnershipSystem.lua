@@ -299,12 +299,14 @@ function O.mapSet(map, key, value)
     R.shards[k].data[map][key] = value
 end
 
--- 主檔記的某一片筆數比實際載入的多＝那一片被截空、沒寫成或缺檔。主檔與分片不同步時（主檔那次沒寫成）兩個方向都可能，
--- 只看「變少」：主檔較舊、期間淨刪過紀錄而且 sentinel 也沒存到時會誤判成 RECOVERY（保守）；分片寫失敗但留著舊檔、筆數沒變少的看不出來
-local function shardShort()
+-- 主檔記這一片有資料，讀回來卻整片是空的（或沒開到）＝那一片被截空、寫壞或沒寫成。引擎寫一片只有三種結果：整份寫成、
+-- 截空（寫壞的檔讀不進來，同樣是空的）、舊檔原封不動，所以只看「整片空」：合法的刪除、主檔較舊或版本回退留下的筆數差都不會誤判；
+-- 寫失敗而留著舊檔的看不出來。onlyOpened：GOS 上限時沒開的片不算
+local function shardEmpty(onlyOpened)
     for k, z in pairs(R.expect) do
         local sh = R.shards[k]
-        if type(z) == "table" and (sh == nil or sh.records < (z[1] or 0) or sh.entries < (z[2] or 0)) then return true end
+        if type(z) == "table" and (z[1] or 0) + (z[2] or 0) > 0
+            and ((sh == nil and not onlyOpened) or (sh ~= nil and sh.records + sh.entries == 0)) then return true end
     end
     return false
 end
@@ -373,6 +375,11 @@ local function loadLedger(saved)
         end
     end
     meta.shardCount = #R.shards
+    if R.gosLimit then
+        -- 沒開的片：主檔原本記的片數與筆數留著，這一場存檔不蓋掉，下次開得了的時候照樣比得到
+        meta.shardCount = math.max(count, top)
+        for k, z in pairs(R.expect) do if R.shards[k] == nil then meta.sizes[k] = z end end
+    end
     if SGlobalObjects.getSystemCount() > O.SHARD_LIMITS.systemBudget then
         -- 磁碟上有的分片都要開（不開就查不到那些紀錄）；超過預算只能記錄，請管理員減少其他 MOD 的 GOS 系統
         O.audit("ERROR", "LEDGER_SHARD", { reason = "GOS systems " .. SGlobalObjects.getSystemCount() .. " over budget" })
@@ -385,8 +392,8 @@ local function loadLedger(saved)
         end
     end
     meta.schemaVersion = meta.schemaVersion or SCHEMA_VERSION
-    -- 載入當下就判、就記進主檔：meta.sizes 已換成這次讀到的筆數，O.ready 要等第一次用到帳本才跑，中間存過一次檔就比不出來了
-    if R.loadFault == nil and not R.gosLimit and shardShort() then R.loadFault = "LEDGER_RECORDS_MISSING" end
+    -- 載入當下就判、就記進主檔：meta.sizes 已換成這次讀到的筆數，晚一點才判的話中間存過一次檔就比不出來了
+    if R.loadFault == nil and shardEmpty(R.gosLimit) then R.loadFault = "LEDGER_RECORDS_MISSING" end
     meta.recovery = meta.recovery or R.loadFault
     return fresh
 end
@@ -441,7 +448,7 @@ local function writeSentinel(st)
         true, st.ledgerId, st.ledgerRevision, recordCount(st), st.schemaVersion
 end
 
--- §4.3 載入判定；GOS 與 GMD 都載入後才可判斷，所以第一次需要帳本時才做
+-- §4.3 載入判定；GOS 與 GMD 都載入後才可判斷：開服時（下面的 OnServerStarted／OnGameStart）就做，其他呼叫端拿快取的結果
 function O.ready()
     if R.status == "READY" then return true end
     if R.status == "RECOVERY_REQUIRED" then return false, "RECOVERY_REQUIRED" end
@@ -483,6 +490,11 @@ function O.bump(record)
     st.sizesRev = st.ledgerRevision
     writeSentinel(st)
 end
+
+-- 開服就判定、把 RECOVERY 記進 sentinel：不等第一次用到帳本，判定前的存檔才不會蓋掉證據（空服暫停時可能很久都沒人用帳本）。
+-- 這時 GOS 與 GMD 都已載入：IsoWorld.init（含 GlobalModData，IsoWorld.java:2022）→ SGlobalObjects.initSystems（GameServer.java:827）→ OnServerStarted（:1573）
+if Events.OnServerStarted then Events.OnServerStarted.Add(function() O.ready() end) end
+Events.OnGameStart.Add(function() if not isClient() then O.ready() end end)
 
 -- --------------------------------------------------------------- indexes ---
 local function addToList(map, key, rec)
