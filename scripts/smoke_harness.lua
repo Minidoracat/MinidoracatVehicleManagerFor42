@@ -90,6 +90,8 @@ function GOS.save()
         GOS.disk[name] = out
     end
 end
+-- 引擎：存檔資料夾裡有沒有這個檔（LuaManager.java:5537）；分片檔名是 gos_<系統名>.bin
+function checkSaveFileExists(f) return GOS.disk[f:match("^gos_(.+)%.bin$")] ~= nil end
 
 function SGlobalObjectSystem:derive(name)
     local cls = setmetatable({ Type = name }, { __index = self })
@@ -994,6 +996,44 @@ check(#O.R.shards == 3, "全伺服器 GOS 系統數達預算：不再開新分�
 SGlobalObjects.others = 5
 O.SHARD_LIMITS.records = lim
 end
+
+(function()
+out("情境 16b：各檔新舊不一——主檔比分片檔舊、分片檔少一個、分片檔被截空")
+boot()
+local lim, NAME = O.SHARD_LIMITS.records, "MinidoracatVehicleManagerOwnership_"
+O.SHARD_LIMITS.records = 20
+check(O.ready() == true, "16b 前置：帳本 READY")
+local oldMeta, oldGmd = deepcopy(O.R.meta), deepcopy(gmd) -- 只有第 1 片時的主檔與 sentinel
+for i = 1, 50 do O.createRecord("filler", vehicle(100 + i, 1000 + i, 9000 + i, "Base.CarNormal", 1, 1), part("Engine")) end
+GOS.save()
+local newMeta, newGmd, files = deepcopy(O.R.meta), deepcopy(gmd), deepcopy(GOS.disk)
+check(oldMeta.shardCount == 1 and newMeta.shardCount == 3 and files[NAME .. "3"] ~= nil, "16b 前置：主檔記 1 片時磁碟上已有 3 個分片檔")
+-- 主檔那次沒寫成、之後當機（sentinel 也是舊的）：照磁碟上的分片檔開，不是照主檔記的片數
+boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
+check(#O.R.shards == 3 and records() == 50 and O.ready() == true, "主檔比分片檔舊：磁碟上的 3 片都開、50 筆都在、READY")
+check(O.R.meta.shardCount == 3, "片數照實際開的片數寫回主檔")
+-- 主檔沒寫成但 sentinel 有寫成：照舊 RECOVERY_REQUIRED，但唯讀執法看得到每一片
+GOS.disk = deepcopy(files)
+boot(deepcopy(oldMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and records() == 50, "主檔比 sentinel 舊：RECOVERY_REQUIRED，紀錄仍全部載入")
+-- 中間那一片沒有檔（那次開檔失敗）：後面的照樣開
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "2"] = nil
+boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
+check(#O.R.shards == 3 and records() == 30, "第 2 片沒有檔：第 3 片照樣開（30 筆）")
+-- 分片檔寫到一半失敗被截空，主檔與 sentinel 同 revision：不能當成正常
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"] = {}
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+local missing = false
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and records() == 30, "分片檔被截空（少 20 筆）：RECOVERY_REQUIRED")
+for _, l in ipairs(logLines) do if l:find("LEDGER_RECORDS_MISSING", 1, true) then missing = true end end
+check(missing, "稽核寫出原因 LEDGER_RECORDS_MISSING")
+check(gmd.MinidoracatVehicleManagerSentinel.recordCount == 50, "RECOVERY 期間 sentinel 的筆數不被改寫")
+-- 完整的檔：照常 READY
+GOS.disk = deepcopy(files)
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == true and records() == 50, "每個檔都完整：READY、50 筆")
+O.SHARD_LIMITS.records = lim
+end)();
 
 out("情境 18／20／26：per-recipient stream、隱私、撤權 delta")
 boot()

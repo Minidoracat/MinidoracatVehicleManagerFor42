@@ -311,7 +311,12 @@ local function loadLedger(saved)
     local st = setmetatable({}, { __index = meta, __newindex = meta })
     for _, m in ipairs(O.SHARDED_MAPS) do rawset(st, m, {}) end
     R.st = st
-    for k = 1, math.max(1, MVM.isInt(meta.shardCount) and meta.shardCount or 1) do
+    -- 每個系統檔各自寫入，主檔可能比分片檔舊（那次沒寫成）：磁碟上有的分片檔都要開，主檔記的片數只當下限
+    local count = math.max(1, MVM.isInt(meta.shardCount) and meta.shardCount or 1)
+    for k = count + 1, O.SHARD_LIMITS.shards do
+        if checkSaveFileExists("gos_" .. SYSTEM_NAME .. "_" .. k .. ".bin") then count = k end
+    end
+    for k = 1, count do
         local sh = openShard(k)
         for _, m in ipairs(O.SHARDED_MAPS) do
             local t, where, dup = sh.data[m], R.where[m], nil
@@ -395,9 +400,14 @@ function O.ready()
     local sn = sentinel()
     local bad = nil
     if sn.installed then
+        local n = 0
+        for _ in pairs(st.recordsByOid) do n = n + 1 end
         if R.loaded == "fresh" then bad = "SENTINEL_WITHOUT_LEDGER"
         elseif sn.ledgerId ~= st.ledgerId then bad = "LEDGER_ID_MISMATCH"
-        elseif (sn.ledgerRevision or 0) > st.ledgerRevision then bad = "LEDGER_OLDER_THAN_SENTINEL" end
+        elseif (sn.ledgerRevision or 0) > st.ledgerRevision then bad = "LEDGER_OLDER_THAN_SENTINEL"
+        -- 分片檔寫到一半失敗會被截成空檔（引擎先截斷再寫）：同一個 revision 筆數卻變少＝有分片沒讀回來
+        -- shortcut: 只比車輛紀錄的筆數，其他表（身分綁定、名額調整）少了看不出來；要涵蓋時在 sentinel 加各表筆數
+        elseif sn.ledgerRevision == st.ledgerRevision and (sn.recordCount or 0) > n then bad = "LEDGER_RECORDS_MISSING" end
     end
     if bad then
         R.status = "RECOVERY_REQUIRED"
