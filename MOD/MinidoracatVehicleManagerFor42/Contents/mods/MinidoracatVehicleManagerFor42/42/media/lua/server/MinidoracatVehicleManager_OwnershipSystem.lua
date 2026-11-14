@@ -247,13 +247,17 @@ local function openShard(k)
     setmetatable(md, Shard)
     if type(md.data) ~= "table" then md.data = {} end
     for _, m in ipairs(O.SHARDED_MAPS) do if type(md.data[m]) ~= "table" then md.data[m] = {} end end
-    local sh = { data = md.data, records = 0, entries = 0 }
+    local sh = { k = k, data = md.data, records = 0, entries = 0 }
     R.shards[k] = sh
+    R.meta.sizes[k] = { 0, 0 }
     return sh
 end
 
+-- 每片的筆數同時記在主檔（meta.sizes）：主檔與分片在同一次存檔從同一份記憶體寫出，重開時拿來認出沒讀回來的分片
 local function countInto(sh, map, d)
     if map == "recordsByOid" then sh.records = sh.records + d else sh.entries = sh.entries + d end
+    local z = R.meta.sizes[sh.k]
+    z[1], z[2] = sh.records, sh.entries
 end
 
 -- 新項目放第一個還有空間的分片；都滿了就開新分片。項目寫入後不再搬動，所以存檔寫到一半當機不會讓項目在分片間遺失
@@ -307,16 +311,30 @@ local function loadLedger(saved)
     local fresh = meta == nil
     meta = meta or freshMeta()
     R.meta = meta
+    -- 主檔上次存的每片筆數（升級前的主檔沒有＝不比），之後換成這次實際載入的
+    R.expect = type(meta.sizes) == "table" and meta.sizes or {}
+    meta.sizes = {}
     -- 邏輯帳本：大表是自己的欄位，其餘欄位讀寫都落到中繼資料（主系統存檔的就是 meta）
     local st = setmetatable({}, { __index = meta, __newindex = meta })
     for _, m in ipairs(O.SHARDED_MAPS) do rawset(st, m, {}) end
     R.st = st
     -- 每個系統檔各自寫入，主檔可能比分片檔舊（那次沒寫成）：磁碟上有的分片檔都要開，主檔記的片數只當下限
-    local count = math.max(1, MVM.isInt(meta.shardCount) and meta.shardCount or 1)
-    for k = count + 1, O.SHARD_LIMITS.shards do
-        if checkSaveFileExists("gos_" .. SYSTEM_NAME .. "_" .. k .. ".bin") then count = k end
+    local count = math.min(O.SHARD_LIMITS.shards, math.max(1, MVM.isInt(meta.shardCount) and meta.shardCount or 1))
+    local top, missing, hole = 0, false, false
+    for k = 1, O.SHARD_LIMITS.shards do
+        if checkSaveFileExists("gos_" .. SYSTEM_NAME .. "_" .. k .. ".bin") then
+            top, hole = k, hole or missing
+        else
+            missing = true
+        end
     end
-    for k = 1, count do
+    -- 每次存檔每一片都會寫：中間少一個檔、或主檔不在而分片檔在，都是掉了資料，O.ready 會擋下（只少最後幾片＝剛開的片還沒存到，正常）
+    R.loadFault = (hole and "LEDGER_SHARD_MISSING") or (fresh and top > 0 and "LEDGER_MAIN_MISSING") or nil
+    if top > count then
+        -- 主檔那次沒寫成，或還原備份時沒刪掉之後才開的分片檔：兩者在檔案上分不出來，留紀錄給管理員
+        O.audit("WARN", "LEDGER_SHARD", { reason = "main file recorded " .. count .. " shards, found " .. top })
+    end
+    for k = 1, math.max(count, top) do
         local sh = openShard(k)
         for _, m in ipairs(O.SHARDED_MAPS) do
             local t, where, dup = sh.data[m], R.where[m], nil
@@ -334,6 +352,10 @@ local function loadLedger(saved)
         end
     end
     meta.shardCount = #R.shards
+    if SGlobalObjects.getSystemCount() > O.SHARD_LIMITS.systemBudget then
+        -- 磁碟上有的分片都要開（不開就查不到那些紀錄）；超過預算只能記錄，請管理員減少其他 MOD 的 GOS 系統
+        O.audit("ERROR", "LEDGER_SHARD", { reason = "GOS systems " .. SGlobalObjects.getSystemCount() .. " over budget" })
+    end
     if legacy then
         for _, m in ipairs(O.SHARDED_MAPS) do
             local t = legacy[m]
@@ -391,6 +413,16 @@ local function writeSentinel(st)
         true, st.ledgerId, st.ledgerRevision, n, st.schemaVersion
 end
 
+-- 主檔記的某一片筆數比實際載入的多＝那一片被截空、沒寫成或缺檔。主檔與分片不同步時（主檔那次沒寫成）兩個方向都可能，
+-- 只看「變少」：主檔較舊、期間淨刪過紀錄而且 sentinel 也沒存到時會誤判成 RECOVERY（保守）；分片寫失敗但留著舊檔、筆數沒變少的看不出來
+local function shardShort()
+    for k, z in pairs(R.expect) do
+        local sh = R.shards[k]
+        if type(z) == "table" and (sh == nil or sh.records < (z[1] or 0) or sh.entries < (z[2] or 0)) then return true end
+    end
+    return false
+end
+
 -- §4.3 載入判定；GOS 與 GMD 都載入後才可判斷，所以第一次需要帳本時才做
 function O.ready()
     if R.status == "READY" then return true end
@@ -398,21 +430,20 @@ function O.ready()
     local st = O.state()
     if st == nil then return false, "NOT_READY" end
     local sn = sentinel()
-    local bad = nil
-    if sn.installed then
-        local n = 0
-        for _ in pairs(st.recordsByOid) do n = n + 1 end
+    -- 進過 RECOVERY 就記在主檔：之後的存檔會把缺的片寫成空檔、主檔照常寫出，不記的話下次開服就看不出來了。只有換回備份的主檔才會清掉
+    local bad = R.meta.recovery or R.loadFault
+    if bad == nil and sn.installed then
         if R.loaded == "fresh" then bad = "SENTINEL_WITHOUT_LEDGER"
         elseif sn.ledgerId ~= st.ledgerId then bad = "LEDGER_ID_MISMATCH"
-        elseif (sn.ledgerRevision or 0) > st.ledgerRevision then bad = "LEDGER_OLDER_THAN_SENTINEL"
-        -- 分片檔寫到一半失敗會被截成空檔（引擎先截斷再寫）：同一個 revision 筆數卻變少＝有分片沒讀回來
-        -- shortcut: 只比車輛紀錄的筆數，其他表（身分綁定、名額調整）少了看不出來；要涵蓋時在 sentinel 加各表筆數
-        elseif sn.ledgerRevision == st.ledgerRevision and (sn.recordCount or 0) > n then bad = "LEDGER_RECORDS_MISSING" end
+        elseif (sn.ledgerRevision or 0) > st.ledgerRevision then bad = "LEDGER_OLDER_THAN_SENTINEL" end
     end
+    if bad == nil and shardShort() then bad = "LEDGER_RECORDS_MISSING" end
     if bad then
         R.status = "RECOVERY_REQUIRED"
+        R.meta.recovery = bad
         O.audit("ERROR", "RECOVERY_REQUIRED", { reason = bad })
-        MVM.log("RECOVERY REQUIRED (" .. bad .. "): all ownership changes are refused. Restore the whole world save, vehicles.db, gos_*.bin and global_mod_data.bin from one backup.")
+        MVM.log("RECOVERY REQUIRED (" .. bad .. "): all ownership changes are refused. Stop the server, delete every gos_" .. SYSTEM_NAME
+            .. "*.bin in the save folder, then restore the whole world save, vehicles.db, gos_*.bin and global_mod_data.bin from one backup.")
         return false, "RECOVERY_REQUIRED"
     end
     writeSentinel(st)

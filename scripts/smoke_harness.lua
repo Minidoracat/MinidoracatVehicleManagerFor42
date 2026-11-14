@@ -999,6 +999,10 @@ end
 
 (function()
 out("情境 16b：各檔新舊不一——主檔比分片檔舊、分片檔少一個、分片檔被截空")
+local function logged(s) -- boot 之後的 log 有沒有這個字串（GH.logged 在後面才定義）
+    for _, l in ipairs(logLines) do if l:find(s, 1, true) then return true end end
+    return false
+end
 boot()
 local lim, NAME = O.SHARD_LIMITS.records, "MinidoracatVehicleManagerOwnership_"
 O.SHARD_LIMITS.records = 20
@@ -1016,23 +1020,72 @@ check(O.R.meta.shardCount == 3, "片數照實際開的片數寫回主檔")
 GOS.disk = deepcopy(files)
 boot(deepcopy(oldMeta), true, true); gmd = deepcopy(newGmd)
 check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and records() == 50, "主檔比 sentinel 舊：RECOVERY_REQUIRED，紀錄仍全部載入")
--- 中間那一片沒有檔（那次開檔失敗）：後面的照樣開
+-- 中間那一片沒有檔而後面的有（每次存檔每一片都會寫，所以這一定是掉了資料）：後面的照樣開，但不能當成正常
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "2"] = nil
 boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
 check(#O.R.shards == 3 and records() == 30, "第 2 片沒有檔：第 3 片照樣開（30 筆）")
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and logged("LEDGER_SHARD_MISSING"), "第 2 片沒有檔：RECOVERY_REQUIRED（LEDGER_SHARD_MISSING），不剝那一片的車的見證")
+-- 最後一片沒有檔（剛開的片還沒存到就當機）：照常
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "3"] = nil
+boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
+check(#O.R.shards == 2 and records() == 40 and O.ready() == true, "只少最後一片：照常 READY")
+-- 主檔與 sentinel 都不在、分片檔還在：不把它們當成新世界的帳本
+GOS.disk = deepcopy(files)
+boot(nil, false, true)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and logged("LEDGER_MAIN_MISSING") and records() == 50,
+    "主檔不在、分片檔在：RECOVERY_REQUIRED（LEDGER_MAIN_MISSING）")
 -- 分片檔寫到一半失敗被截空，主檔與 sentinel 同 revision：不能當成正常
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"] = {}
 boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
-local missing = false
 check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and records() == 30, "分片檔被截空（少 20 筆）：RECOVERY_REQUIRED")
-for _, l in ipairs(logLines) do if l:find("LEDGER_RECORDS_MISSING", 1, true) then missing = true end end
-check(missing, "稽核寫出原因 LEDGER_RECORDS_MISSING")
+check(logged("LEDGER_RECORDS_MISSING"), "稽核寫出原因 LEDGER_RECORDS_MISSING")
 check(gmd.MinidoracatVehicleManagerSentinel.recordCount == 50, "RECOVERY 期間 sentinel 的筆數不被改寫")
 -- 完整的檔：照常 READY
 GOS.disk = deepcopy(files)
 boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
 check(O.ready() == true and records() == 50, "每個檔都完整：READY、50 筆")
 O.SHARD_LIMITS.records = lim
+-- 只放其他表（名額調整）的分片被截空：車輛紀錄一筆沒少，也要認得出來。呼叫端有沒有 bump 都一樣（筆數記在主檔）
+boot()
+check(O.ready() == true, "16b 前置：帳本 READY")
+local limE = O.SHARD_LIMITS.entries
+O.SHARD_LIMITS.entries = 2
+for i = 1, 5 do O.mapSet("quotaOverrides", "user" .. i, 9) end
+GOS.save()
+newMeta, newGmd, files = deepcopy(O.R.meta), deepcopy(gmd), deepcopy(GOS.disk)
+check(#O.R.shards == 3 and newMeta.sizes[2][2] == 2 and newMeta.sizes[3][2] == 1, "主檔記每一片的筆數")
+GOS.disk[NAME .. "2"] = {}
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "只有名額調整的分片被截空：RECOVERY_REQUIRED")
+-- 進了 RECOVERY 之後照常存檔（缺的片寫成空檔、主檔照寫）：下次開服仍然 RECOVERY，不會因為檔案又一致了就放行
+GOS.save()
+boot(deepcopy(O.R.meta), true, true)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "RECOVERY 期間存過檔再重開：照樣 RECOVERY_REQUIRED")
+-- 主檔已寫成、某片被截空、GMD 還沒存到（sentinel 較舊）：一樣認得出來
+GOS.disk = deepcopy(files)
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == true, "16b 前置：完整重開 READY")
+local beforeGmd = deepcopy(gmd)
+O.mapSet("quotaOverrides", "user6", 9); O.bump(nil)
+GOS.save()
+local laterMeta, laterFiles = deepcopy(O.R.meta), deepcopy(GOS.disk)
+GOS.disk[NAME .. "1"] = {}
+boot(deepcopy(laterMeta), true, true); gmd = deepcopy(beforeGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "主檔比 sentinel 新、某片被截空：RECOVERY_REQUIRED")
+-- 刪掉一筆、存檔後重開（同一份 sentinel 也一樣）：不誤判
+GOS.disk = deepcopy(laterFiles)
+boot(deepcopy(laterMeta), true, true); gmd = deepcopy(beforeGmd)
+check(O.ready() == true, "16b 前置：完整重開 READY")
+O.mapSet("quotaOverrides", "user5", nil)
+GOS.save()
+boot(deepcopy(O.R.meta), true, true)
+check(O.ready() == true and O.state().quotaOverrides.user5 == nil, "刪一筆後存檔重開：READY，不誤判成少資料")
+-- 升級前的主檔沒有每片筆數：不比，之後補記
+GOS.disk = deepcopy(files)
+local oldStyle = deepcopy(newMeta); oldStyle.sizes = nil
+boot(oldStyle, true, true); gmd = deepcopy(newGmd)
+check(O.ready() == true and O.R.meta.sizes[1] ~= nil, "升級前的主檔沒有每片筆數：READY，並補記")
+O.SHARD_LIMITS.entries = limE
 end)();
 
 out("情境 18／20／26：per-recipient stream、隱私、撤權 delta")
