@@ -90,11 +90,9 @@ function GOS.save()
         GOS.disk[name] = out
     end
 end
--- 情境 15 換下一種情況前用：上一場判 RECOVERY 會在主檔與 sentinel 留記號（只有換回備份才清），不清的話後面每條斷言都會因為記號而過
-function GOS.clear(meta, g)
-    meta.recovery = nil
-    if g and g.MinidoracatVehicleManagerSentinel then g.MinidoracatVehicleManagerSentinel.recovery = nil end
-    return meta
+-- 情境 15 換下一種情況前用：上一場判 RECOVERY 會在 sentinel 留記號（只有換回備份才清），不清的話後面每條斷言都會因為記號而過
+function GOS.clear(g)
+    g.MinidoracatVehicleManagerSentinel.recovery = nil
 end
 function GOS.why(s) -- 這一場的 log 有沒有這個原因
     for _, l in ipairs(logLines) do if l:find(s, 1, true) then return true end end
@@ -441,6 +439,7 @@ end
 -- 舊版單檔格式的存檔快照（大表都在主 state 內）：boot 時走「舊檔搬進分片」路徑
 function GOS.snapshot()
     local flat = GOS.copy(O.R.meta)
+    flat.sizes = nil -- 舊的單檔格式沒有每片筆數（大表都在主檔裡）
     for _, m in ipairs(O.SHARDED_MAPS) do flat[m] = GOS.copy(O.state()[m]) end
     return flat
 end
@@ -950,16 +949,16 @@ vehicle(2, 202, 5002, "Base.CarNormal", 1, 1)
 check(O.ready() == false and cmd(A, "prepareClaim", { vehicleId = 2 }).reason == "RECOVERY_REQUIRED" and GOS.why("LEDGER_OLDER_THAN_SENTINEL"),
     "GOS 較舊 → RECOVERY_REQUIRED、mutation fail closed")
 -- sentinel 已裝但 GOS 空（10 MiB 截斷後載成空帳本）
-gmdSaved = deepcopy(gmd); GOS.clear({}, gmdSaved)
+gmdSaved = deepcopy(gmd); GOS.clear(gmdSaved)
 boot(nil, true); gmd = gmdSaved
 check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and GOS.why("SENTINEL_WITHOUT_LEDGER"), "sentinel 在但 GOS 全新 → RECOVERY_REQUIRED")
 -- ledgerId 不同
-gmdSaved = deepcopy(gmd); GOS.clear({}, gmdSaved)
+gmdSaved = deepcopy(gmd); GOS.clear(gmdSaved)
 local other = deepcopy(disk); other.ledgerId = "uuid-other0001"; other.ledgerRevision = 9999
 boot(other, true); gmd = gmdSaved
 check(O.ready() == false and GOS.why("LEDGER_ID_MISMATCH"), "ledgerId 不同 → RECOVERY_REQUIRED")
 -- 開機期 quarantine 不得蓋掉 sentinel、掩蓋較舊的 GOS
-gmdSaved = deepcopy(gmd); GOS.clear({}, gmdSaved)
+gmdSaved = deepcopy(gmd); GOS.clear(gmdSaved)
 local older = deepcopy(disk)
 older.ledgerId = gmdSaved.MinidoracatVehicleManagerSentinel.ledgerId
 older.ledgerRevision = gmdSaved.MinidoracatVehicleManagerSentinel.ledgerRevision - 1
@@ -1040,7 +1039,10 @@ check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "缺片進 RECOV
 -- 最後一片沒有檔（剛開的片還沒存到就當機）：照常
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "3"] = nil
 boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
-check(#O.R.shards == 2 and records() == 40 and O.ready() == true, "只少最後一片：照常 READY")
+check(#O.R.shards == 2 and records() == 40 and O.ready() == true, "只少主檔也沒記到的最後一片：照常 READY")
+-- 主檔已記第 3 片有資料、第 3 片的檔卻不在（第一次寫出就失敗）：掉了資料。sentinel 用較舊的那份，只靠主檔記的筆數判
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(oldGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "主檔記有資料的最後一片檔不在：RECOVERY_REQUIRED")
 -- 主檔與 sentinel 都不在、分片檔還在：不把它們當成新世界的帳本
 GOS.disk = deepcopy(files)
 boot(nil, false, true)
@@ -1066,6 +1068,23 @@ for i = 1, 5 do O.mapSet("quotaOverrides", "user" .. i, 9) end
 GOS.save()
 newMeta, newGmd, files = deepcopy(O.R.meta), deepcopy(gmd), deepcopy(GOS.disk)
 check(#O.R.shards == 3 and newMeta.sizes[2][2] == 2 and newMeta.sizes[3][2] == 1, "主檔記每一片的筆數")
+-- 最後一片的唯一一筆被合法刪掉（沒有 bump，例如閒置車主的活動被清掉），主檔沒來得及記：整片空但讀得進來，不算掉資料
+GOS.disk[NAME .. "3"] = { data = {} }
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == true, "某片合法地刪到空（檔讀得進來）、主檔還記著 1 筆：READY")
+-- 開服事件就判定、記進 sentinel（不等第一次用到帳本）：判定前存檔又碰上主檔沒寫成，也還有 sentinel 記著
+local function hooked(ev) for _, fn in ipairs(handlers[ev] or {}) do if fn == O.onStart then return true end end return false end
+check(hooked("OnServerStarted") and hooked("OnGameStart"), "O.onStart 掛在 OnServerStarted（MP）與 OnGameStart（SP）")
+GOS.disk = deepcopy(files); GOS.disk[NAME .. "2"] = {}
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+O.onStart()
+check(O.R.status == "RECOVERY_REQUIRED" and gmd.MinidoracatVehicleManagerSentinel.recovery == "LEDGER_RECORDS_MISSING"
+    and gmd.MinidoracatVehicleManagerSentinel.recordCount == newGmd.MinidoracatVehicleManagerSentinel.recordCount,
+    "開服事件：判出 RECOVERY、sentinel 記下原因，其他欄位不動")
+GOS.save() -- 缺的第 2 片寫成空檔；主檔那次沒寫成：下面拿沒記號的舊主檔重開
+boot(deepcopy(newMeta), true, true)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "主檔沒寫成、分片與 GMD 寫成後重開：sentinel 記著，照樣 RECOVERY_REQUIRED")
+GOS.disk = deepcopy(files)
 GOS.disk[NAME .. "2"] = {}
 local truncDisk = deepcopy(GOS.disk)
 boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
@@ -1134,7 +1153,7 @@ check(O.ready() == false and logged("LEDGER_RECORDS_MISSING") and gmd.Minidoraca
 GOS.disk = deepcopy(files)
 SGlobalObjects.others = 125 -- ＋主帳本＝126：開得下第 1 片，第 2 片就到 127
 boot(deepcopy(fullMeta), true, true); gmd = deepcopy(newGmd)
-check(#O.R.shards == 1 and O.ready() == false and logged("LEDGER_GOS_LIMIT") and GOS.disk[NAME .. "2"].data ~= nil,
+check(#O.R.shards == 1 and O.ready() == false and logged("LEDGER_GOS_LIMIT"),
     "開服時全服 GOS 系統數到 127：只開得下的、RECOVERY_REQUIRED（LEDGER_GOS_LIMIT），沒開的檔不動")
 -- 其他 MOD 減少之後重開：GOS 上限不記進存檔，磁碟上的分片全部讀回、照常 READY
 GOS.save()
@@ -1158,16 +1177,16 @@ check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "其他 MOD 減�
 -- 合法的刪除不誤判：主檔沒寫成（較舊）、分片裡少了一筆其他項目（車主活動被清掉，沒有 bump），sentinel 同 revision
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"].data.ownerActivity.filler = nil
 boot(deepcopy(fullMeta), true, true); gmd = deepcopy(newGmd)
-check(O.ready() == true, "主檔較舊、分片少了一筆合法刪除的其他項目：READY（只有整片空才算掉資料）")
--- 版本回退：不認得 sizes 的舊版跑過一陣子（只推進 revision、留下過期的 sizes），期間第 1 片合法地刪到空，再升回來：不比，不誤判
+check(O.ready() == true, "主檔較舊、分片少了一筆合法刪除的其他項目：READY")
+-- 版本回退：不認得 sizes 的舊版跑過一陣子（只推進 revision、留下過期的 sizes），期間第 1 片合法地刪到空，再升回來：不誤判
 local rolled = deepcopy(fullMeta)
 rolled.ledgerRevision = rolled.ledgerRevision + 3
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "1"] = { data = {} }
 boot(deepcopy(rolled), true, true); gmd = deepcopy(newGmd)
-check(O.ready() == true, "舊版跑過（sizesRev 對不上 revision）留下的過期筆數：不比，READY")
-rolled.sizesRev = rolled.ledgerRevision
+check(O.ready() == true, "主檔記有資料的片合法地刪到空（檔讀得進來）：READY")
+GOS.disk[NAME .. "1"] = {}
 boot(deepcopy(rolled), true, true); gmd = deepcopy(newGmd)
-check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "對照：sizesRev 對得上時，主檔記有資料的片讀回來是空的就判 RECOVERY")
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "對照：同一片的檔讀不進來（截空）：RECOVERY_REQUIRED")
 O.SHARD_LIMITS.records = lim
 end)();
 

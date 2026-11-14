@@ -245,9 +245,12 @@ local function openShard(k)
     system:setObjectSyncKeys({})
     local md = system:getModData()
     setmetatable(md, Shard)
-    if type(md.data) ~= "table" then md.data = {} end
+    -- 讀檔有沒有成功：我們存的分片一定有 data（空的也有）；截空或寫壞的檔讀不進來，引擎接住例外，data 就不在
+    -- （0 bytes 在 bb.limit 就丟；巢狀表整張讀完才掛回外層：SGlobalObjectSystem.java:240-270、KahluaTableImpl.java:319-333）
+    local read = type(md.data) == "table"
+    if not read then md.data = {} end
     for _, m in ipairs(O.SHARDED_MAPS) do if type(md.data[m]) ~= "table" then md.data[m] = {} end end
-    local sh = { k = k, data = md.data, records = 0, entries = 0 }
+    local sh = { k = k, data = md.data, read = read, records = 0, entries = 0 }
     R.shards[k] = sh
     R.meta.sizes[k] = { 0, 0 }
     return sh
@@ -299,14 +302,12 @@ function O.mapSet(map, key, value)
     R.shards[k].data[map][key] = value
 end
 
--- 主檔記這一片有資料，讀回來卻整片是空的（或沒開到）＝那一片被截空、寫壞或沒寫成。引擎寫一片只有三種結果：整份寫成、
--- 截空（寫壞的檔讀不進來，同樣是空的）、舊檔原封不動，所以只看「整片空」：合法的刪除、主檔較舊或版本回退留下的筆數差都不會誤判；
--- 寫失敗而留著舊檔的看不出來。onlyOpened：GOS 上限時沒開的片不算
-local function shardEmpty(onlyOpened)
+-- 掉了資料的分片：檔在卻讀不進來（截空、寫壞），或主檔記這片有資料、檔卻不在（那次沒寫成）。
+-- 不看筆數：合法刪除、主檔較舊、版本回退留下的筆數差都不算；寫失敗而留著舊檔的看不出來
+local function shardLost(onDisk)
+    for k, sh in pairs(R.shards) do if onDisk[k] and not sh.read then return true end end
     for k, z in pairs(R.expect) do
-        local sh = R.shards[k]
-        if type(z) == "table" and (z[1] or 0) + (z[2] or 0) > 0
-            and ((sh == nil and not onlyOpened) or (sh ~= nil and sh.records + sh.entries == 0)) then return true end
+        if type(z) == "table" and (z[1] or 0) + (z[2] or 0) > 0 and not onDisk[k] then return true end
     end
     return false
 end
@@ -323,26 +324,25 @@ local function loadLedger(saved)
     local fresh = meta == nil
     meta = meta or freshMeta()
     R.meta = meta
-    -- 主檔上次存的每片筆數，之後換成這次實際載入的。sizesRev 跟著每次 bump 走：不認得 sizes 的舊版跑過（版本回退）
-    -- 會只推進 revision、留下過期的 sizes，對不上就不比（升級前的主檔沒有 sizes，同樣不比）
-    R.expect = type(meta.sizes) == "table" and meta.sizesRev == meta.ledgerRevision and meta.sizes or {}
-    meta.sizes, meta.sizesRev = {}, meta.ledgerRevision
+    -- 主檔上次存的每片筆數（升級前的主檔沒有＝不比），之後換成這次實際載入的
+    R.expect = type(meta.sizes) == "table" and meta.sizes or {}
+    meta.sizes = {}
     -- 邏輯帳本：大表是自己的欄位，其餘欄位讀寫都落到中繼資料（主系統存檔的就是 meta）
     local st = setmetatable({}, { __index = meta, __newindex = meta })
     for _, m in ipairs(O.SHARDED_MAPS) do rawset(st, m, {}) end
     R.st = st
     -- 每個系統檔各自寫入，主檔可能比分片檔舊（那次沒寫成）：磁碟上有的分片檔都要開，主檔記的片數只當下限
     local count = math.min(O.SHARD_LIMITS.shards, math.max(1, MVM.isInt(meta.shardCount) and meta.shardCount or 1))
-    local top, missing, hole = 0, false, false
+    local onDisk, top, missing, hole = {}, 0, false, false
     for k = 1, O.SHARD_LIMITS.shards do
         if checkSaveFileExists("gos_" .. SYSTEM_NAME .. "_" .. k .. ".bin") then
-            top, hole = k, hole or missing
+            onDisk[k], top, hole = true, k, hole or missing
         else
             missing = true
         end
     end
     -- 每次存檔每一片都會寫：中間少一個檔、或主檔不在而分片檔在，都是掉了資料，O.ready 會擋下。
-    -- 只少主檔也沒記到的最後幾片＝剛開的片還沒存到，照常；主檔記了筆數的由 shardShort 判
+    -- 只少主檔也沒記到的最後幾片＝剛開的片還沒存到，照常；主檔記了筆數的由 shardLost 判
     R.loadFault = (hole and "LEDGER_SHARD_MISSING") or (fresh and top > 0 and "LEDGER_MAIN_MISSING") or nil
     R.gosLimit = false
     if top > count then
@@ -393,7 +393,7 @@ local function loadLedger(saved)
     end
     meta.schemaVersion = meta.schemaVersion or SCHEMA_VERSION
     -- 載入當下就判、就記進主檔：meta.sizes 已換成這次讀到的筆數，晚一點才判的話中間存過一次檔就比不出來了
-    if R.loadFault == nil and shardEmpty(R.gosLimit) then R.loadFault = "LEDGER_RECORDS_MISSING" end
+    if R.loadFault == nil and shardLost(onDisk) then R.loadFault = "LEDGER_RECORDS_MISSING" end
     meta.recovery = meta.recovery or R.loadFault
     return fresh
 end
@@ -471,7 +471,8 @@ function O.ready()
         if bad ~= "LEDGER_GOS_LIMIT" then R.meta.recovery, sn.recovery = bad, bad end
         O.audit("ERROR", "RECOVERY_REQUIRED", { reason = bad })
         MVM.log("RECOVERY REQUIRED (" .. bad .. "): all ownership changes are refused. " .. (bad == "LEDGER_GOS_LIMIT"
-            and "Too many GOS systems on this server (mods share a limit of 127): remove some GOS-using mods and restart; no data was changed."
+            and "Too many GOS systems on this server (mods share a limit of 127): remove some GOS-using mods and restart. No data was changed,"
+            .. " but vehicles recorded in the shards that were not opened are unprotected until then."
             or "Stop the server, delete every gos_" .. SYSTEM_NAME .. "*.bin in the save folder, then restore the whole world save, vehicles.db, gos_*.bin and global_mod_data.bin from one backup."))
         return false, "RECOVERY_REQUIRED"
     end
@@ -487,14 +488,14 @@ function O.bump(record)
     if R.status ~= "READY" then return end
     local st = O.state()
     st.ledgerRevision = st.ledgerRevision + 1
-    st.sizesRev = st.ledgerRevision
     writeSentinel(st)
 end
 
 -- 開服就判定、把 RECOVERY 記進 sentinel：不等第一次用到帳本，判定前的存檔才不會蓋掉證據（空服暫停時可能很久都沒人用帳本）。
 -- 這時 GOS 與 GMD 都已載入：IsoWorld.init（含 GlobalModData，IsoWorld.java:2022）→ SGlobalObjects.initSystems（GameServer.java:827）→ OnServerStarted（:1573）
-if Events.OnServerStarted then Events.OnServerStarted.Add(function() O.ready() end) end
-Events.OnGameStart.Add(function() if not isClient() then O.ready() end end)
+function O.onStart() if not isClient() then O.ready() end end
+if Events.OnServerStarted then Events.OnServerStarted.Add(O.onStart) end
+Events.OnGameStart.Add(O.onStart) -- SP
 
 -- --------------------------------------------------------------- indexes ---
 local function addToList(map, key, rec)
