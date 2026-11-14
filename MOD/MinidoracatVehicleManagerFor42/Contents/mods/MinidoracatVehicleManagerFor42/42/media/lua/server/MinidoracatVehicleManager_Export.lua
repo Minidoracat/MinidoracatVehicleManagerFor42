@@ -304,7 +304,7 @@ O.onPositionSaved = X.notePosition
 
 function X.tick()
     local st = O.state()
-    if st == nil or not O.ready() then return end -- ready() 會觸發載入判定；RECOVERY_REQUIRED 時不改帳本也不匯出
+    if st == nil or not O.ready() then return end -- 載入判定在開服事件就做了（O.onStart）；RECOVERY_REQUIRED 時不改帳本也不匯出
     if not X.journalApplied then
         X.journalApplied = true
         X.applyJournal()

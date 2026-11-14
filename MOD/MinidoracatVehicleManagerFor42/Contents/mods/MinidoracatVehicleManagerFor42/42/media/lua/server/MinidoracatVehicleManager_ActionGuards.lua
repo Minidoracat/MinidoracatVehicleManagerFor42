@@ -373,11 +373,11 @@ local function occupantCheck(player)
 end
 
 function G.watchdog()
-    -- 重啟後可能還沒有任何命令觸發載入判定：由 watchdog 自己觸發，否則沒人操作前完全不巡查
+    -- 載入判定在開服事件就做了（O.onStart）；這裡只看結果
     if O.state() == nil then return end
     local t = now()
     if MVM.recent(t, R.lastRun, WATCHDOG_MS) then return end
-    -- 觸發載入判定；RECOVERY_REQUIRED 時帳本不可寫，但仍以記憶體帳本唯讀執法（lookup 的唯讀分支）
+    -- RECOVERY_REQUIRED 時帳本不可寫，但仍以記憶體帳本唯讀執法（lookup 的唯讀分支）
     O.ready()
     R.lastRun = t
     local interval = MVM.sandbox("WatchdogIntervalSeconds", 1) * 1000

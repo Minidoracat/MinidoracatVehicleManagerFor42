@@ -107,7 +107,7 @@ function T.tick()
     if MVM.recent(t, T.lastRun, SAMPLE_MS) then return end
     T.lastRun = t
     if O.state() == nil then return end
-    O.ready() -- 觸發載入判定；RECOVERY_REQUIRED 仍唯讀追蹤（lookup 唯讀分支、observeVehicle 自己擋寫入）
+    O.ready() -- 載入判定在開服事件就做了（O.onStart），這裡讀結果；RECOVERY_REQUIRED 仍唯讀追蹤（lookup 唯讀分支、observeVehicle 自己擋寫入）
     T.online = nil
     -- 先只問每位在線玩家坐哪台車；沒人在車上、也沒有上次在車上的人，這一輪就不解任何身分
     local list, players, vehicles = S.players(), T.players, T.vehicles
