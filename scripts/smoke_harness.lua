@@ -1136,7 +1136,7 @@ local oldStyle = deepcopy(newMeta); oldStyle.sizes = nil
 boot(deepcopy(oldStyle), true, true); gmd = deepcopy(newGmd)
 check(O.ready() == true and O.R.meta.sizes[1] ~= nil, "升級前的主檔沒有每片筆數：READY，並補記")
 O.SHARD_LIMITS.entries = limE
--- 升級前的主檔＋車輛紀錄的分片被截空：靠 sentinel 的車輛筆數（同一個 revision 變少）
+-- 升級前的主檔（沒有每片筆數）＋某片讀得進來、但留著較舊、紀錄較少的內容：只剩 sentinel 的車輛筆數（同一個 revision 變少）擋得住
 boot()
 O.SHARD_LIMITS.records = 20
 check(O.ready() == true, "16b 前置：帳本 READY")
@@ -1145,10 +1145,11 @@ GOS.save()
 oldStyle, newGmd, files = deepcopy(O.R.meta), deepcopy(gmd), deepcopy(GOS.disk)
 local fullMeta = deepcopy(oldStyle)
 oldStyle.sizes = nil
-GOS.disk[NAME .. "2"] = {}
+GOS.disk[NAME .. "2"] = { data = {} }
 boot(deepcopy(oldStyle), true, true); gmd = deepcopy(newGmd)
+check(O.R.loadFault == nil and O.R.meta.recovery == nil, "16b 前置：載入時沒有判出故障（分片讀得進來、主檔沒有每片筆數）")
 check(O.ready() == false and logged("LEDGER_RECORDS_MISSING") and gmd.MinidoracatVehicleManagerSentinel.recordCount == 30,
-    "升級前的主檔＋分片被截空：RECOVERY_REQUIRED，sentinel 的筆數不被改小")
+    "升級前的主檔＋分片留著較少的紀錄：sentinel 筆數擋下 RECOVERY_REQUIRED，sentinel 的筆數不被改小")
 -- 開服時全服 GOS 系統已經快到 127：不再開分片（會讓所有客戶端的 GOS 壞掉），進 RECOVERY，沒開的檔留在磁碟上
 GOS.disk = deepcopy(files)
 SGlobalObjects.others = 125 -- ＋主帳本＝126：開得下第 1 片，第 2 片就到 127
