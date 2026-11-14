@@ -90,6 +90,16 @@ function GOS.save()
         GOS.disk[name] = out
     end
 end
+-- 情境 15 換下一種情況前用：上一場判 RECOVERY 會在主檔與 sentinel 留記號（只有換回備份才清），不清的話後面每條斷言都會因為記號而過
+function GOS.clear(meta, g)
+    meta.recovery = nil
+    if g and g.MinidoracatVehicleManagerSentinel then g.MinidoracatVehicleManagerSentinel.recovery = nil end
+    return meta
+end
+function GOS.why(s) -- 這一場的 log 有沒有這個原因
+    for _, l in ipairs(logLines) do if l:find(s, 1, true) then return true end end
+    return false
+end
 -- 引擎：存檔資料夾裡有沒有這個檔（LuaManager.java:5537）；分片檔名是 gos_<系統名>.bin
 function checkSaveFileExists(f) return GOS.disk[f:match("^gos_(.+)%.bin$")] ~= nil end
 
@@ -934,21 +944,22 @@ boot(disk, true); gmd = gmdSaved
 check(O.ready() == true and gmd.MinidoracatVehicleManagerSentinel.ledgerRevision == disk.ledgerRevision, "GOS revision 較新 → 接受並修正 sentinel")
 -- GOS 較舊 → RECOVERY_REQUIRED
 disk = GOS.snapshot(); gmdSaved = deepcopy(gmd); disk.ledgerRevision = disk.ledgerRevision - 3
-boot(disk, true); gmd = gmdSaved
+boot(deepcopy(disk), true); gmd = gmdSaved
 A = player("alice", 0, 0)
 vehicle(2, 202, 5002, "Base.CarNormal", 1, 1)
-check(O.ready() == false and cmd(A, "prepareClaim", { vehicleId = 2 }).reason == "RECOVERY_REQUIRED", "GOS 較舊 → RECOVERY_REQUIRED、mutation fail closed")
+check(O.ready() == false and cmd(A, "prepareClaim", { vehicleId = 2 }).reason == "RECOVERY_REQUIRED" and GOS.why("LEDGER_OLDER_THAN_SENTINEL"),
+    "GOS 較舊 → RECOVERY_REQUIRED、mutation fail closed")
 -- sentinel 已裝但 GOS 空（10 MiB 截斷後載成空帳本）
-gmdSaved = deepcopy(gmd)
+gmdSaved = deepcopy(gmd); GOS.clear({}, gmdSaved)
 boot(nil, true); gmd = gmdSaved
-check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "sentinel 在但 GOS 全新 → RECOVERY_REQUIRED")
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and GOS.why("SENTINEL_WITHOUT_LEDGER"), "sentinel 在但 GOS 全新 → RECOVERY_REQUIRED")
 -- ledgerId 不同
-gmdSaved = deepcopy(gmd)
+gmdSaved = deepcopy(gmd); GOS.clear({}, gmdSaved)
 local other = deepcopy(disk); other.ledgerId = "uuid-other0001"; other.ledgerRevision = 9999
 boot(other, true); gmd = gmdSaved
-check(O.ready() == false, "ledgerId 不同 → RECOVERY_REQUIRED")
+check(O.ready() == false and GOS.why("LEDGER_ID_MISMATCH"), "ledgerId 不同 → RECOVERY_REQUIRED")
 -- 開機期 quarantine 不得蓋掉 sentinel、掩蓋較舊的 GOS
-gmdSaved = deepcopy(gmd)
+gmdSaved = deepcopy(gmd); GOS.clear({}, gmdSaved)
 local older = deepcopy(disk)
 older.ledgerId = gmdSaved.MinidoracatVehicleManagerSentinel.ledgerId
 older.ledgerRevision = gmdSaved.MinidoracatVehicleManagerSentinel.ledgerRevision - 1
@@ -956,7 +967,7 @@ local d1 = { oid = "uuid-dupa0001", recordState = "ACTIVE", ownerUser = "x", sql
 local d2 = { oid = "uuid-dupb0001", recordState = "ACTIVE", ownerUser = "y", sqlIdHint = 555, keyIdHint = 2, vehicleScript = "Base.CarNormal" }
 older.recordsByOid = { [d1.oid] = d1, [d2.oid] = d2 }
 boot(older, true); gmd = gmdSaved
-check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "開機期 quarantine 不掩蓋「GOS 比 sentinel 舊」")
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and GOS.why("LEDGER_OLDER_THAN_SENTINEL"), "開機期 quarantine 不掩蓋「GOS 比 sentinel 舊」")
 check(gmd.MinidoracatVehicleManagerSentinel.ledgerRevision == older.ledgerRevision + 1, "RECOVERY 期間 sentinel 不被改寫")
 -- 首次安裝
 boot(nil)
@@ -999,10 +1010,7 @@ end
 
 (function()
 out("情境 16b：各檔新舊不一——主檔比分片檔舊、分片檔少一個、分片檔被截空")
-local function logged(s) -- boot 之後的 log 有沒有這個字串（GH.logged 在後面才定義）
-    for _, l in ipairs(logLines) do if l:find(s, 1, true) then return true end end
-    return false
-end
+local logged = GOS.why
 boot()
 local lim, NAME = O.SHARD_LIMITS.records, "MinidoracatVehicleManagerOwnership_"
 O.SHARD_LIMITS.records = 20
@@ -1024,7 +1032,11 @@ check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and records() == 
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "2"] = nil
 boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
 check(#O.R.shards == 3 and records() == 30, "第 2 片沒有檔：第 3 片照樣開（30 筆）")
-check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and logged("LEDGER_SHARD_MISSING"), "第 2 片沒有檔：RECOVERY_REQUIRED（LEDGER_SHARD_MISSING），不剝那一片的車的見證")
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED" and logged("LEDGER_SHARD_MISSING"), "第 2 片沒有檔：RECOVERY_REQUIRED（LEDGER_SHARD_MISSING）")
+-- 接著存檔：缺的第 2 片被寫成空檔，但主檔那次沒寫成（還是只記 1 片的舊主檔）。檔案上看不出缺口了，只剩 sentinel 記著
+GOS.save()
+boot(deepcopy(oldMeta), true, true)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "缺片進 RECOVERY 後存檔、主檔沒寫成：sentinel 記著，照樣 RECOVERY_REQUIRED")
 -- 最後一片沒有檔（剛開的片還沒存到就當機）：照常
 GOS.disk = deepcopy(files); GOS.disk[NAME .. "3"] = nil
 boot(deepcopy(oldMeta), true, true); gmd = deepcopy(oldGmd)
@@ -1055,12 +1067,31 @@ GOS.save()
 newMeta, newGmd, files = deepcopy(O.R.meta), deepcopy(gmd), deepcopy(GOS.disk)
 check(#O.R.shards == 3 and newMeta.sizes[2][2] == 2 and newMeta.sizes[3][2] == 1, "主檔記每一片的筆數")
 GOS.disk[NAME .. "2"] = {}
+local truncDisk = deepcopy(GOS.disk)
 boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
 check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "只有名額調整的分片被截空：RECOVERY_REQUIRED")
--- 進了 RECOVERY 之後照常存檔（缺的片寫成空檔、主檔照寫）：下次開服仍然 RECOVERY，不會因為檔案又一致了就放行
+-- 同一組檔，但開服後還沒人用到帳本（O.ready 還沒跑）就先存了一次檔：載入時已記進主檔，重開照樣 RECOVERY
+GOS.disk = deepcopy(truncDisk)
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
 GOS.save()
-boot(deepcopy(O.R.meta), true, true)
+boot(deepcopy(O.R.meta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "還沒判定就存過檔再重開：照樣 RECOVERY_REQUIRED")
+GOS.disk = deepcopy(truncDisk)
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false, "16b 前置：回到剛截空、已判定 RECOVERY 的狀態")
+-- 進了 RECOVERY 之後照常存檔（缺的片寫成空檔、主檔照寫）：下次開服仍然 RECOVERY，不會因為檔案又一致了就放行
+local recDisk = deepcopy(GOS.disk)
+GOS.save()
+local recMeta, recGmd = deepcopy(O.R.meta), deepcopy(gmd)
+boot(deepcopy(recMeta), true, true)
 check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "RECOVERY 期間存過檔再重開：照樣 RECOVERY_REQUIRED")
+-- 同上，但那次主檔沒寫成（留著進 RECOVERY 前的主檔）、分片照寫：sentinel 也記著，照樣 RECOVERY
+GOS.disk = deepcopy(recDisk); GOS.disk[NAME .. "2"] = { data = {} }
+boot(deepcopy(newMeta), true, true); gmd = deepcopy(recGmd)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "RECOVERY 後主檔沒寫成、缺的片補成空檔：sentinel 記著，照樣 RECOVERY_REQUIRED")
+-- 反過來：主檔寫成、GMD 沒寫成：主檔記著，照樣 RECOVERY
+boot(deepcopy(recMeta), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and O.R.status == "RECOVERY_REQUIRED", "RECOVERY 後 GMD 沒寫成：主檔記著，照樣 RECOVERY_REQUIRED")
 -- 主檔已寫成、某片被截空、GMD 還沒存到（sentinel 較舊）：一樣認得出來
 GOS.disk = deepcopy(files)
 boot(deepcopy(newMeta), true, true); gmd = deepcopy(newGmd)
@@ -1083,9 +1114,44 @@ check(O.ready() == true and O.state().quotaOverrides.user5 == nil, "刪一筆後
 -- 升級前的主檔沒有每片筆數：不比，之後補記
 GOS.disk = deepcopy(files)
 local oldStyle = deepcopy(newMeta); oldStyle.sizes = nil
-boot(oldStyle, true, true); gmd = deepcopy(newGmd)
+boot(deepcopy(oldStyle), true, true); gmd = deepcopy(newGmd)
 check(O.ready() == true and O.R.meta.sizes[1] ~= nil, "升級前的主檔沒有每片筆數：READY，並補記")
 O.SHARD_LIMITS.entries = limE
+-- 升級前的主檔＋車輛紀錄的分片被截空：靠 sentinel 的車輛筆數（同一個 revision 變少）
+boot()
+O.SHARD_LIMITS.records = 20
+check(O.ready() == true, "16b 前置：帳本 READY")
+for i = 1, 30 do O.createRecord("filler", vehicle(100 + i, 1000 + i, 9000 + i, "Base.CarNormal", 1, 1), part("Engine")) end
+GOS.save()
+oldStyle, newGmd, files = deepcopy(O.R.meta), deepcopy(gmd), deepcopy(GOS.disk)
+local fullMeta = deepcopy(oldStyle)
+oldStyle.sizes = nil
+GOS.disk[NAME .. "2"] = {}
+boot(deepcopy(oldStyle), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING") and gmd.MinidoracatVehicleManagerSentinel.recordCount == 30,
+    "升級前的主檔＋分片被截空：RECOVERY_REQUIRED，sentinel 的筆數不被改小")
+-- 開服時全服 GOS 系統已經快到 127：不再開分片（會讓所有客戶端的 GOS 壞掉），進 RECOVERY，沒開的檔留在磁碟上
+GOS.disk = deepcopy(files)
+SGlobalObjects.others = 125 -- ＋主帳本＝126：開得下第 1 片，第 2 片就到 127
+boot(deepcopy(fullMeta), true, true); gmd = deepcopy(newGmd)
+check(#O.R.shards == 1 and O.ready() == false and logged("LEDGER_GOS_LIMIT") and GOS.disk[NAME .. "2"].data ~= nil,
+    "開服時全服 GOS 系統數到 127：只開得下的、RECOVERY_REQUIRED（LEDGER_GOS_LIMIT），沒開的檔不動")
+-- 其他 MOD 減少之後重開：GOS 上限不記進存檔，磁碟上的分片全部讀回、照常 READY
+GOS.save()
+SGlobalObjects.others = 5
+boot(deepcopy(O.R.meta), true, true)
+check(#O.R.shards == 2 and O.ready() == true and records() == 30, "GOS 上限只擋那一場：減少其他 MOD 後重開，全部讀回、READY")
+-- 版本回退：不認得 sizes 的舊版跑過一陣子（只推進 revision、留下過期的 sizes），再升回來：不比，不誤判
+local rolled = deepcopy(fullMeta)
+rolled.sizes[1][1] = rolled.sizes[1][1] + 5
+rolled.ledgerRevision = rolled.ledgerRevision + 3
+GOS.disk = deepcopy(files)
+boot(deepcopy(rolled), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == true, "舊版跑過（sizesRev 對不上 revision）留下的過期筆數：不比，READY")
+rolled.sizesRev = rolled.ledgerRevision
+boot(deepcopy(rolled), true, true); gmd = deepcopy(newGmd)
+check(O.ready() == false and logged("LEDGER_RECORDS_MISSING"), "對照：sizesRev 對得上時同樣的筆數差就判 RECOVERY")
+O.SHARD_LIMITS.records = lim
 end)();
 
 out("情境 18／20／26：per-recipient stream、隱私、撤權 delta")

@@ -299,6 +299,16 @@ function O.mapSet(map, key, value)
     R.shards[k].data[map][key] = value
 end
 
+-- 主檔記的某一片筆數比實際載入的多＝那一片被截空、沒寫成或缺檔。主檔與分片不同步時（主檔那次沒寫成）兩個方向都可能，
+-- 只看「變少」：主檔較舊、期間淨刪過紀錄而且 sentinel 也沒存到時會誤判成 RECOVERY（保守）；分片寫失敗但留著舊檔、筆數沒變少的看不出來
+local function shardShort()
+    for k, z in pairs(R.expect) do
+        local sh = R.shards[k]
+        if type(z) == "table" and (sh == nil or sh.records < (z[1] or 0) or sh.entries < (z[2] or 0)) then return true end
+    end
+    return false
+end
+
 -- 載入：主系統中繼資料＋全部分片合併成 RAM 邏輯帳本。舊版（未分片、大表在主系統 state 內）一次搬進分片
 local function loadLedger(saved)
     R.shards, R.where = {}, {}
@@ -311,9 +321,10 @@ local function loadLedger(saved)
     local fresh = meta == nil
     meta = meta or freshMeta()
     R.meta = meta
-    -- 主檔上次存的每片筆數（升級前的主檔沒有＝不比），之後換成這次實際載入的
-    R.expect = type(meta.sizes) == "table" and meta.sizes or {}
-    meta.sizes = {}
+    -- 主檔上次存的每片筆數，之後換成這次實際載入的。sizesRev 跟著每次 bump 走：不認得 sizes 的舊版跑過（版本回退）
+    -- 會只推進 revision、留下過期的 sizes，對不上就不比（升級前的主檔沒有 sizes，同樣不比）
+    R.expect = type(meta.sizes) == "table" and meta.sizesRev == meta.ledgerRevision and meta.sizes or {}
+    meta.sizes, meta.sizesRev = {}, meta.ledgerRevision
     -- 邏輯帳本：大表是自己的欄位，其餘欄位讀寫都落到中繼資料（主系統存檔的就是 meta）
     local st = setmetatable({}, { __index = meta, __newindex = meta })
     for _, m in ipairs(O.SHARDED_MAPS) do rawset(st, m, {}) end
@@ -328,13 +339,23 @@ local function loadLedger(saved)
             missing = true
         end
     end
-    -- 每次存檔每一片都會寫：中間少一個檔、或主檔不在而分片檔在，都是掉了資料，O.ready 會擋下（只少最後幾片＝剛開的片還沒存到，正常）
+    -- 每次存檔每一片都會寫：中間少一個檔、或主檔不在而分片檔在，都是掉了資料，O.ready 會擋下。
+    -- 只少主檔也沒記到的最後幾片＝剛開的片還沒存到，照常；主檔記了筆數的由 shardShort 判
     R.loadFault = (hole and "LEDGER_SHARD_MISSING") or (fresh and top > 0 and "LEDGER_MAIN_MISSING") or nil
+    R.gosLimit = false
     if top > count then
         -- 主檔那次沒寫成，或還原備份時沒刪掉之後才開的分片檔：兩者在檔案上分不出來，留紀錄給管理員
-        O.audit("WARN", "LEDGER_SHARD", { reason = "main file recorded " .. count .. " shards, found " .. top })
+        O.audit("WARN", "LEDGER_SHARD", { reason = "main file recorded " .. count .. " shards, found " .. top
+            .. "; if you just restored a backup, stop the server, delete every gos_" .. SYSTEM_NAME .. "*.bin and restore again" })
     end
     for k = 1, math.max(count, top) do
+        -- 全服 GOS 系統數超過 127 所有客戶端的 GOS 初始化都壞（客戶端用有號 byte 讀，SGlobalObjects.java:103-104、CGlobalObjects.java:105）：
+        -- 寧可不開、這一場 RECOVERY，也不拖垮所有 MOD。沒開的檔留在磁碟上不動，其他 MOD 減少後重開就讀得回來，所以不記進存檔
+        if SGlobalObjects.getSystemCount() >= 127 then
+            R.gosLimit = true
+            O.audit("ERROR", "LEDGER_SHARD", { reason = "GOS systems at 127, shard " .. k .. " and later not opened" })
+            break
+        end
         local sh = openShard(k)
         for _, m in ipairs(O.SHARDED_MAPS) do
             local t, where, dup = sh.data[m], R.where[m], nil
@@ -356,7 +377,7 @@ local function loadLedger(saved)
         -- 磁碟上有的分片都要開（不開就查不到那些紀錄）；超過預算只能記錄，請管理員減少其他 MOD 的 GOS 系統
         O.audit("ERROR", "LEDGER_SHARD", { reason = "GOS systems " .. SGlobalObjects.getSystemCount() .. " over budget" })
     end
-    if legacy then
+    if legacy and R.loadFault == nil and not R.gosLimit then
         for _, m in ipairs(O.SHARDED_MAPS) do
             local t = legacy[m]
             legacy[m] = nil
@@ -364,6 +385,9 @@ local function loadLedger(saved)
         end
     end
     meta.schemaVersion = meta.schemaVersion or SCHEMA_VERSION
+    -- 載入當下就判、就記進主檔：meta.sizes 已換成這次讀到的筆數，O.ready 要等第一次用到帳本才跑，中間存過一次檔就比不出來了
+    if R.loadFault == nil and not R.gosLimit and shardShort() then R.loadFault = "LEDGER_RECORDS_MISSING" end
+    meta.recovery = meta.recovery or R.loadFault
     return fresh
 end
 
@@ -405,22 +429,16 @@ end
 -- ------------------------------------------------------------- sentinel ---
 local function sentinel() return ModData.getOrCreate(SENTINEL_KEY) end
 
-local function writeSentinel(st)
-    local sn = sentinel()
+local function recordCount(st)
     local n = 0
     for _ in pairs(st.recordsByOid) do n = n + 1 end
-    sn.installed, sn.ledgerId, sn.ledgerRevision, sn.recordCount, sn.schemaVersion =
-        true, st.ledgerId, st.ledgerRevision, n, st.schemaVersion
+    return n
 end
 
--- 主檔記的某一片筆數比實際載入的多＝那一片被截空、沒寫成或缺檔。主檔與分片不同步時（主檔那次沒寫成）兩個方向都可能，
--- 只看「變少」：主檔較舊、期間淨刪過紀錄而且 sentinel 也沒存到時會誤判成 RECOVERY（保守）；分片寫失敗但留著舊檔、筆數沒變少的看不出來
-local function shardShort()
-    for k, z in pairs(R.expect) do
-        local sh = R.shards[k]
-        if type(z) == "table" and (sh == nil or sh.records < (z[1] or 0) or sh.entries < (z[2] or 0)) then return true end
-    end
-    return false
+local function writeSentinel(st)
+    local sn = sentinel()
+    sn.installed, sn.ledgerId, sn.ledgerRevision, sn.recordCount, sn.schemaVersion =
+        true, st.ledgerId, st.ledgerRevision, recordCount(st), st.schemaVersion
 end
 
 -- §4.3 載入判定；GOS 與 GMD 都載入後才可判斷，所以第一次需要帳本時才做
@@ -430,20 +448,24 @@ function O.ready()
     local st = O.state()
     if st == nil then return false, "NOT_READY" end
     local sn = sentinel()
-    -- 進過 RECOVERY 就記在主檔：之後的存檔會把缺的片寫成空檔、主檔照常寫出，不記的話下次開服就看不出來了。只有換回備份的主檔才會清掉
-    local bad = R.meta.recovery or R.loadFault
+    -- 進過 RECOVERY 就記在主檔與 sentinel：之後的存檔會把缺的片寫成空檔，不記的話下次開服就看不出來了。
+    -- 兩個檔都記，一個沒寫成還有另一個；只有換回同一份備份的主檔與 global_mod_data.bin 才會清掉
+    local bad = R.meta.recovery or sn.recovery or R.loadFault or (R.gosLimit and "LEDGER_GOS_LIMIT") or nil
     if bad == nil and sn.installed then
         if R.loaded == "fresh" then bad = "SENTINEL_WITHOUT_LEDGER"
         elseif sn.ledgerId ~= st.ledgerId then bad = "LEDGER_ID_MISMATCH"
-        elseif (sn.ledgerRevision or 0) > st.ledgerRevision then bad = "LEDGER_OLDER_THAN_SENTINEL" end
+        elseif (sn.ledgerRevision or 0) > st.ledgerRevision then bad = "LEDGER_OLDER_THAN_SENTINEL"
+        -- 升級前的主檔沒有每片筆數，靠這條：同一個 revision 車輛紀錄卻變少（改紀錄筆數的寫入點都會 bump）
+        elseif sn.ledgerRevision == st.ledgerRevision and (sn.recordCount or 0) > recordCount(st) then bad = "LEDGER_RECORDS_MISSING" end
     end
-    if bad == nil and shardShort() then bad = "LEDGER_RECORDS_MISSING" end
+    -- 主檔的判定（R.loadFault）載入時已記進 meta.recovery
     if bad then
         R.status = "RECOVERY_REQUIRED"
-        R.meta.recovery = bad
+        if bad ~= "LEDGER_GOS_LIMIT" then R.meta.recovery, sn.recovery = bad, bad end
         O.audit("ERROR", "RECOVERY_REQUIRED", { reason = bad })
-        MVM.log("RECOVERY REQUIRED (" .. bad .. "): all ownership changes are refused. Stop the server, delete every gos_" .. SYSTEM_NAME
-            .. "*.bin in the save folder, then restore the whole world save, vehicles.db, gos_*.bin and global_mod_data.bin from one backup.")
+        MVM.log("RECOVERY REQUIRED (" .. bad .. "): all ownership changes are refused. " .. (bad == "LEDGER_GOS_LIMIT"
+            and "Too many GOS systems on this server (mods share a limit of 127): remove some GOS-using mods and restart; no data was changed."
+            or "Stop the server, delete every gos_" .. SYSTEM_NAME .. "*.bin in the save folder, then restore the whole world save, vehicles.db, gos_*.bin and global_mod_data.bin from one backup."))
         return false, "RECOVERY_REQUIRED"
     end
     writeSentinel(st)
@@ -458,6 +480,7 @@ function O.bump(record)
     if R.status ~= "READY" then return end
     local st = O.state()
     st.ledgerRevision = st.ledgerRevision + 1
+    st.sizesRev = st.ledgerRevision
     writeSentinel(st)
 end
 
