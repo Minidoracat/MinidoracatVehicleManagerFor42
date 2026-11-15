@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "Schadensschutz aus",
     "IGUI_MVM_Reason_GUARD_FULL": "Schutz-Slots voll. Schalte den Schadensschutz bei einem anderen Fahrzeug aus oder hol dir mehr Schutz-Slots.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "Dieser Server nutzt keine Schutz-Slots, daher wird der Schadensschutz nicht pro Fahrzeug eingestellt",
-    "IGUI_MVM_Reason_RENT_LOCKED": "Dieses Fahrzeug ist gesperrt, weil ein gemieteter Slot abgelaufen ist. Verlängere den Mietvertrag oder gib ein anderes Fahrzeug frei, um es zu entsperren.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "Dieses Fahrzeug ist gesperrt, weil ein gemieteter Slot abgelaufen ist. Verlängere oder miete neu oder gib ein anderes Fahrzeug frei, um es zu entsperren.",
     "IGUI_MVM_Guard_Hit": "Dieses Fahrzeug hat Schadensschutz; Waffen können es nicht beschädigen",
     "IGUI_MVM_Attack_Owned": "Dieses Fahrzeug ist beansprucht; sein Eigentümer wird benachrichtigt",
     "IGUI_MVM_Attack_Guarded": "%2 hat dein Fahrzeug %1 angegriffen. Der Schadensschutz hat den Schaden verhindert.",

@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "Damage guard off",
     "IGUI_MVM_Reason_GUARD_FULL": "Guard slots full. Turn off damage guard on another vehicle, or get more guard slots.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "This server does not use guard slots, so damage guard is not set per vehicle",
-    "IGUI_MVM_Reason_RENT_LOCKED": "This vehicle is locked because a rented slot ended. Renew the rental or unclaim another vehicle to unlock it.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "This vehicle is locked because a rented slot ended. Renew or rent again, or unclaim another vehicle to unlock it.",
     "IGUI_MVM_Guard_Hit": "This vehicle has damage guard; weapons cannot damage it",
     "IGUI_MVM_Attack_Owned": "This vehicle is claimed; its owner will be notified",
     "IGUI_MVM_Attack_Guarded": "%2 attacked your %1. Damage guard stopped the damage.",

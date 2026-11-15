@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "Hasar koruması kapalı",
     "IGUI_MVM_Reason_GUARD_FULL": "Koruma slotları dolu. Başka bir araçta hasar korumasını kapat veya daha fazla koruma slotu al.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "Bu sunucu koruma slotu kullanmıyor, bu yüzden hasar koruması araç başına ayarlanmaz",
-    "IGUI_MVM_Reason_RENT_LOCKED": "Kiralık bir slotun süresi bittiği için bu araç kilitlendi. Kilidini açmak için kiralamayı uzat veya başka bir aracın sahipliğini bırak.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "Kiralık bir slotun süresi bittiği için bu araç kilitlendi. Kilidini açmak için kiralamayı uzat, yeniden kirala veya başka bir aracın sahipliğini bırak.",
     "IGUI_MVM_Guard_Hit": "Bu aracın hasar koruması var; silahlar ona hasar veremez",
     "IGUI_MVM_Attack_Owned": "Bu araç sahiplenilmiş; sahibine bildirilecek",
     "IGUI_MVM_Attack_Guarded": "%2, senin %1 aracına saldırdı. Hasar koruması hasarı engelledi.",

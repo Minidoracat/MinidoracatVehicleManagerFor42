@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "Protección contra daños desactivada",
     "IGUI_MVM_Reason_GUARD_FULL": "Espacios de protección llenos. Desactiva la protección contra daños de otro vehículo o consigue más espacios de protección.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "Este servidor no usa espacios de protección, así que la protección contra daños no se configura por vehículo",
-    "IGUI_MVM_Reason_RENT_LOCKED": "Este vehículo está bloqueado porque terminó un espacio alquilado. Renueva el alquiler o libera otro vehículo para desbloquearlo.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "Este vehículo está bloqueado porque terminó un espacio alquilado. Renueva o vuelve a alquilar, o libera otro vehículo para desbloquearlo.",
     "IGUI_MVM_Guard_Hit": "Este vehículo tiene protección contra daños; las armas no pueden dañarlo",
     "IGUI_MVM_Attack_Owned": "Este vehículo está reclamado; se avisará a su dueño",
     "IGUI_MVM_Attack_Guarded": "%2 atacó tu %1. La protección contra daños evitó el daño.",

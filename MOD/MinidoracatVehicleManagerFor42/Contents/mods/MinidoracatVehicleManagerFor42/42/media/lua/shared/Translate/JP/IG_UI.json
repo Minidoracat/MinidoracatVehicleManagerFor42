@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "破壊防止をオフにしました",
     "IGUI_MVM_Reason_GUARD_FULL": "破壊防止枠がいっぱいです。別の車両の破壊防止をオフにするか、破壊防止枠を増やしてください",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "このサーバーは破壊防止枠を使っていないため、車両ごとの設定は不要です",
-    "IGUI_MVM_Reason_RENT_LOCKED": "レンタル枠が終了したため、この車両はロック中です。レンタルを更新するか別の車両の登録を解除すると戻ります",
+    "IGUI_MVM_Reason_RENT_LOCKED": "レンタル枠が終了したため、この車両はロック中です。更新・再レンタルするか別の車両の登録を解除すると戻ります",
     "IGUI_MVM_Guard_Hit": "この車両は破壊防止の対象で、武器では壊れません",
     "IGUI_MVM_Attack_Owned": "この車両は登録済みです。所有者に通知されます",
     "IGUI_MVM_Attack_Guarded": "%2 があなたの「%1」を攻撃しました。破壊防止が防ぎました",

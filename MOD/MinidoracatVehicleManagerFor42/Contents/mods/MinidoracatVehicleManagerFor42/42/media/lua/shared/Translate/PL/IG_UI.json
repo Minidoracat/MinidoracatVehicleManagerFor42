@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "Ochrona przed uszkodzeniami wyłączona",
     "IGUI_MVM_Reason_GUARD_FULL": "Brak wolnych slotów ochrony. Wyłącz ochronę przed uszkodzeniami w innym pojeździe albo zdobądź więcej slotów ochrony.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "Ten serwer nie używa slotów ochrony, więc ochrony przed uszkodzeniami nie ustawia się osobno dla każdego pojazdu",
-    "IGUI_MVM_Reason_RENT_LOCKED": "Ten pojazd jest zablokowany, bo skończył się wynajęty slot. Przedłuż wynajem albo zwolnij inny pojazd, aby go odblokować.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "Ten pojazd jest zablokowany, bo skończył się wynajęty slot. Przedłuż lub wynajmij ponownie albo zwolnij inny pojazd, aby go odblokować.",
     "IGUI_MVM_Guard_Hit": "Ten pojazd ma ochronę przed uszkodzeniami; broń nie może go uszkodzić",
     "IGUI_MVM_Attack_Owned": "Ten pojazd jest przypisany; jego właściciel zostanie powiadomiony",
     "IGUI_MVM_Attack_Guarded": "%2 zaatakował(a) twój pojazd %1. Ochrona przed uszkodzeniami zapobiegła uszkodzeniom.",

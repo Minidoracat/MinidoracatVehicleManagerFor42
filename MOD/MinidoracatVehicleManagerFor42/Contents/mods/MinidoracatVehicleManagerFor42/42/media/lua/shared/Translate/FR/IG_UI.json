@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "Protection anti-dégâts désactivée",
     "IGUI_MVM_Reason_GUARD_FULL": "Emplacements de protection pleins. Désactivez la protection anti-dégâts sur un autre véhicule ou obtenez davantage d'emplacements de protection.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "Ce serveur n'utilise pas d'emplacements de protection ; la protection anti-dégâts ne se règle donc pas par véhicule",
-    "IGUI_MVM_Reason_RENT_LOCKED": "Ce véhicule est verrouillé car un emplacement loué a expiré. Renouvelez la location ou libérez un autre véhicule pour le déverrouiller.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "Ce véhicule est verrouillé car un emplacement loué a expiré. Renouvelez ou relouez, ou libérez un autre véhicule pour le déverrouiller.",
     "IGUI_MVM_Guard_Hit": "Ce véhicule a la protection anti-dégâts ; les armes ne peuvent pas l'endommager",
     "IGUI_MVM_Attack_Owned": "Ce véhicule est revendiqué ; son propriétaire sera prévenu",
     "IGUI_MVM_Attack_Guarded": "%2 a attaqué votre %1. La protection anti-dégâts a bloqué les dégâts.",

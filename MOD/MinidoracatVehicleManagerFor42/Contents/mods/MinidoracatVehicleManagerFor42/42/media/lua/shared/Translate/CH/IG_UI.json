@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "已關閉防破壞",
     "IGUI_MVM_Reason_GUARD_FULL": "防破壞名額已滿：先關閉另一台車的防破壞，或增加防破壞名額",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "這台伺服器沒有使用防破壞名額，不需要逐台開啟防破壞",
-    "IGUI_MVM_Reason_RENT_LOCKED": "這台車的租用名額已到期，暫時鎖定：續租或解除另一台車就能恢復",
+    "IGUI_MVM_Reason_RENT_LOCKED": "這台車的租用名額已到期，暫時鎖定：續租、重新租用或解除另一台車就能恢復",
     "IGUI_MVM_Guard_Hit": "這台車有防破壞，武器打不壞",
     "IGUI_MVM_Attack_Owned": "這台車已被綁定，車主會收到通知",
     "IGUI_MVM_Attack_Guarded": "%2 攻擊了你的「%1」，防破壞擋下了",

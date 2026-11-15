@@ -367,7 +367,7 @@
     "IGUI_MVM_Guard_Disabled": "피해 방지 꺼짐",
     "IGUI_MVM_Reason_GUARD_FULL": "보호 슬롯이 가득 찼습니다. 다른 차량의 피해 방지를 끄거나 보호 슬롯을 늘리세요.",
     "IGUI_MVM_Reason_GUARD_NOT_SLOTS": "이 서버는 보호 슬롯을 사용하지 않으므로 차량별로 피해 방지를 설정하지 않습니다",
-    "IGUI_MVM_Reason_RENT_LOCKED": "대여 슬롯이 끝나 이 차량이 잠겼습니다. 잠금을 풀려면 대여를 갱신하거나 다른 차량의 등록을 해제하세요.",
+    "IGUI_MVM_Reason_RENT_LOCKED": "대여 슬롯이 끝나 이 차량이 잠겼습니다. 잠금을 풀려면 대여를 갱신·재대여하거나 다른 차량의 등록을 해제하세요.",
     "IGUI_MVM_Guard_Hit": "이 차량은 피해 방지 중이라 무기로 손상시킬 수 없습니다",
     "IGUI_MVM_Attack_Owned": "등록된 차량입니다. 소유자에게 알림이 갑니다",
     "IGUI_MVM_Attack_Guarded": "%2 님이 내 %1을(를) 공격했습니다. 피해 방지가 피해를 막았습니다.",
