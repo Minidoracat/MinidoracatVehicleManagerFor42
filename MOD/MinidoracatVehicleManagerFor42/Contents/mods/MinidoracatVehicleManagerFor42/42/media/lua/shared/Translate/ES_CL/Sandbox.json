@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Registrar y avisar",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Sacar del vehículo",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Migración de MVCK: conservar reclamos sin coincidencia (días)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Los reclamos importados de Mysterious Vehicle Claim Key se vuelven reclamos reales la primera vez que el servidor ve el vehículo. Los reclamos importados sin coincidencia tras estos días se descartan y se escriben en el registro de auditoría."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Los reclamos importados de Mysterious Vehicle Claim Key se vuelven reclamos reales la primera vez que el servidor ve el vehículo. Los reclamos importados sin coincidencia tras estos días se descartan y se escriben en el registro de auditoría.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Conservar vehículos al terminar un alquiler (días)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "Cuando termina un espacio alquilado (tras su período de gracia) y el dueño supera el límite, los vehículos sobrantes siguen reclamados y bloqueados durante estos días; nadie más puede usarlos. Alquilar de nuevo un espacio o liberar otro vehículo los desbloquea; después se liberan.\n0 los libera en cuanto termina el período de gracia."
 }

@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "기록하고 경고",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "차량에서 내리게 함",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 이전: 일치하지 않은 등록 보관 (일)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Key에서 가져온 등록은 서버가 차량을 처음 감지할 때 실제 등록이 됩니다. 이 일수가 지나도록 일치하지 않은 가져온 등록은 삭제되고 감사 로그에 기록됩니다."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Key에서 가져온 등록은 서버가 차량을 처음 감지할 때 실제 등록이 됩니다. 이 일수가 지나도록 일치하지 않은 가져온 등록은 삭제되고 감사 로그에 기록됩니다.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "대여 종료 후 차량 보관 일수",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "대여 슬롯이 끝나고(유예 기간 이후) 소유자가 한도를 넘으면, 초과 차량은 이 일수 동안 등록과 잠금이 유지되며 다른 사람은 사용할 수 없습니다. 슬롯을 다시 대여하거나 다른 차량의 등록을 해제하면 잠금이 풀리고, 기간이 끝나면 등록 해제됩니다.\n0이면 유예 기간이 끝나는 즉시 등록 해제됩니다."
 }

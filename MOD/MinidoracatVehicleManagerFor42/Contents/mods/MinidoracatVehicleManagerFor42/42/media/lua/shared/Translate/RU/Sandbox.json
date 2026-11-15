@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Записать и предупредить",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Высадить из транспорта",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Перенос MVCK: хранить несопоставленные привязки (дн.)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Привязки, импортированные из Mysterious Vehicle Claim Key, становятся настоящими, когда сервер впервые увидит транспорт. Импортированные привязки, не сопоставленные за это число дней, удаляются и записываются в журнал аудита."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Привязки, импортированные из Mysterious Vehicle Claim Key, становятся настоящими, когда сервер впервые увидит транспорт. Импортированные привязки, не сопоставленные за это число дней, удаляются и записываются в журнал аудита.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Хранить транспорт после конца аренды (дни)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "Когда арендованный слот заканчивается (после льготного периода), а владелец превышает лимит, лишний транспорт остаётся привязанным и заблокированным столько дней; никто другой не может им пользоваться. Повторная аренда слота или отвязка другого транспорта снимает блокировку; по истечении срока транспорт отвязывается.\n0 отвязывает его сразу после окончания льготного периода."
 }

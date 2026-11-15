@@ -21,7 +21,7 @@ MVM.Econ = E
 E.DEFAULTS = {
     permanentEnabled = false, permanentCurrency = "survivor", permanentPrice = 1000, permanentLimit = 10,
     rentalEnabled = false, rentalCurrency = "survivor", rentalPrice = 250, rentalLimit = 5, rentalDays = 7,
-    graceHours = 24, reminderHours = 24, autoRenewAllowed = true,
+    graceHours = 72, reminderHours = 24, autoRenewAllowed = true,
 }
 E.REASON_CODES = { "entitlement_purchase", "entitlement_renewal", "entitlement_refund" }
 

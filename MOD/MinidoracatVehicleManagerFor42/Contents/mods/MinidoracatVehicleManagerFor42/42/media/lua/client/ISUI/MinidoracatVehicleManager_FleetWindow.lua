@@ -150,9 +150,10 @@ function F.guardText(row, g)
     return getText(key, g and g.used or 0, g and g.total or 0), row.guard == "OVER" and "accent" or nil
 end
 
--- 租用名額到期鎖住（寬限期到 lockUntilMs；nil＝寬限期已過、即將解除）
+-- 租用名額到期鎖住：保留期到 lockKeepUntilMs（租約已結束）；寬限期到 lockUntilMs；都沒有＝寬限期已過、等租約結束
 function F.lockText(row)
     if row.lock == nil then return nil end
+    if row.lockKeepUntilMs then return getText("IGUI_MVM_Lock_RentKeep", MVM.dateTimeText(row.lockKeepUntilMs)) end
     if row.lockUntilMs then return getText("IGUI_MVM_Lock_Rent", MVM.dateTimeText(row.lockUntilMs)) end
     return getText("IGUI_MVM_Lock_RentEnded")
 end

@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Protokollieren und warnen",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Aus dem Fahrzeug entfernen",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK-Migration: nicht zugeordnete Ansprüche behalten (Tage)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Aus Mysterious Vehicle Claim Key importierte Ansprüche werden zu echten Ansprüchen, sobald der Server das Fahrzeug zum ersten Mal sieht. Importierte Ansprüche, die nach so vielen Tagen nicht zugeordnet sind, werden verworfen und ins Prüfprotokoll geschrieben."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Aus Mysterious Vehicle Claim Key importierte Ansprüche werden zu echten Ansprüchen, sobald der Server das Fahrzeug zum ersten Mal sieht. Importierte Ansprüche, die nach so vielen Tagen nicht zugeordnet sind, werden verworfen und ins Prüfprotokoll geschrieben.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Fahrzeuge nach Mietende behalten (Tage)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "Wenn ein gemieteter Slot endet (nach seiner Nachfrist) und der Eigentümer über dem Limit liegt, bleiben die überzähligen Fahrzeuge so viele Tage beansprucht und gesperrt; niemand sonst kann sie nutzen. Ein neu gemieteter Slot oder die Freigabe eines anderen Fahrzeugs entsperrt sie; danach werden sie freigegeben.\n0 gibt sie frei, sobald die Nachfrist endet."
 }

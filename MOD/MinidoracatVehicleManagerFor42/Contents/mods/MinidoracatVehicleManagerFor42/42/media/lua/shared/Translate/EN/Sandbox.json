@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Log and warn",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Remove from vehicle",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK migration: keep unmatched claims (days)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Claims imported from Mysterious Vehicle Claim Key become real claims the first time the server sees the vehicle. Imported claims not matched after this many days are dropped and written to the audit log."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Claims imported from Mysterious Vehicle Claim Key become real claims the first time the server sees the vehicle. Imported claims not matched after this many days are dropped and written to the audit log.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Keep vehicles after a rental ends (days)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "When a rented slot ends (after its grace period) and the owner is over the limit, the extra vehicles stay claimed and locked for this many days; nobody else can use them. Renting a slot again or unclaiming another vehicle unlocks them; after that they are unclaimed.\n0 unclaims them as soon as the grace period ends."
 }

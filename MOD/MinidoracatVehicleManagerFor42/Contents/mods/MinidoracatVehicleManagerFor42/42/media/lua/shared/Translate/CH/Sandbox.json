@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "記錄並警告",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "移出車外",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 遷移：未對上的綁定保留天數",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "從 Mysterious Vehicle Claim Key 匯入的綁定，會在伺服器第一次看到該車時轉為正式綁定。超過此天數仍未對上的匯入項會刪除並寫入稽核記錄。"
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "從 Mysterious Vehicle Claim Key 匯入的綁定，會在伺服器第一次看到該車時轉為正式綁定。超過此天數仍未對上的匯入項會刪除並寫入稽核記錄。",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "租用名額結束後保留天數",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "租用名額結束（寬限期過後）仍超出名額的車保留這麼多天：期間維持綁定與鎖定，別人照樣不能用；重新租用或解除其他車就恢復，期滿才解除綁定。\n0＝不保留，寬限期一過就解除綁定。"
 }

@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "记录并警告",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "移出车外",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK 迁移：未对上的绑定保留天数",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "从 Mysterious Vehicle Claim Key 导入的绑定，会在服务器第一次看到该车时转为正式绑定。超过此天数仍未对上的导入项会删除并写入审计记录。"
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "从 Mysterious Vehicle Claim Key 导入的绑定，会在服务器第一次看到该车时转为正式绑定。超过此天数仍未对上的导入项会删除并写入审计记录。",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "租用名额结束后保留天数",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "租用名额结束（宽限期过后）仍超出名额的车保留这么多天：期间维持绑定与锁定，别人照样不能用；重新租用或解除其他车就恢复，期满才解除绑定。\n0＝不保留，宽限期一过就解除绑定。"
 }

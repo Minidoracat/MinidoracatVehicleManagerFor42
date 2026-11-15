@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Zapisz w logu i ostrzeż",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Usuń z pojazdu",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Migracja MVCK: zachowuj niedopasowane przypisania (dni)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Przypisania zaimportowane z Mysterious Vehicle Claim Key stają się prawdziwymi przypisaniami, gdy serwer po raz pierwszy zobaczy pojazd. Zaimportowane przypisania niedopasowane po tylu dniach są usuwane i zapisywane w dzienniku audytu."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Przypisania zaimportowane z Mysterious Vehicle Claim Key stają się prawdziwymi przypisaniami, gdy serwer po raz pierwszy zobaczy pojazd. Zaimportowane przypisania niedopasowane po tylu dniach są usuwane i zapisywane w dzienniku audytu.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Zachowaj pojazdy po końcu wynajmu (dni)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "Gdy wynajęty slot się skończy (po okresie karencji), a właściciel przekracza limit, nadmiarowe pojazdy pozostają przypisane i zablokowane przez tyle dni; nikt inny nie może ich używać. Ponowny wynajem slotu albo zwolnienie innego pojazdu je odblokowuje; potem są zwalniane.\n0 zwalnia je od razu po końcu okresu karencji."
 }

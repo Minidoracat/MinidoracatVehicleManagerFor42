@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "記録して警告",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "車両から降ろす",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK移行：未照合の登録を保持する日数",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Keyから取り込んだ登録は、サーバーが車両を初めて確認した時点で正式な登録になります。この日数を過ぎても照合できない取り込み分は削除され、監査ログに記録されます。"
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Keyから取り込んだ登録は、サーバーが車両を初めて確認した時点で正式な登録になります。この日数を過ぎても照合できない取り込み分は削除され、監査ログに記録されます。",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "レンタル終了後の保持日数",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "レンタル枠が終了し（猶予期間後）、所有者が上限を超えている場合、超過分の車両はこの日数だけ登録とロックを維持し、他の人は使えません。再レンタルか他の車両の登録解除で戻り、期限後に登録を解除します。\n0 にすると猶予期間が終わり次第、登録を解除します。"
 }

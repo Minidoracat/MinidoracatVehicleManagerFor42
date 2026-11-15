@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Journaliser et avertir",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Faire sortir du véhicule",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "Migration MVCK : conserver les revendications non associées (jours)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Les revendications importées de Mysterious Vehicle Claim Key deviennent de vraies revendications la première fois que le serveur voit le véhicule. Les revendications importées non associées après ce nombre de jours sont supprimées et inscrites au journal d'audit."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Les revendications importées de Mysterious Vehicle Claim Key deviennent de vraies revendications la première fois que le serveur voit le véhicule. Les revendications importées non associées après ce nombre de jours sont supprimées et inscrites au journal d'audit.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Garder les véhicules après la fin d'une location (jours)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "Quand un emplacement loué prend fin (après son délai de grâce) et que le propriétaire dépasse la limite, les véhicules en trop restent revendiqués et verrouillés pendant ce nombre de jours ; personne d'autre ne peut les utiliser. Louer à nouveau un emplacement ou libérer un autre véhicule les déverrouille ; ensuite, ils sont libérés.\n0 les libère dès la fin du délai de grâce."
 }

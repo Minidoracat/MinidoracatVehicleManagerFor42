@@ -32,5 +32,7 @@
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option1": "Günlüğe yaz ve uyar",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_option2": "Araçtan çıkar",
     "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays": "MVCK geçişi: eşleşmeyen sahiplenmeleri sakla (gün)",
-    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Key'den içe aktarılan sahiplenmeler, sunucu aracı ilk gördüğünde gerçek sahiplenmeye dönüşür. Bu kadar gün içinde eşleşmeyen içe aktarılmış sahiplenmeler silinir ve denetim kaydına yazılır."
+    "Sandbox_MinidoracatVehicleManagerRebindDeadlineDays_tooltip": "Mysterious Vehicle Claim Key'den içe aktarılan sahiplenmeler, sunucu aracı ilk gördüğünde gerçek sahiplenmeye dönüşür. Bu kadar gün içinde eşleşmeyen içe aktarılmış sahiplenmeler silinir ve denetim kaydına yazılır.",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays": "Kiralama bitince araçları tutma süresi (gün)",
+    "Sandbox_MinidoracatVehicleManagerRentKeepDays_tooltip": "Kiralık bir slot bittiğinde (ek süresinden sonra) sahibi sınırı aşıyorsa, fazla araçlar bu kadar gün sahiplenilmiş ve kilitli kalır; başka kimse kullanamaz. Yeniden slot kiralamak veya başka bir aracın sahipliğini bırakmak kilidi açar; süre dolunca sahiplikleri bırakılır.\n0, ek süre biter bitmez sahipliklerini bırakır."
 }

@@ -41,3 +41,6 @@ option MinidoracatVehicleManager.WatchdogIntervalSeconds
 
 option MinidoracatVehicleManager.RebindDeadlineDays
 {type = integer, min = 1, max = 90, default = 30, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerRebindDeadlineDays,}
+
+option MinidoracatVehicleManager.RentKeepDays
+{type = integer, min = 0, max = 365, default = 7, page = MinidoracatVehicleManager, translation = MinidoracatVehicleManagerRentKeepDays,}

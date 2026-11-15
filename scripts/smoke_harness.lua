@@ -5835,7 +5835,8 @@ E.onChanged("rown", MVM.ECON_PRODUCT)
 check(recs[3].lock == "RENT" and recs[3].lockUntilMs == nil and recs[3].recordState == "ACTIVE", "租約到期（還在 Economy 上）：保持鎖定，沒有截止時間")
 ENT.rown = rent(0, "pending", 2)
 E.onChanged("rown", MVM.ECON_PRODUCT)
-check(recs[3].recordState == "ACTIVE" and recs[2].recordState == "ACTIVE", "續租待確認（pending）：不釋出")
+check(recs[3].recordState == "ACTIVE" and recs[2].recordState == "ACTIVE" and recs[3].lock == "RENT" and recs[3].lockKeepUntilMs == nil,
+    "續租待確認（pending）：不釋出、不解鎖、不進保留")
 ENT.rown = rent(2, "active", 2)
 E.onChanged("rown", MVM.ECON_PRODUCT)
 check(recs[3].lock == nil and recs[2].lock == nil and O.canUse(OW, cars[3], "DRIVE") and S.publicTable()[recs[3].oid] == MVM.ACTIONS.PASSENGER
@@ -5846,21 +5847,133 @@ ENT.rown = rent(2, "grace", 2, GU)
 E.onChanged("rown", MVM.ECON_PRODUCT)
 check(recs[4].lock == "RENT" and recs[3].lock == "RENT" and recs[2].lock == nil, "再進寬限：最新的兩台鎖住")
 cmd(ADM, "adminSetQuota", { usernames = { "rown" }, amount = 2 })
+SB.RentKeepDays = 1
+local KD = 86400000
 ENT.rown = rent(0, nil)
 local box0 = #outbox.rown
+local tKeep = nowMs
 E.onChanged("rown", MVM.ECON_PRODUCT)
-check(recs[4].recordState == "RELEASED" and recs[4].endReason == "RENT_EXPIRED" and recs[4].lock == nil
-    and recs[3].recordState == "ACTIVE" and recs[3].lock == nil and recs[2].recordState == "ACTIVE",
-    "租約移除仍超額：釋出 min(鎖定數, 超額) 台最新的鎖定車（RELEASED、RENT_EXPIRED），其餘解鎖")
-local keys = {}
-for i = box0 + 1, #outbox.rown do
-    local m = outbox.rown[i]
-    if m.command == "notice" then keys[m.payload.key] = m.payload.n end
+local function noticesSince(i0)
+    local keys = {}
+    for i = i0 + 1, #outbox.rown do
+        local m = outbox.rown[i]
+        if m.command == "notice" then keys[m.payload.key] = m.payload end
+    end
+    return keys
 end
-check(keys.IGUI_MVM_Rent_Released == 1 and keys.IGUI_MVM_Rent_Unlocked == 1 and S.row(recs[4], "rown").endReason == "RENT_EXPIRED",
-    "通知 IGUI_MVM_Rent_Released 與 Rent_Unlocked；列帶 endReason")
+local keys = noticesSince(box0)
+check(recs[4].recordState == "ACTIVE" and recs[4].lock == "RENT" and recs[4].lockUntilMs == nil and recs[4].lockKeepUntilMs == tKeep + KD
+    and recs[3].recordState == "ACTIVE" and recs[3].lock == nil and recs[2].recordState == "ACTIVE",
+    "租約移除仍超額：最新的鎖定車進保留期（仍綁定、鎖定，截止＝現在＋RentKeepDays），其餘解鎖")
+check(keys.IGUI_MVM_Rent_Kept and keys.IGUI_MVM_Rent_Kept.n == 1 and keys.IGUI_MVM_Rent_Kept.atMs == tKeep + KD
+    and keys.IGUI_MVM_Rent_Unlocked and keys.IGUI_MVM_Rent_Released == nil and GH.logged(l0, "RENT_KEEP", recs[4].oid),
+    "進保留：通知 Rent_Kept（台數、截止）與 Rent_Unlocked，沒有 Rent_Released；稽核 RENT_KEEP")
+ok, why = O.canUse(OW, cars[4], "DRIVE")
+check(not ok and why == "RENT_LOCKED" and not O.canUse(ST, cars[4], "PASSENGER") and S.publicTable()[recs[4].oid] == nil
+    and O.canUse(OW, cars[4], "MANAGE") and S.row(recs[4], "rown").lockKeepUntilMs == tKeep + KD,
+    "保留中：車主也不能用、陌生人被擋、公開表沒有、MANAGE 照常；車隊列帶 lockKeepUntilMs")
+box0 = #outbox.rown
+nowMs = tKeep + KD - 1
+RL.lastMs = 0
+RL.minute()
+check(recs[4].recordState == "ACTIVE" and recs[4].lockKeepUntilMs == tKeep + KD and next(noticesSince(box0)) == nil,
+    "保留截止前 1 ms 的每分鐘重算：不釋出、截止不變、不重發通知")
+nowMs = tKeep + KD
+H.fail = "x"
+RL.evaluate("rown")
+H.fail = nil
+ENT.rown = rent(0, "pending", 1)
+RL.evaluate("rown")
+check(recs[4].recordState == "ACTIVE" and recs[4].lock == "RENT", "保留期滿但讀取失敗、或有待確認的租約：不釋出")
+ENT.rown = rent(0, nil)
+RL.lastMs = 0
+RL.minute()
+keys = noticesSince(box0)
+check(recs[4].recordState == "RELEASED" and recs[4].endReason == "RENT_EXPIRED" and recs[4].lock == nil and recs[4].lockKeepUntilMs == nil
+    and recs[3].recordState == "ACTIVE" and keys.IGUI_MVM_Rent_Released and keys.IGUI_MVM_Rent_Released.n == 1
+    and S.row(recs[4], "rown").endReason == "RENT_EXPIRED",
+    "保留期滿（每分鐘重算）：釋出（RELEASED、RENT_EXPIRED），通知 Rent_Released；列帶 endReason")
 
--- 載著受保護車的拖車：不釋出，保持鎖定
+-- 保留中又有別張租約進寬限、部分續租、重新租用：鎖定只跟著超額走，保留車的截止不被寬限截止覆蓋
+local KP = player("rkp", 1, 1)
+O.mapSet("quotaOverrides", "rkp", 1)
+local function rents(usable, list)
+    local out = {}
+    for i, x in ipairs(list) do out[i] = { id = "k" .. i, quantity = x[2], state = x[1], graceUntil = x[3] } end
+    return { usable = usable, rentals = out }
+end
+ENT.rkp = rents(3, { { "active", 1 }, { "active", 2 } })
+local kr = {}
+for i = 1, 4 do kr[i] = rec(claim(KP, vehicle(160 + i, 1600 + i, 9600 + i, "Base.CarNormal", 1, 1)).oid) end
+nowMs = nowMs + 1000
+ENT.rkp = rents(3, { { "grace", 1, GU }, { "active", 2 } })
+E.onChanged("rkp", MVM.ECON_PRODUCT)
+check(kr[4].lock == "RENT" and kr[4].lockUntilMs == GU and kr[3].lock == nil, "兩張租約、一張進寬限：鎖最新 1 台")
+ENT.rkp = rents(2, { { "active", 2 } })
+local tK = nowMs
+E.onChanged("rkp", MVM.ECON_PRODUCT)
+check(kr[4].lockKeepUntilMs == tK + KD and kr[4].lockUntilMs == nil and kr[3].lock == nil, "那張移除：同一台進保留")
+local GU2 = GU + 3600000
+box0 = #outbox.rkp
+nowMs = nowMs + 1000
+ENT.rkp = rents(2, { { "grace", 2, GU2 } })
+E.onChanged("rkp", MVM.ECON_PRODUCT)
+local note2 = lastOf(KP, "notice")
+check(kr[4].lockKeepUntilMs == tK + KD and kr[4].lockUntilMs == nil and kr[3].lockUntilMs == GU2 and kr[2].lockUntilMs == GU2
+    and kr[1].lock == nil and note2.key == "IGUI_MVM_Rent_Locked" and note2.n == 2,
+    "保留中別張租約進寬限：再鎖 2 台（寬限截止），保留車的截止不變；Rent_Locked 只算寬限鎖")
+ENT.rkp = rents(2, { { "active", 2 } })
+E.onChanged("rkp", MVM.ECON_PRODUCT)
+check(kr[2].lock == nil and kr[3].lock == nil and kr[4].lock == "RENT" and kr[4].lockKeepUntilMs == tK + KD,
+    "那張續租：寬限鎖解開，保留車仍保留")
+ENT.rkp = rents(3, { { "active", 2 }, { "active", 1 } })
+E.onChanged("rkp", MVM.ECON_PRODUCT)
+check(kr[4].lock == nil and kr[4].lockKeepUntilMs == nil and lastOf(KP, "notice").key == "IGUI_MVM_Rent_Unlocked",
+    "保留中重新租用：解鎖、清掉保留截止，通知 Rent_Unlocked")
+
+-- 寬限 0：Economy 同一次走訪先報到期、再移除租約 → 只有一則保留通知
+local G0 = player("rg0", 1, 1)
+O.mapSet("quotaOverrides", "rg0", 1)
+ENT.rg0 = rent(1, "active", 1)
+local g0 = {}
+for i = 1, 2 do g0[i] = rec(claim(G0, vehicle(170 + i, 1700 + i, 9700 + i, "Base.CarNormal", 1, 1)).oid) end
+box0 = #outbox.rg0
+ENT.rg0 = rent(0, "expired", 1)
+E.onChanged("rg0", MVM.ECON_PRODUCT)
+ENT.rg0 = rent(0, nil)
+E.onChanged("rg0", MVM.ECON_PRODUCT)
+local kept0, locked0 = 0, 0
+for i = box0 + 1, #outbox.rg0 do
+    local m = outbox.rg0[i]
+    if m.command == "notice" and m.payload.key == "IGUI_MVM_Rent_Kept" then kept0 = kept0 + 1 end
+    if m.command == "notice" and m.payload.key == "IGUI_MVM_Rent_Locked" then locked0 = locked0 + 1 end
+end
+check(g0[2].lockKeepUntilMs ~= nil and g0[2].recordState == "ACTIVE" and kept0 == 1 and locked0 == 0,
+    "寬限 0（到期與移除連著來）：進保留，只通知一次 Rent_Kept")
+
+-- RentKeepDays＝0：同舊行為，移除當下就釋出，只通知 Rent_Released
+SB.RentKeepDays = 0
+local Z0 = player("rz0", 1, 1)
+O.mapSet("quotaOverrides", "rz0", 1)
+ENT.rz0 = rent(1, "active", 1)
+local z0 = {}
+for i = 1, 2 do z0[i] = rec(claim(Z0, vehicle(180 + i, 1800 + i, 9800 + i, "Base.CarNormal", 1, 1)).oid) end
+ENT.rz0 = rent(1, "grace", 1, GU)
+E.onChanged("rz0", MVM.ECON_PRODUCT)
+box0 = #outbox.rz0
+ENT.rz0 = rent(0, nil)
+E.onChanged("rz0", MVM.ECON_PRODUCT)
+local zk = {}
+for i = box0 + 1, #outbox.rz0 do
+    local m = outbox.rz0[i]
+    if m.command == "notice" then zk[m.payload.key] = m.payload.n end
+end
+check(z0[2].recordState == "RELEASED" and z0[2].endReason == "RENT_EXPIRED" and z0[1].recordState == "ACTIVE"
+    and zk.IGUI_MVM_Rent_Released == 1 and zk.IGUI_MVM_Rent_Kept == nil,
+    "RentKeepDays＝0：租約移除當下就釋出，只通知 Rent_Released")
+SB.RentKeepDays = 1
+
+-- 載著受保護車的拖車：保留期滿也不釋出，保持鎖定
 local CO = player("rcar", 1, 1)
 O.mapSet("quotaOverrides", "rcar", 1)
 ENT.rcar = rent(1, "active", 1)
@@ -5874,7 +5987,11 @@ E.onChanged("rcar", MVM.ECON_PRODUCT)
 check(rt.lock == "RENT" and rc.lock == nil, "寬限：鎖住最新的拖車")
 ENT.rcar = rent(0, nil)
 E.onChanged("rcar", MVM.ECON_PRODUCT)
-check(rt.recordState == "ACTIVE" and rt.lock == "RENT" and rc.recordState == "ACTIVE", "租約移除：載著貨的拖車不釋出，保持鎖定")
+check(rt.recordState == "ACTIVE" and rt.lock == "RENT" and rt.lockKeepUntilMs ~= nil and rc.recordState == "ACTIVE",
+    "租約移除：載著貨的拖車進保留")
+nowMs = rt.lockKeepUntilMs
+RL.evaluate("rcar")
+check(rt.recordState == "ACTIVE" and rt.lock == "RENT", "保留期滿：載著貨的拖車不釋出，保持鎖定")
 
 -- 管理員調降名額、沒有租約：不鎖
 local LO = player("rlow", 1, 1)
@@ -5905,7 +6022,8 @@ E.init()
 l0 = #logLines
 nowMs = nowMs + 60000
 RL.minute()
-check(E.status == "ABSENT" and rt.lock == nil and GH.logged(l0, "RENT_UNLOCK", rt.oid, "ECONOMY_ABSENT"), "Economy 沒裝（ABSENT）：清掉所有租約鎖定並稽核")
+check(E.status == "ABSENT" and rt.lock == nil and rt.lockKeepUntilMs == nil and GH.logged(l0, "RENT_UNLOCK", rt.oid, "ECONOMY_ABSENT"),
+    "Economy 沒裝（ABSENT）：清掉所有租約鎖定（含保留截止）並稽核")
 end)();
 
 (function()
@@ -6057,7 +6175,8 @@ local AT = 1790439302927
 local t = os.date("*t", math.floor(AT / 1000))
 local when = string.format("IGUI_MVM_Date(%d,%02d,%02d) %02d:%02d", t.year, t.month, t.day, t.hour, t.min)
 check(F.lockText({ lock = "RENT", lockUntilMs = AT }) == "IGUI_MVM_Lock_Rent(" .. when .. ")" and F.lockText({ lock = "RENT" }) == "IGUI_MVM_Lock_RentEnded"
-    and F.lockText({}) == nil, "鎖定行：有截止時間寫日期時間（本機時區）、沒有寫即將解除、沒鎖不寫")
+    and F.lockText({ lock = "RENT", lockUntilMs = AT, lockKeepUntilMs = AT }) == "IGUI_MVM_Lock_RentKeep(" .. when .. ")"
+    and F.lockText({}) == nil, "鎖定行：保留期寫保留截止、寬限期寫寬限截止（本機時區）、都沒有寫寬限已過、沒鎖不寫")
 check(F.stateText({ state = "RELEASED", endReason = "RENT_EXPIRED" }, nowMs) == "IGUI_MVM_State_RELEASED_RENT_EXPIRED"
     and F.stateText({ state = "RELEASED" }, nowMs) == "IGUI_MVM_State_RELEASED", "狀態：租用到期釋出另有說法，一般解除照舊")
 check(F.stateText({ state = "ACTIVE", lock = "RENT" }, nowMs) == "IGUI_MVM_State_LOCKED" and F.stateToken({ state = "ACTIVE", lock = "RENT" }) == "errorText"
