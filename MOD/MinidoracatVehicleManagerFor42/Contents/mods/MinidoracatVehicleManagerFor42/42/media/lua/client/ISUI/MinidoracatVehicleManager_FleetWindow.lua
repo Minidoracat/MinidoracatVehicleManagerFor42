@@ -73,7 +73,8 @@ end
 
 -- 狀態只照 server 的 recordState；釋放倒數以 server 給的到期時間換算。
 -- removedAtMs：車暫時不在世界上（拖車裝走或被移除），紀錄仍受保護；待釋放與隔離照原狀態顯示。
--- 租用名額到期鎖住的（lock）在清單與詳情都寫「已鎖定」；寬限期結束被解除的（endReason＝RENT_EXPIRED）寫出原因
+-- 租用名額到期鎖住的（lock）在清單與詳情寫「已鎖定」；同時暫時不在世界上的照舊寫不在場（調換順序詳情就少了「不在場」），
+-- 鎖定看詳情的鎖定行。保留期滿被解除的（endReason＝RENT_EXPIRED）寫出原因
 function F.stateText(row, now)
     local s = row.state
     if s == "PENDING_RELEASE" then

@@ -5886,10 +5886,16 @@ check(not ok and why == "RENT_LOCKED" and not O.canUse(ST, cars[4], "PASSENGER")
     "保留中：車主也不能用、陌生人被擋、公開表沒有、MANAGE 照常；車隊列帶 lockKeepUntilMs")
 local ar4 = admRow(recs[4].oid)
 check(ar4.lock == "RENT" and ar4.lockKeepUntilMs == tKeep + KD and ar4.lockUntilMs == nil, "管理員總表：保留中的車帶 lock／lockKeepUntilMs（沒有寬限截止）")
-recs[4].recordState = "RELEASED"
-check(S.row(recs[4], "rown").lock == nil and S.row(recs[4], "rown").lockKeepUntilMs == nil and admRow(recs[4].oid).lock == nil
-    and admRow(recs[4].oid).lockKeepUntilMs == nil, "已結束的紀錄還留著鎖（讀不到租約時 RentLock 清不掉）：車隊列與管理員總表都不帶鎖定欄位")
-recs[4].recordState = "ACTIVE"
+local stale = true
+recs[4].lockUntilMs = tKeep -- 三欄都有值，才驗得到三欄都不送
+for _, ended in ipairs({ "RELEASED", "ORPHANED", "DESTROYED" }) do
+    recs[4].recordState = ended
+    local own, adm = S.row(recs[4], "rown"), admRow(recs[4].oid)
+    stale = stale and own.lock == nil and own.lockUntilMs == nil and own.lockKeepUntilMs == nil
+        and adm.lock == nil and adm.lockUntilMs == nil and adm.lockKeepUntilMs == nil
+end
+recs[4].recordState, recs[4].lockUntilMs = "ACTIVE", nil
+check(stale, "已結束的紀錄（解除、遺失、摧毀）還留著鎖（讀不到租約時 RentLock 清不掉）：車隊列與管理員總表三個鎖定欄位都不送")
 box0 = #outbox.rown
 nowMs = tKeep + KD - 1
 RL.lastMs = 0
