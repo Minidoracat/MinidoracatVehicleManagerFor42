@@ -5896,6 +5896,14 @@ for _, ended in ipairs({ "RELEASED", "ORPHANED", "DESTROYED" }) do
 end
 recs[4].recordState, recs[4].lockUntilMs = "ACTIVE", nil
 check(stale, "已結束的紀錄（解除、遺失、摧毀）還留著鎖（讀不到租約時 RentLock 清不掉）：車隊列與管理員總表三個鎖定欄位都不送")
+local live = true
+for _, counted in ipairs({ "WITNESS_STALE", "PENDING_RELEASE", "QUARANTINED" }) do
+    recs[4].recordState = counted
+    local own, adm = S.row(recs[4], "rown"), admRow(recs[4].oid)
+    live = live and own.lock == "RENT" and own.lockKeepUntilMs == tKeep + KD and adm.lock == "RENT" and adm.lockKeepUntilMs == tKeep + KD
+end
+recs[4].recordState = "ACTIVE"
+check(live, "還算名額的狀態（見證失效、待釋放、隔離）帶著鎖：車隊列與管理員總表照送鎖定欄位")
 box0 = #outbox.rown
 nowMs = tKeep + KD - 1
 RL.lastMs = 0
@@ -6479,6 +6487,11 @@ check(#toasts == t0 + 3 and toasts[#toasts - 1] == "IGUI_MVM_Notice_Offline(1)" 
 MVM.Client.noticeHinted = nil
 MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n6", seq = 0, rows = { keptRows[3], keptRows[4] }, notices = {}, noticeRead = 0 })
 check(#toasts == t0 + 3, "沒有自己的保留車（只有寬限鎖與被分享的車）：不提醒")
+MVM.Client.noticeHinted = nil
+MVM.clientReceive("fleetSnapshot", { to = "other", streamId = "n7", seq = 0, rows = keptRows, notices = NS, noticeRead = 0 })
+check(#toasts == t0 + 3 and MVM.Client.noticeHinted == nil, "不是寄給本機玩家的快照：不提醒，也不用掉這次登入的提醒")
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n8", seq = 0, rows = keptRows, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 4 and toasts[#toasts] == keptToast, "之後自己的第一份快照照樣提醒")
 isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
 SB.ParkedGuard = MVM.GUARD.ALL
 end)();
