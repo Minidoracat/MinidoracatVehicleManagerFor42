@@ -365,7 +365,8 @@ end
 -- 管理員總表：只給 ManipulateVehicle；位置只給 owner 資訊與最後已知點（即時追蹤屬 Phase 4 的另一權限）。
 -- players：每位車主、MVCK 待轉項或個人名額（含保全名額）設定的人，以及登入過但還沒有車的玩家（knownUsers），管理頁依此分組。
 -- 已用名額在同一趟掃描裡累計（結果同 O.quotaUsed：計入 quota 的紀錄＋待轉項），不逐人重掃待轉項。
--- 保全名額欄位（guardBase／guardCustom／guardPaid／guardUsed／guardLimit）只在 SLOTS 模式填
+-- 保全名額欄位（guardBase／guardCustom／guardPaid／guardUsed／guardLimit）只在 SLOTS 模式填。
+-- 車輛列的 lock／lockUntilMs／lockKeepUntilMs 同 S.row（租用名額到期鎖定：寬限或保留截止），管理頁用同一套狀態字與鎖定行
 function S.adminSnapshot(player)
     local st = O.state()
     if not O.isAdmin(player) or st == nil then
@@ -375,7 +376,8 @@ function S.adminSnapshot(player)
     for _, rec in pairs(st.recordsByOid) do
         rows[#rows + 1] = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
             name = rec.customName or "", reason = rec.quarantineReason, lastKnownX = rec.lastKnownX, lastKnownY = rec.lastKnownY,
-            lastKnownZ = rec.lastKnownZ, lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs }
+            lastKnownZ = rec.lastKnownZ, lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs,
+            lock = rec.lock, lockUntilMs = rec.lockUntilMs, lockKeepUntilMs = rec.lockKeepUntilMs }
         local owner = rec.ownerUser
         if owner then used[owner] = (used[owner] or 0) + (O.countsForQuota(rec) and 1 or 0) end
     end

@@ -192,13 +192,23 @@ function MVM.clientReceive(command, payload)
                 for _, oid in ipairs(g.oids) do b.pausedOids[oid] = g.name end
             end
         end
-        -- 通知紀錄（舊到新）與已讀到的時間；登入後第一份快照有離線時的通知就提示一次
+        -- 通知紀錄（舊到新）與已讀到的時間；登入後第一份快照有離線時的通知就提示一次，
+        -- 自己有保留中的車（租用名額已結束，RentLock）再提醒最早的截止與怎麼恢復（從列算、不寫通知紀錄：保留期可以比紀錄留得久）
         b.notices = type(payload.notices) == "table" and payload.notices or {}
         b.noticeRead = MVM.isInt(payload.noticeRead) and payload.noticeRead or 0
         if not C.noticeHinted and principal(0) == payload.to then
             C.noticeHinted = true
             local n, p = MVM.noticeUnread(b), getSpecificPlayer(0)
             if n > 0 and p then MVM.notify(p, getText("IGUI_MVM_Notice_Offline", n), true) end
+            local kept, first = 0, nil
+            for _, row in pairs(b.rows) do
+                local at = row.role == "OWNER" and row.lockKeepUntilMs
+                if at then
+                    kept = kept + 1
+                    if first == nil or at < first then first = at end
+                end
+            end
+            if kept > 0 and p then MVM.notify(p, getText("IGUI_MVM_Rent_Kept", kept, MVM.dateTimeText(first)), true) end
         end
     elseif command == "publicDelta" then
         if type(payload.oid) ~= "string" then return end

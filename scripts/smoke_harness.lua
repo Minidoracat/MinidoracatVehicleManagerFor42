@@ -2195,7 +2195,7 @@ do
     end
     boot()
     local ADMC = player("admin", 1, 1, { admin = true })
-    -- 最壞情況：5000 位 50 字元帳號各一台車，車名 64 bytes、車型 100 字元、隔離原因、四個時間座標欄位都有值
+    -- 最壞情況：5000 位 50 字元帳號各一台車，車名 64 bytes、車型 100 字元、隔離原因、四個時間座標欄位、租約鎖定與保留截止都有值
     local users = {}
     for i = 1, 5000 do
         local u = string.format("%s%05d", string.rep("u", 45), i)
@@ -2205,6 +2205,7 @@ do
         local r = rec(a.oid)
         r.customName, r.quarantineReason = string.rep("n", 64), string.rep("R", 32)
         r.lastKnownX, r.lastKnownY, r.lastKnownAtMs, r.releaseDueAtMs = 12345.678, 9876.543, nowMs, nowMs + 86400000
+        r.lock, r.lockKeepUntilMs = "RENT", nowMs + 86400000
         online[#online] = nil
     end
     local function parts(p)
@@ -5804,6 +5805,16 @@ check(O.canUse(ADM, cars[3], "DRIVE"), "越權中的管理員：可用")
 cmd(ADM, "setAdminOverride", { enabled = false })
 local row = S.row(recs[3], "rown")
 check(row.lock == "RENT" and row.lockUntilMs == GU and S.row(recs[3], "rmem").lock == "RENT", "車隊列帶 lock／lockUntilMs（車主與成員）")
+local function admRow(oid)
+    cmd(ADM, "adminList", {}, false)
+    for _, r in ipairs(lastOf(ADM, "adminSnapshot").rows or {}) do if r.oid == oid then return r end end
+end
+local ar3, ar1 = admRow(recs[3].oid), admRow(recs[1].oid)
+cmd(OW, "adminList", {}, false)
+check(ar3.lock == "RENT" and ar3.lockUntilMs == GU and ar3.lockKeepUntilMs == nil
+    and ar1.lock == nil and ar1.lockUntilMs == nil and ar1.lockKeepUntilMs == nil
+    and lastOf(OW, "adminSnapshot").ok == false and #lastOf(OW, "adminSnapshot").rows == 0,
+    "管理員總表：寬限鎖定的車帶 lock／lockUntilMs，沒鎖的三欄都沒有；非管理員拿不到任何列")
 -- 牆鐘節流：EveryOneMinute 是遊戲分鐘（一天 1 小時的伺服器每 2.5 秒一次，全員睡覺快轉時約 31 ms），全表掃描照真實時間最多 60 秒一次
 local ev0, evals = RL.evaluate, 0
 RL.evaluate = function(owner) evals = evals + 1; return ev0(owner) end
@@ -5873,6 +5884,8 @@ ok, why = O.canUse(OW, cars[4], "DRIVE")
 check(not ok and why == "RENT_LOCKED" and not O.canUse(ST, cars[4], "PASSENGER") and S.publicTable()[recs[4].oid] == nil
     and O.canUse(OW, cars[4], "MANAGE") and S.row(recs[4], "rown").lockKeepUntilMs == tKeep + KD,
     "保留中：車主也不能用、陌生人被擋、公開表沒有、MANAGE 照常；車隊列帶 lockKeepUntilMs")
+local ar4 = admRow(recs[4].oid)
+check(ar4.lock == "RENT" and ar4.lockKeepUntilMs == tKeep + KD and ar4.lockUntilMs == nil, "管理員總表：保留中的車帶 lock／lockKeepUntilMs（沒有寬限截止）")
 box0 = #outbox.rown
 nowMs = tKeep + KD - 1
 RL.lastMs = 0
@@ -6196,6 +6209,13 @@ check(F.stateText({ state = "RELEASED", endReason = "RENT_EXPIRED" }, nowMs) == 
 check(F.stateText({ state = "ACTIVE", lock = "RENT" }, nowMs) == "IGUI_MVM_State_LOCKED" and F.stateToken({ state = "ACTIVE", lock = "RENT" }) == "errorText"
     and F.stateText({ state = "PENDING_RELEASE", lock = "RENT", releaseDueAtMs = nowMs }, nowMs) == "IGUI_MVM_State_PENDING_RELEASE(0)"
     and F.stateToken({ state = "ACTIVE" }) == "text", "狀態：租用鎖定的車在清單與詳情都寫已鎖定（錯誤色）；回報遺失的倒數優先")
+local function hasLine(lines, s, token) for _, l in ipairs(lines) do if l.text == s and (token == nil or l.token == token) then return true end end return false end
+local keptRow = { state = "ACTIVE", name = "", script = "Base.CarNormal", owner = "x", lock = "RENT", lockKeepUntilMs = AT }
+local admCard = F.cardLines(keptRow, "ADMIN", { streamId = "s" }, "", nowMs)
+local ownCard = F.cardLines(with(keptRow, "role", "OWNER"), "OWNED", { streamId = "s" }, "", nowMs)
+check(hasLine(admCard, "IGUI_MVM_State_LOCKED", "errorText") and hasLine(admCard, "IGUI_MVM_Lock_RentKeep(" .. when .. ")", "errorText")
+    and not hasLine(admCard, "IGUI_MVM_Lock_RentHint") and hasLine(ownCard, "IGUI_MVM_Lock_RentHint"),
+    "管理頁詳情：保留中的車寫已鎖定與保留截止（錯誤色），沒有給車主的恢復提示；車主自己的詳情才有")
 
 local savedIsClient, savedBad, savedGood = isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText
 isClient = function() return true end
@@ -6424,6 +6444,27 @@ check(#items == 4 and items[1].e.id == 4 and items[4].e.id == 1 and items[2].unr
 check(#F.noticeItems(b, "old car", 0) == 1, "紀錄分頁：搜尋比對通知文字（不分大小寫）")
 MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n2", seq = 0, rows = {}, notices = NS, noticeRead = 0 })
 check(#toasts == 3, "之後的快照不再提示離線通知")
+-- 保留期登入提醒：登入後第一份快照，自己有保留中的車就提醒一次（台數＋最早的截止），接在離線通知提示之後
+local K1, K2 = 1790439302927, 1790439302927 + 86400000
+local keptRows = { { oid = "k1", role = "OWNER", state = "ACTIVE", lock = "RENT", lockKeepUntilMs = K2 },
+    { oid = "k2", role = "OWNER", state = "ACTIVE", lock = "RENT", lockKeepUntilMs = K1 },
+    { oid = "g1", role = "OWNER", state = "ACTIVE", lock = "RENT", lockUntilMs = K1 - 86400000 },
+    { oid = "m1", role = "MEMBER", state = "ACTIVE", owner = "x", myBits = 1, lock = "RENT", lockKeepUntilMs = K1 - 86400000 } }
+local keptToast = "IGUI_MVM_Rent_Kept(2," .. MVM.dateTimeText(K1) .. ")"
+MVM.Client.noticeHinted = nil
+local t0 = #toasts
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n3", seq = 0, rows = keptRows, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 1 and toasts[#toasts] == keptToast and MVM.dateTimeText(K1) ~= MVM.dateTimeText(K2),
+    "登入快照有保留中的車：提醒一則，只數自己是車主的保留車（寬限鎖、被分享的不算），寫最早的截止")
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n4", seq = 0, rows = keptRows, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 1, "之後的快照不再提醒保留期")
+MVM.Client.noticeHinted = nil
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n5", seq = 0, rows = keptRows, notices = NS, noticeRead = 150 })
+check(#toasts == t0 + 3 and toasts[#toasts - 1] == "IGUI_MVM_Notice_Offline(1)" and toasts[#toasts] == keptToast,
+    "同時有離線通知：兩則，離線通知提示在前、保留期提醒在後")
+MVM.Client.noticeHinted = nil
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n6", seq = 0, rows = { keptRows[3], keptRows[4] }, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 3, "沒有自己的保留車（只有寬限鎖與被分享的車）：不提醒")
 isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
 SB.ParkedGuard = MVM.GUARD.ALL
 end)();

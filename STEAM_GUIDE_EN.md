@@ -194,7 +194,7 @@ In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager cate
 [*] A grace period starts (set by the server owner), and slots in grace can't be used for new claims.
 [*] Cars over your limit are locked, newest first: neither you nor shared players can use them, and renewing or unclaiming other cars unlocks them right away.
 [*] If you're still over the limit when the grace period ends, the locked cars are kept for a while (set by the server owner, 7 days by default): they stay yours, locked and protected. Renting a slot again or unclaiming other cars unlocks them; when the keep period ends, they are unclaimed.
-[*] You get a notice at every step (also kept in the Notices tab), and the fleet window shows when the grace or keep period ends.
+[*] You get a notice at every step (also kept in the Notices tab), and the fleet window shows when the grace or keep period ends. While cars are being kept, you also get a reminder each time you log in.
 [/list]
 [*] [b]When a rented guard slot ends[/b]: cars over your guard slots only lose damage guard; they stay yours.
 [*] [b]Refunds[/b]: only lower how many new cars you can claim; cars you already claimed stay claimed.
@@ -210,7 +210,7 @@ In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager cate
 {{img:09-admin-en.jpg}}
 [h3]Admin tab[/h3]
 [list]
-[*] [b]Player list[/b]: players with their claimed count and limit; click a player to expand their cars.
+[*] [b]Player list[/b]: players with their claimed count and limit; click a player to expand their cars. Cars locked by an ended rental show "Locked", and their details show when the grace or keep period ends.
 [*] [b]Per player[/b]: adjust their basic slots, or unclaim a problem vehicle as admin.
 [*] [b]Player details[/b]: when they were last online.
 [*] [b]Teleport to vehicle[/b]: in vehicle details, goes to where the car was last seen.
