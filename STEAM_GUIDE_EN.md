@@ -210,7 +210,7 @@ In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager cate
 {{img:09-admin-en.jpg}}
 [h3]Admin tab[/h3]
 [list]
-[*] [b]Player list[/b]: players with their claimed count and limit; click a player to expand their cars. Cars locked by an ended rental show "Locked", and their details show when the grace or keep period ends.
+[*] [b]Player list[/b]: players with their claimed count and limit; click a player to expand their cars. Cars locked by an ended rental show "Locked", and their details show when the grace or keep period ends; for a car that isn't here right now (carried on a trailer), check its details for the lock.
 [*] [b]Per player[/b]: adjust their basic slots, or unclaim a problem vehicle as admin.
 [*] [b]Player details[/b]: when they were last online.
 [*] [b]Teleport to vehicle[/b]: in vehicle details, goes to where the car was last seen.

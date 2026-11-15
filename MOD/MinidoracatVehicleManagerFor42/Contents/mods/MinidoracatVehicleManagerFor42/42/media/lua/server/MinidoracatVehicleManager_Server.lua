@@ -74,6 +74,12 @@ local function copyGrants(rec)
     return out
 end
 
+-- 鎖定欄位只跟著還算名額的紀錄送出：已結束的紀錄（解除綁定、遺失、摧毀）的鎖要等 RentLock 下次重算才清，
+-- 讀不到租約時清不掉，客戶端會把它當成還在寬限或保留
+local function lockFields(rec)
+    if O.countsForQuota(rec) then return rec.lock, rec.lockUntilMs, rec.lockKeepUntilMs end
+end
+
 -- 收件者可見的一列；不可見回 nil。非 owner 不給 epoch、grants、陣營設定；沒有 TRACK 不給位置。
 -- removedAtMs：車暫時不在世界上（拖車裝走或被移除，OwnershipSystem O.onPermanentlyRemove）。
 -- guard：停車保全狀態（車主看 ON／OVER，其他人只看 ON）；lock／lockUntilMs（寬限截止）／lockKeepUntilMs（保留截止）：
@@ -81,9 +87,8 @@ end
 -- keyId：給 API.listOwned（其他 MOD 用車鑰匙編號對自己的車，例 Tesla 手機 App），授權不看它
 function S.row(rec, who)
     local base = { oid = rec.oid, state = rec.recordState, name = rec.customName or "", script = rec.vehicleScript,
-        witnessPartId = rec.witnessPartId, removedAtMs = rec.removedAtMs, lock = rec.lock, lockUntilMs = rec.lockUntilMs,
-        lockKeepUntilMs = rec.lockKeepUntilMs,
-        endReason = rec.endReason, keyId = rec.keyIdHint }
+        witnessPartId = rec.witnessPartId, removedAtMs = rec.removedAtMs, endReason = rec.endReason, keyId = rec.keyIdHint }
+    base.lock, base.lockUntilMs, base.lockKeepUntilMs = lockFields(rec)
     local guard = MVM.Parked and MVM.Parked.state(rec) or nil
     if who == rec.ownerUser then
         base.role = "OWNER"
@@ -374,10 +379,11 @@ function S.adminSnapshot(player)
     end
     local rows, used = {}, {}
     for _, rec in pairs(st.recordsByOid) do
-        rows[#rows + 1] = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
+        local row = { oid = rec.oid, owner = rec.ownerUser, state = rec.recordState, script = rec.vehicleScript,
             name = rec.customName or "", reason = rec.quarantineReason, lastKnownX = rec.lastKnownX, lastKnownY = rec.lastKnownY,
-            lastKnownZ = rec.lastKnownZ, lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs,
-            lock = rec.lock, lockUntilMs = rec.lockUntilMs, lockKeepUntilMs = rec.lockKeepUntilMs }
+            lastKnownZ = rec.lastKnownZ, lastKnownAtMs = rec.lastKnownAtMs, releaseDueAtMs = rec.releaseDueAtMs, removedAtMs = rec.removedAtMs }
+        row.lock, row.lockUntilMs, row.lockKeepUntilMs = lockFields(rec)
+        rows[#rows + 1] = row
         local owner = rec.ownerUser
         if owner then used[owner] = (used[owner] or 0) + (O.countsForQuota(rec) and 1 or 0) end
     end

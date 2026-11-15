@@ -5886,6 +5886,10 @@ check(not ok and why == "RENT_LOCKED" and not O.canUse(ST, cars[4], "PASSENGER")
     "保留中：車主也不能用、陌生人被擋、公開表沒有、MANAGE 照常；車隊列帶 lockKeepUntilMs")
 local ar4 = admRow(recs[4].oid)
 check(ar4.lock == "RENT" and ar4.lockKeepUntilMs == tKeep + KD and ar4.lockUntilMs == nil, "管理員總表：保留中的車帶 lock／lockKeepUntilMs（沒有寬限截止）")
+recs[4].recordState = "RELEASED"
+check(S.row(recs[4], "rown").lock == nil and S.row(recs[4], "rown").lockKeepUntilMs == nil and admRow(recs[4].oid).lock == nil
+    and admRow(recs[4].oid).lockKeepUntilMs == nil, "已結束的紀錄還留著鎖（讀不到租約時 RentLock 清不掉）：車隊列與管理員總表都不帶鎖定欄位")
+recs[4].recordState = "ACTIVE"
 box0 = #outbox.rown
 nowMs = tKeep + KD - 1
 RL.lastMs = 0
@@ -6216,6 +6220,10 @@ local ownCard = F.cardLines(with(keptRow, "role", "OWNER"), "OWNED", { streamId 
 check(hasLine(admCard, "IGUI_MVM_State_LOCKED", "errorText") and hasLine(admCard, "IGUI_MVM_Lock_RentKeep(" .. when .. ")", "errorText")
     and not hasLine(admCard, "IGUI_MVM_Lock_RentHint") and hasLine(ownCard, "IGUI_MVM_Lock_RentHint"),
     "管理頁詳情：保留中的車寫已鎖定與保留截止（錯誤色），沒有給車主的恢復提示；車主自己的詳情才有")
+local gone = with(with(keptRow, "removedAtMs", nowMs), "role", nil)
+check(F.stateText(gone, nowMs) == "IGUI_MVM_State_OUT_OF_WORLD" and F.stateToken(gone) == "textMuted"
+    and hasLine(F.cardLines(gone, "ADMIN", { streamId = "s" }, "", nowMs), "IGUI_MVM_Lock_RentKeep(" .. when .. ")", "errorText"),
+    "鎖定又暫時不在世界上（被拖車載走）：狀態照舊寫不在世界上，詳情仍有鎖定行（錯誤色）")
 
 local savedIsClient, savedBad, savedGood = isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText
 isClient = function() return true end
