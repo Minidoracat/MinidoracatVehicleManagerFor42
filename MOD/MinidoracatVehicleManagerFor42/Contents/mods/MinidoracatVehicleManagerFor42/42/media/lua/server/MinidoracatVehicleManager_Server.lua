@@ -426,7 +426,7 @@ local TYPES = {
     migrationOp = function(v) return v == "IMPORT" end,
     identityOp = function(v) return v == "IMPORT" or v == "REBIND" end,
     name = function(v) return type(v) == "string" and #v >= 1 and #v <= 64 and v:match("^[%w_]+$") ~= nil end,
-    paidOp = function(v) return v == "GET" or v == "SET" end,
+    paidOp = function(v) return v == "GET" or v == "PREVIEW" or v == "SET" end,
     revision = function(v) return MVM.isInt(v) and v >= 0 and v <= 2147483647 end,
     paidPlan = function(v) return MVM.PaidSlots ~= nil and MVM.PaidSlots.validPlan(v) end,
     product = function(v) return v == MVM.ECON_PRODUCT or v == MVM.GUARD_PRODUCT end,

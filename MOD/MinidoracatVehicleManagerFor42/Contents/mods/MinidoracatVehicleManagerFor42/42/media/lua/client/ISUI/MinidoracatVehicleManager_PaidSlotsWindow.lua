@@ -1,9 +1,9 @@
 -- 付費名額設定視窗（管理員；入口：車隊視窗管理頁、名額視窗頁尾）。方案（價格、幣別、上限、天數、開關）歸本 MOD，
 -- 伺服器存在設定檔（綁定名額 paid-slots.json、保全名額 guard-slots.json）並交給 Economy setPlan；這裡只透過
--- adminPaidSlots 指令讀（GET）與套用（SET），都帶商品。一個商品一個視窗實例，開另一個商品不動這個視窗的草稿。
+-- adminPaidSlots 指令讀（GET）、試算（PREVIEW）與套用（SET），都帶商品。一個商品一個視窗實例，開另一個商品不動這個視窗的草稿。
 -- 版面照管理端設計稿：買斷／租用兩組，改過的欄位標「原 X」，寬限、提醒、允許自動續租收在「進階設定」；
--- 套用前列出變更前後與這次會影響的事，原因必填（寫入稽核）。
--- 伺服器方案版本變了（SET 回 STALE_REVISION，或 Economy 推播的方案版本與草稿基準不同）就重新 GET：
+-- 套用前先請伺服器試算（PREVIEW）這次會暫停幾張自動續租，確認框列出變更前後、這次會影響的事與暫停張數，原因必填（寫入稽核）。
+-- 伺服器方案版本變了（SET 回 STALE_REVISION、PREVIEW 回的版本和草稿基準不同，或 Economy 推播的方案版本與草稿基準不同）就重新 GET：
 -- 沒改的欄位換成最新值、改過的保留，橫幅說明誰改了什麼。伺服器照樣比對版本，不會蓋掉別人的修改。
 -- 內容放不下（大字級、小螢幕、展開進階設定）時捲動，頁尾（狀態、已修改 N 項、放棄／套用）固定在視窗底部；
 -- 鍵盤／手把目標列出全部控制項，落點前先捲進可視範圍（同名額視窗，知識庫 guards.md「已知坑」）。
@@ -770,7 +770,9 @@ function P:load()
     local p = getSpecificPlayer(0)
     if p == nil or self.busy then return end
     self.busy, self.dirty = "get", true
-    C.request(p, "adminPaidSlots", { op = "GET", product = self.product }, function(ack) self:onGet(ack) end)
+    if not C.request(p, "adminPaidSlots", { op = "GET", product = self.product }, function(ack) self:onGet(ack) end) then
+        self.busy = nil
+    end
 end
 
 function P:onGet(ack)
@@ -806,32 +808,65 @@ function P:onApply()
         self.badField = bad
         return self:say(getText("IGUI_MVM_Paid_NeedInt"), "errorText")
     end
-    self:confirm(keys, values, self.base.revision, nil)
+    self:preview(keys, values)
 end
 
--- 確認框：變更前後、會影響的事、原因（必填；空白就再問一次，不送出）
-function P:confirm(keys, values, revision, warn)
+-- 試算（Economy previewPlan，不改任何東西）；舊 Economy 回 preview=false，照舊直接確認
+function P:preview(keys, values)
+    local p = getSpecificPlayer(0)
+    if p == nil or self.busy then return end
+    self.busy, self.dirty = "preview", true
+    self:say(nil)
+    local revision, opened = self.base.revision, self.opened
+    if not C.request(p, "adminPaidSlots", { op = "PREVIEW", product = self.product, values = values },
+        function(ack) self:onPreview(ack, keys, values, revision, opened) end) then
+        self.busy = nil
+    end
+end
+
+function P:onPreview(ack, keys, values, revision, opened)
+    -- 等回覆時視窗關掉或重開過：舊草稿的確認框不能跳出來（重開的視窗有自己的請求，busy 也不是這個的）
+    if opened ~= self.opened or not self.win:getIsVisible() then return end
+    self.busy, self.dirty = nil, true
+    if self.base == nil then return end
+    if not ack.ok then return self:rejected(ack) end
+    -- 試算時伺服器方案已經不是草稿的基準：照「別人先改了」重新讀，不拿新版本直接蓋過別人的修改
+    if ack.preview and ack.revision ~= revision then return self:rejected({ reason = "STALE_REVISION" }) end
+    self:confirm(keys, values, revision, nil, ack.preview and ack or nil)
+end
+
+-- 確認框：試算會暫停自動續租時先寫張數、變更前後、會影響的事、原因（必填；空白就再問一次，不送出）
+function P:confirm(keys, values, revision, warn, pv)
     local lines = {}
     if warn then lines[1], lines[2] = warn, "" end
+    local paused = pv and pv.pausedConsents or 0
+    if paused > 0 then
+        lines[#lines + 1] = getText("IGUI_MVM_Paid_PausedWarn", paused, pv.pausedAccounts or 0)
+        lines[#lines + 1] = ""
+    end
     for _, k in ipairs(keys) do lines[#lines + 1] = PS.changeLine(k, self.base[k], self.draft[k], currencyName) end
     local impacts = PS.impacts(self.base, self.draft)
-    if #impacts > 0 then
+    local resumed = pv and pv.resumedConsents or 0
+    if #impacts > 0 or resumed > 0 then
         lines[#lines + 1] = ""
         lines[#lines + 1] = getText("IGUI_MVM_Paid_ImpactHead")
         for _, m in ipairs(impacts) do
             lines[#lines + 1] = getText("IGUI_MVM_Paid_ImpactItem", m[2] ~= nil and getText(m[1], m[2]) or getText(m[1]))
+        end
+        if resumed > 0 then
+            lines[#lines + 1] = getText("IGUI_MVM_Paid_ImpactItem", getText("IGUI_MVM_Paid_ResumedNote", resumed))
         end
     end
     lines[#lines + 1] = ""
     lines[#lines + 1] = getText("IGUI_MVM_Paid_ReasonPrompt")
     UI.Dialog.show({ title = getText("IGUI_MVM_Paid_ApplyTitle"), theme = theme,
         width = math.min(480, getCore():getScreenWidth() - 40), text = table.concat(lines, "\n", 1, #lines),
-        input = { placeholder = getText("IGUI_MVM_Paid_ReasonHint") },
+        input = { placeholder = getText("IGUI_MVM_Paid_ReasonHint") }, danger = paused > 0,
         confirmText = getText("IGUI_MVM_Btn_Apply"), cancelText = getText("UI_Cancel"),
         onResult = function(ok, text)
             if not ok then return end
             local reason = PS.trim(text)
-            if reason == "" then return self:confirm(keys, values, revision, getText("IGUI_MVM_Reason_NEED_REASON")) end
+            if reason == "" then return self:confirm(keys, values, revision, getText("IGUI_MVM_Reason_NEED_REASON"), pv) end
             self:send(values, revision, reason)
         end })
 end
@@ -841,23 +876,32 @@ function P:send(values, revision, reason)
     if p == nil or self.busy then return end
     self.busy = "set"
     self:say(nil)
-    C.request(p, "adminPaidSlots", { op = "SET", product = self.product, values = values, expectedRevision = revision,
-        reason = reason }, function(ack) self:onSet(ack) end)
+    if not C.request(p, "adminPaidSlots", { op = "SET", product = self.product, values = values, expectedRevision = revision,
+        reason = reason }, function(ack) self:onSet(ack) end) then
+        self.busy = nil
+    end
 end
 
 function P:onSet(ack)
     self.busy, self.dirty = nil, true
-    if ack.ok then
-        self:say(getText(ack.fileError and "IGUI_MVM_Paid_AppliedFileError" or "IGUI_MVM_Paid_Applied"),
-            ack.fileError and "errorText" or "text")
-        self.base, self.banner, self.badField = nil, nil, nil
-        return self:load()
+    if not ack.ok then return self:rejected(ack) end
+    local msg = getText(ack.fileError and "IGUI_MVM_Paid_AppliedFileError" or "IGUI_MVM_Paid_Applied")
+    -- 結果以 setPlan 回的計數為準（試算與存檔之間玩家可能剛同意或剛到期）
+    if (ack.pausedConsents or 0) > 0 then
+        msg = msg .. " " .. getText("IGUI_MVM_Paid_PausedDone", ack.pausedConsents, ack.pausedAccounts or 0)
     end
+    if (ack.resumedConsents or 0) > 0 then msg = msg .. " " .. getText("IGUI_MVM_Paid_ResumedDone", ack.resumedConsents) end
+    self:say(msg, ack.fileError and "errorText" or "text")
+    self.base, self.banner, self.badField = nil, nil, nil
+    return self:load()
+end
+
+-- 試算或套用被拒：標出欄位或說原因；別人先改了就重新讀，沒改的欄位換成最新值、改過的保留，橫幅說明
+function P:rejected(ack)
     local f = BY_FILE[tostring(ack.field)]
     self.badField = f and f.key or nil
     local text = f and getText("IGUI_MVM_Paid_RejectedNamed", PS.name(f.key)) or MVM.reasonText(ack.reason)
     self:say(text, "errorText")
-    -- 別人先改了：重新讀，沒改的欄位換成最新值、改過的保留，橫幅說明
     if ack.reason == "STALE_REVISION" then self:load() end
 end
 
@@ -905,6 +949,7 @@ function P.open(opener, product)
     w.win:setVisible(true)
     w.win:bringToTop()
     w.busy, w.base, w.draft, w.data, w.banner, w.badField, w.message = nil, nil, nil, nil, nil, nil, nil
+    w.opened = (w.opened or 0) + 1
     w.dirty, w.scroll, w.landPending = true, 0, true
     stopDrag(w.body)
     -- 讓本機持有這個商品的權益快取：方案變更的公開推播只會重讀已持有的商品

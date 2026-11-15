@@ -1438,12 +1438,14 @@ function FleetWindow:send(command, args, okText)
     self.pending = command
     self.message = nil
     self:updateEnabled(false)
-    C.request(getSpecificPlayer(0), command, args, function(ack)
+    if not C.request(getSpecificPlayer(0), command, args, function(ack)
         self.pending = nil
         self.message = ack.ok and (okText and okText(ack) or getText("IGUI_MVM_Done")) or MVM.reasonText(ack.reason)
         self.messageBad = not ack.ok
         self.dirty = true
-    end)
+    end) then
+        self.pending, self.dirty = nil, true -- 協定不符沒送出：不會有回覆，別讓按鈕一直停用
+    end
 end
 
 -- 確認框：框架 Dialog（模態、只回呼一次）；self.modal 留給 E2E 以 UI.Dialog.close 按確認。arg 可以是兩個參數的 table。

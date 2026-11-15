@@ -3220,6 +3220,74 @@ do -- 手把開窗：GET 回來第一次排出表單後落到第一個目標，�
         "關閉設定視窗：前景與鍵盤交回開它的視窗；開啟者已關或沒有開啟者時不動")
     v1.CAPABILITIES.focus, v1.Focus = nil, nil
 end
+do -- 套用前試算：暫停 > 0 時確認框先寫張數、確認鈕改 danger、只問一次；結果以 setPlan 的計數為準
+    local reqs, dialogs = {}, {}
+    local C0 = MVM.Client
+    local realReq, realShow, realPlayer = C0.request, MinidoracatUI.v1.Dialog.show, getSpecificPlayer
+    local sent = true
+    C0.request = function(_, name, args, cb) reqs[#reqs + 1] = { name = name, args = args, cb = cb }; return sent end
+    MinidoracatUI.v1.Dialog.show = function(opts) dialogs[#dialogs + 1] = opts; return opts end
+    getSpecificPlayer = function() return {} end
+    local function win()
+        local pw = setmetatable({ product = MVM.ECON_PRODUCT, base = {}, data = {}, opened = 1, visible = true }, rev11)
+        pw.win = { getIsVisible = function() return pw.visible end }
+        for k, v in pairs(BASE) do pw.base[k] = v end
+        pw.draft = PS.draftOf(pw.base)
+        pw.draft.rentalPrice = "300"
+        pw:onApply()
+        return pw, reqs[#reqs], #dialogs
+    end
+    local pw, r1, nd = win()
+    local previewSent = r1.name == "adminPaidSlots" and r1.args.op == "PREVIEW" and r1.args.values.rentalPrice == 300
+        and r1.args.expectedRevision == nil and pw.busy == "preview" and nd == 0
+    r1.cb({ ok = true, preview = true, revision = BASE.revision, pausedConsents = 2, pausedAccounts = 1, resumedConsents = 0 })
+    local d = dialogs[#dialogs]
+    local warned = d.danger == true and d.text:find("IGUI_MVM_Paid_PausedWarn(2,1)", 1, true) == 1
+        and d.text:find("IGUI_MVM_Paid_ResumedNote", 1, true) == nil and pw.busy == nil
+    d.onResult(true, "  ")
+    local again = dialogs[#dialogs]
+    local kept = again ~= d and again.danger == true and again.text:find("IGUI_MVM_Paid_PausedWarn(2,1)", 1, true) ~= nil
+        and again.text:find("IGUI_MVM_Reason_NEED_REASON", 1, true) == 1
+    local nReq = #reqs
+    again.onResult(true, " raise ")
+    local r2 = reqs[nReq + 1]
+    local setSent = #reqs == nReq + 1 and r2.args.op == "SET" and r2.args.expectedRevision == BASE.revision and r2.args.reason == "raise"
+    r2.cb({ ok = true, revision = 5, changed = { "rentalPrice" }, pausedConsents = 3, pausedAccounts = 2, resumedConsents = 1 })
+    check(previewSent and warned and kept and setSent
+        and pw.message == "IGUI_MVM_Paid_Applied IGUI_MVM_Paid_PausedDone(3,2) IGUI_MVM_Paid_ResumedDone(1)",
+        "設定視窗套用：先送 PREVIEW；會暫停 2 張時確認框第一行寫張數與玩家數、確認鈕 danger，原因空白再問時照樣在；"
+        .. "確認後 SET 帶試算時的 revision，完成訊息用 setPlan 回的計數（3 張、2 位、恢復 1 張）")
+    local zw, zr = win()
+    zr.cb({ ok = true, preview = true, revision = BASE.revision, pausedConsents = 0, pausedAccounts = 0, resumedConsents = 1 })
+    local zd = dialogs[#dialogs]
+    local ow, orq = win()
+    orq.cb({ ok = true, preview = false })
+    local od = dialogs[#dialogs]
+    check(zd.danger == false and zd.text:find("PausedWarn", 1, true) == nil
+        and zd.text:find("IGUI_MVM_Paid_ImpactItem(IGUI_MVM_Paid_ResumedNote(1))", 1, true) ~= nil
+        and od ~= zd and od.danger == false and od.text:find("PausedWarn", 1, true) == nil and zw.busy == nil and ow.busy == nil,
+        "試算沒有暫停：確認框照舊、不是 danger，恢復張數列在會影響裡；舊 Economy（preview=false）照舊直接確認")
+    local sw, sr, sn = win()
+    sr.cb({ ok = true, preview = true, revision = BASE.revision + 1, pausedConsents = 0 })
+    local reload = reqs[#reqs]
+    local bw, br, bn = win()
+    br.cb({ ok = false, reason = "INVALID_PLAN", field = "rent.price" })
+    check(#dialogs == sn and sw.message == MVM.reasonText("STALE_REVISION") and reload.args.op == "GET"
+        and #dialogs == bn and bw.badField == "rentalPrice" and bw.messageToken == "errorText",
+        "試算時方案已被別人改過（revision 不同）：不開確認框、說明並重新讀；試算被拒：標出欄位、不開確認框")
+    local cw, cr, cn = win()
+    cw.visible = false
+    cr.cb({ ok = true, preview = true, revision = BASE.revision, pausedConsents = 0, pausedAccounts = 0, resumedConsents = 0 })
+    local rw, rr, rn = win()
+    rw.opened, rw.busy = 2, "get"
+    rr.cb({ ok = true, preview = true, revision = BASE.revision, pausedConsents = 0, pausedAccounts = 0, resumedConsents = 0 })
+    sent = false
+    local mw = win()
+    sent = true
+    check(#dialogs == cn and #dialogs == rn and rw.busy == "get" and mw.busy == nil,
+        "試算回來時視窗已關掉或重開過：不開舊草稿的確認框、不動重開後的忙碌狀態；協定不符沒送出：不卡在試算中")
+    C0.request, MinidoracatUI.v1.Dialog.show, getSpecificPlayer = realReq, realShow, realPlayer
+end
 MVM.PaidSlotsWindow = savedPaid
 MinidoracatUI.v1.API_REVISION = 7
 local w = setmetatable({ live = true, env = { ok = true, entitlement = {}, plan = {} } }, MVM.BillingWindow)
@@ -3467,7 +3535,17 @@ MinidoracatEconomy = { CURRENCIES = { survivor = {}, cat = {} }, v1 = { API_MAJO
                 if opts.expectedRevision ~= nil and opts.expectedRevision ~= F.rev then return { ok = false, error = "stale_revision" } end
                 F.plan, F.rev = copy(values), F.rev + 1
                 F.last = { actor = opts.actor, origin = opts.origin, at = nowMs, reason = opts.reason, revision = F.rev }
-                return { ok = true, updated = true, revision = F.rev, changed = changed }
+                local res = { ok = true, updated = true, revision = F.rev, changed = changed }
+                for k, v in pairs(F.effect or {}) do res[k] = v end -- 新 Economy 才回的自動續租計數
+                return res
+            end,
+            -- 試算：不改方案與版本；驗證同 setPlan，回目前 revision 與計數
+            previewPlan = function(_, values)
+                F.previews = (F.previews or 0) + 1
+                if values.rentalPrice < 1 then return { ok = false, error = "invalid_plan", field = "rentalPrice" } end
+                local e = F.effect or {} -- 照給的回（不補 0）：缺項情境要真的缺
+                return { ok = true, updated = true, revision = F.rev, changed = {}, pausedConsents = e.pausedConsents,
+                    pausedAccounts = e.pausedAccounts, resumedConsents = e.resumedConsents }
             end,
             -- 照 Economy 驗 problem：nil 或 { key, field?, ref? }，key／field 是翻譯鍵格式、ref ≤64；字串一律拒收
             setPlanSource = function(_, src)
@@ -3639,6 +3717,28 @@ check(C.status == st1, "讀不到：同一狀態不重複報")
 getFileReader = realR
 poll()
 check(C.status.state == "ok" and C.status.error == nil and F.calls == n3 + 1, "恢復可讀：重新處理同一份內容，清掉錯誤")
+-- 設定檔沒有人可以確認：照存，計數寫進狀態檔與 log（Economy previewPlan 契約第 5 點）
+F.effect = { pausedConsents = 2, pausedAccounts = 1, resumedConsents = 0 }
+local cntLog, realCntLog = {}, MVM.log
+MVM.log = function(msg) cntLog[#cntLog + 1] = tostring(msg) end
+put(cfg("270"))
+poll()
+MVM.log = realCntLog
+local cntLogged = false
+for _, l in ipairs(cntLog) do
+    if l:find("paid-slots.json applied revision=" .. F.rev .. " pausedConsents=2 pausedAccounts=1 resumedConsents=0", 1, true) then
+        cntLogged = true
+    end
+end
+check(F.plan.rentalPrice == 270 and C.status.pausedConsents == 2 and C.status.pausedAccounts == 1 and C.status.resumedConsents == 0
+    and text(STATUS):find('"pausedConsents": 2', 1, true) and text(STATUS):find('"pausedAccounts": 1', 1, true)
+    and text(STATUS):find('"resumedConsents": 0', 1, true) and cntLogged,
+    "設定檔改方案：照存，這次暫停幾張自動續租、涉及幾個帳號、恢復幾張寫進狀態檔與伺服器 log")
+F.effect = nil
+put(cfg("280"))
+poll()
+check(F.plan.rentalPrice == 280 and C.status.state == "ok" and C.status.pausedConsents == nil
+    and text(STATUS):find('"pausedConsents": null', 1, true), "舊 Economy 不回計數：狀態檔的計數寫 null")
 
 -- adminPaidSlots
 local AD, PL = player("admin", 1, 1, { admin = true }), player("pleb", 1, 1)
@@ -3692,6 +3792,50 @@ check(back and back.permanentEnabled == true and back.rentalPrice == 280 and bac
 local n2 = F.calls
 poll()
 check(F.calls == n2, "寫回的設定檔記為已處理：輪詢不重送")
+-- PREVIEW：試算不改任何東西，回目前 revision 與計數；SET 帶這個 revision，回 setPlan 的計數
+F.effect = { pausedConsents = 3, pausedAccounts = 2, resumedConsents = 1 }
+local nP = F.calls
+check(cmd(PL, "adminPaidSlots", { op = "PREVIEW", values = vals({ rentalPrice = 300 }) }).reason == "NOT_ADMIN"
+    and cmd(AD, "adminPaidSlots", { op = "PREVIEW" }).reason == "BAD_ARGS", "PREVIEW：非管理員 NOT_ADMIN、沒帶方案 BAD_ARGS")
+local pv = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ permanentEnabled = true, rentalPrice = 300 }) })
+check(pv.ok and pv.preview == true and pv.revision == s.revision and pv.pausedConsents == 3 and pv.pausedAccounts == 2
+    and pv.resumedConsents == 1 and F.calls == nP and F.plan.rentalPrice == 280 and F.rev == s.revision,
+    "PREVIEW：經 Economy previewPlan 試算，回目前 revision 與暫停／帳號／恢復計數；不呼叫 setPlan，方案與版本不變")
+local pvBad = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ rentalPrice = 0 }) })
+check(pvBad.reason == "INVALID_PLAN" and pvBad.field == "rent.price", "PREVIEW 範圍錯：INVALID_PLAN，field 用檔案鍵名")
+local realPreview = E.src.previewPlan
+E.src.previewPlan = nil
+local pvOld = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals() })
+E.src.previewPlan = realPreview
+check(pvOld.ok and pvOld.preview == false and pvOld.revision == nil, "舊 Economy 沒有 previewPlan：PREVIEW 回 preview=false，視窗照舊直接確認")
+F.effect = { pausedConsents = -1, pausedAccounts = 1, resumedConsents = 0 }
+local pvNeg = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ rentalPrice = 300 }) })
+F.effect = { pausedConsents = 1, pausedAccounts = 1 }
+local pvPart = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ rentalPrice = 300 }) })
+F.effect = { pausedConsents = 1.5, pausedAccounts = 1, resumedConsents = 0 }
+local pvDec = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ rentalPrice = 300 }) })
+E.src.previewPlan = function() error("boom") end
+local pvErr = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ rentalPrice = 300 }) })
+E.src.previewPlan = realPreview
+F.effect = { pausedConsents = 3, pausedAccounts = 2, resumedConsents = 1 }
+check(pvNeg.ok == false and pvNeg.reason == "ECONOMY_UNAVAILABLE" and pvPart.ok == false and pvPart.reason == "ECONOMY_UNAVAILABLE"
+    and pvDec.ok == false and pvDec.reason == "ECONOMY_UNAVAILABLE" and pvErr.ok == false and pvErr.reason == "ECONOMY_UNAVAILABLE",
+    "PREVIEW 計數是負數、小數或缺項，或 previewPlan 丟錯：當成 Economy 出錯，不回「不會暫停」讓視窗開少了警告的確認框")
+local l1 = #logLines
+local s2 = cmd(AD, "adminPaidSlots", { op = "SET", values = vals({ permanentEnabled = true, rentalPrice = 300 }),
+    expectedRevision = pv.revision, reason = "raise rent" })
+local audited2 = false
+for i = l1 + 1, #logLines do
+    if logLines[i]:find("ADMIN_PAID_SLOTS", 1, true) and logLines[i]:find("paused=3/2", 1, true) then audited2 = true end
+end
+check(s2.ok and s2.pausedConsents == 3 and s2.pausedAccounts == 2 and s2.resumedConsents == 1 and C.status.source == "admin"
+    and C.status.pausedConsents == 3 and text(STATUS):find('"pausedConsents": 3', 1, true) and audited2,
+    "SET 帶試算的 revision：回 setPlan 的計數，狀態檔與稽核記下暫停張數")
+files[CFG] = { PS.encode(vals({ permanentEnabled = true, rentalPrice = 310 }), "ext2") .. "\n" }
+local pvExt = cmd(AD, "adminPaidSlots", { op = "PREVIEW", values = vals({ permanentEnabled = true, rentalPrice = 320 }) })
+check(pvExt.ok and pvExt.revision == F.rev and pvExt.revision == s2.revision + 1 and F.plan.rentalPrice == 310,
+    "PREVIEW 前先處理還沒輪詢到的外部修改：回的 revision 已含外部修改（視窗據此重新讀，不蓋掉別人的修改）")
+F.effect = nil
 -- 外部 5 秒內改檔、還沒輪詢到時管理員套用：先處理檔案，外部修改不被蓋掉
 local extText = PS.encode(vals({ permanentEnabled = true, rentalPrice = 260 }), "external")
 files[CFG] = { extText .. "\n" }

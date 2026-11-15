@@ -3,10 +3,12 @@
 -- Economy 只存目前生效的一份（setPlan）。兩份檔各自輪詢、各自記處理狀態與狀態檔（PS.of[產品]）。
 -- 1. Economy READY 後每 POLL_MS 讀一次；文字跟上次處理過的相同就跳過，不同就解析 → setPlan(origin=file) → 狀態檔 → setPlanSource。
 --    not_ready 不記為已處理（下輪再試）；其他錯誤記為已處理（同一份壞內容不每 5 秒重報）。
+--    設定檔沒有人可以確認，照存；這次暫停／恢復了幾張自動續租寫進 log 與狀態檔（Economy previewPlan 契約第 5 點）。
 -- 2. 檔案不存在：用 Economy 目前生效的方案寫一份（新伺服器＝E.DEFAULTS，兩種販售都關閉）。
 --    存在但讀不到：狀態 unreadable，方案不動、不覆寫。
 -- 3. 管理員在遊戲內套用（adminPaidSlots SET，product 省略＝綁定名額）前先處理一次該產品的檔案（外部剛改的內容不被蓋掉），
 --    成功後寫回這份檔，寫入的文字記為已處理；寫不進去時回 fileError，方案已在 Economy 生效，但重啟後會用檔案的舊值。
+--    設定視窗送出前先 PREVIEW 試算會暫停幾張自動續租（Economy 有 previewPlan 時）；確認框一律要填原因，大於 0 時先寫張數、確認鈕改紅色。
 -- 4. <檔名>.status.json：每次處理後整份覆寫；外部程式或 AI 改檔後讀它就知道結果。
 -- Economy 不在或不支援：開機寫一次 economy_unavailable，不建也不讀設定檔。數值範圍由 Economy 驗證，這裡只驗 JSON 形狀與型別。
 if isClient() then return end
@@ -206,7 +208,8 @@ local function writeText(path, text)
     return ok and readText(path) == text
 end
 
-local STATUS_ORDER = { "state", "source", "revision", "error", "field", "at", "economy" }
+local STATUS_ORDER = { "state", "source", "revision", "pausedConsents", "pausedAccounts", "resumedConsents", "error", "field",
+    "at", "economy" }
 -- 有專屬句子的錯誤碼（IGUI_MVM_Paid_FileErr_<碼>，%1＝欄位顯示名稱、%2＝檔案鍵）；其他碼用不帶參數的 _other
 local FILE_ERRORS = { invalid_json = true, unreadable = true, write_failed = true, missing_field = true,
     invalid_type = true, unknown_field = true, invalid_plan = true }
@@ -250,6 +253,13 @@ local function planOf(p)
     return out
 end
 
+-- setPlan／previewPlan 回的自動續租計數：暫停幾張、涉及幾個帳號、恢復幾張。舊 Economy 不回，就是 nil（狀態檔寫 null）
+local COUNTS = { "pausedConsents", "pausedAccounts", "resumedConsents" }
+local function withCounts(res, into)
+    for _, k in ipairs(COUNTS) do into[k] = MVM.isInt(res[k]) and res[k] >= 0 and res[k] or nil end
+    return into
+end
+
 -- 檔案不存在：寫一份目前生效的方案。provisional（舊方案欄位不合）不記為已處理，下輪讀回後經 setPlan 取代
 function PS.create(product)
     local p = PS.of[product]
@@ -288,7 +298,12 @@ function PS.poll(product)
         local res = call("setPlan", product, values, { actor = "file", origin = "file", reason = reason })
         if res.error == "not_ready" then return end
         if res.ok == true then
-            st = { state = "ok", source = "file", revision = res.revision }
+            st = withCounts(res, { state = "ok", source = "file", revision = res.revision })
+            if res.updated == true then
+                MVM.log(p.name .. ".json applied revision=" .. tostring(res.revision) .. " pausedConsents="
+                    .. tostring(st.pausedConsents) .. " pausedAccounts=" .. tostring(st.pausedAccounts)
+                    .. " resumedConsents=" .. tostring(st.resumedConsents))
+            end
         else
             st = { state = "error", source = "file", error = tostring(res.error), field = FILE_KEY[res.field] or res.field }
         end
@@ -318,6 +333,15 @@ end
 -- ----------------------------------------------------------------- admin ---
 local function fail(reason, field) return { ok = false, reason = reason, field = field } end
 
+-- Economy setPlan／previewPlan 的錯誤 → 指令原因碼（欄位轉回設定檔鍵名）
+local function planFail(res)
+    if res.error == "stale_revision" then return fail("STALE_REVISION") end
+    if res.error == "invalid_plan" or res.error == "unknown_fields" then
+        return fail("INVALID_PLAN", FILE_KEY[res.field] or res.field)
+    end
+    return fail("ECONOMY_UNAVAILABLE")
+end
+
 -- Server.lua 的 H.adminPaidSlots 已驗過管理員與 SCHEMA（product 省略＝綁定名額）
 function PS.admin(who, a)
     local product = a.product or MVM.ECON_PRODUCT
@@ -333,7 +357,20 @@ function PS.admin(who, a)
             provisional = res.plan.provisional, currencies = E.currencies, file = PS.displayPath(product), status = p.status,
             lastChange = type(lc) == "table" and { actor = lc.actor, origin = lc.origin, at = lc.at, reason = lc.reason } or nil }
     end
-    if a.values == nil or a.expectedRevision == nil then return fail("BAD_ARGS") end
+    if a.values == nil then return fail("BAD_ARGS") end
+    if a.op == "PREVIEW" then
+        if not ready then return fail("ECONOMY_UNAVAILABLE") end
+        -- 舊 Economy 沒有試算：回 preview=false，視窗照舊直接確認（契約第 1 點）
+        if type(E.src.previewPlan) ~= "function" then return { ok = true, preview = false } end
+        PS.poll(product) -- 外部剛改的檔先生效，回的 revision 才是最新的
+        local res = call("previewPlan", product, planOf(a.values))
+        if res.ok ~= true then return planFail(res) end
+        local out = withCounts(res, { ok = true, preview = true, revision = res.revision })
+        -- 計數不全就不能說「不會暫停」：當成 Economy 出錯，不開少了警告的確認框
+        for _, k in ipairs(COUNTS) do if out[k] == nil then return fail("ECONOMY_UNAVAILABLE") end end
+        return out
+    end
+    if a.expectedRevision == nil then return fail("BAD_ARGS") end
     local reason = type(a.reason) == "string" and a.reason:match("^%s*(.-)%s*$") or ""
     if #reason < 1 or #reason > 256 then return fail("NEED_REASON") end
     if not ready then return fail("ECONOMY_UNAVAILABLE") end
@@ -342,21 +379,18 @@ function PS.admin(who, a)
     local values = planOf(a.values)
     local res = call("setPlan", product, values,
         { actor = who, origin = "admin", reason = reason, expectedRevision = a.expectedRevision })
-    if res.ok ~= true then
-        if res.error == "stale_revision" then return fail("STALE_REVISION") end
-        if res.error == "invalid_plan" or res.error == "unknown_fields" then
-            return fail("INVALID_PLAN", FILE_KEY[res.field] or res.field)
-        end
-        return fail("ECONOMY_UNAVAILABLE")
-    end
+    if res.ok ~= true then return planFail(res) end
     local changed = type(res.changed) == "table" and res.changed or {}
     local text = PS.encode(values, reason)
     local fileError
     if writeText(PS.path(product), text) then p.lastText = text else fileError = "write_failed" end
-    report(product, { state = fileError and "error" or "ok", source = "admin", revision = res.revision, error = fileError })
-    O.audit("WARN", "ADMIN_PAID_SLOTS", { actor = who, role = "ADMIN",
-        reason = product .. " " .. table.concat(changed, ",") .. " " .. reason, count = #changed })
-    return { ok = true, revision = res.revision, changed = changed, fileError = fileError }
+    local out = withCounts(res, { ok = true, revision = res.revision, changed = changed, fileError = fileError })
+    report(product, withCounts(res, { state = fileError and "error" or "ok", source = "admin", revision = res.revision,
+        error = fileError }))
+    O.audit("WARN", "ADMIN_PAID_SLOTS", { actor = who, role = "ADMIN", count = #changed,
+        reason = product .. " " .. table.concat(changed, ",") .. " " .. reason
+            .. ((out.pausedConsents or 0) > 0 and (" paused=" .. out.pausedConsents .. "/" .. tostring(out.pausedAccounts)) or "") })
+    return out
 end
 
 if Events.OnServerStarted then Events.OnServerStarted.Add(PS.start) end

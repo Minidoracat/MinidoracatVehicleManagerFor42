@@ -82,10 +82,11 @@ local function bucket(who)
     return b
 end
 
+-- 回傳是否送出：協定不符時不送、onAck 永遠不會被呼叫，等回覆的呼叫端要自己收掉忙碌狀態
 function C.request(player, command, args, onAck)
     if C.protocolMismatch then
         MVM.notify(player, getText("IGUI_MVM_ProtocolMismatch"), true)
-        return
+        return false
     end
     args = args or {}
     args.protocol = MVM.PROTOCOL
@@ -94,6 +95,7 @@ function C.request(player, command, args, onAck)
         C.pending[args.requestId] = onAck or true
     end
     sendClientCommand(player, MVM.MODULE, command, args)
+    return true
 end
 
 local function resync(who)

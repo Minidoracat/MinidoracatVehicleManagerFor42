@@ -185,7 +185,7 @@ In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager cate
 [*] [b]Buy[/b]: several slots at once.
 [*] [b]Rent[/b]: each rental is separate, with its own slot count and end date, and is renewed or set to auto-renew on its own.
 [*] [b]Before you pay[/b]: you see the quantity, price, your balance before and after, and how many cars you can claim (or guard) afterwards; the slots work the moment you pay.
-[*] [b]Price changes[/b]: if the rent, currency or period changes, auto-renew pauses until you accept the new terms.
+[*] [b]Price changes[/b]: if the rent, currency or period changes, auto-renew pauses until you accept the new terms. If you haven't accepted them by the end of that rental's grace period, it isn't renewed.
 [/list]
 [h3]Expiry and refunds[/h3]
 [list]
@@ -204,6 +204,7 @@ In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager cate
 [*] [b]Two ways[/b]: edit the settings files on the server, or admins open "Paid claim slot settings" or "Paid guard slot settings" from the Admin tab or the slots window.
 [*] [b]What you can change[/b]: prices, currencies, limits, periods and grace hours.
 [*] [b]Logged[/b]: each change needs a reason and is logged.
+[*] [b]See the impact first[/b]: when you change the rent, currency or period in game, or stop rentals or auto-renew, the confirm dialog shows how many rentals will have auto-renew paused and how many players that affects (a lower rental limit isn't counted there).
 [/list]
 === ⚙️ Admin tools
 {{img:09-admin-en.jpg}}
