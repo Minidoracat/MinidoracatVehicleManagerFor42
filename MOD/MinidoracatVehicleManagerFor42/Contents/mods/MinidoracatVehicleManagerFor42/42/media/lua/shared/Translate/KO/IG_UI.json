@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "%1까지 유예",
     "IGUI_MVM_Lock_RentKeep": "%1까지 보관, 이후 등록 해제",
     "IGUI_MVM_Lock_RentEnded": "유예 기간 종료",
-    "IGUI_MVM_Lock_RentHint": "갱신하거나 다른 차량의 등록을 해제하면 잠금이 풀립니다",
+    "IGUI_MVM_Lock_RentHint": "갱신·재대여하거나 다른 차량의 등록을 해제하면 잠금이 풀립니다",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "등록 해제됨 - 대여 슬롯 종료",
     "IGUI_MVM_State_LOCKED": "잠김 - 대여 슬롯 종료",
     "IGUI_MVM_Section_Guard": "피해 방지",

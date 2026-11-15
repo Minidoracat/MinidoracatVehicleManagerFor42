@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "Délai de grâce jusqu'au %1",
     "IGUI_MVM_Lock_RentKeep": "Gardé jusqu'au %1, puis libéré",
     "IGUI_MVM_Lock_RentEnded": "Délai de grâce écoulé",
-    "IGUI_MVM_Lock_RentHint": "Renouvelez ou libérez un autre véhicule pour déverrouiller",
+    "IGUI_MVM_Lock_RentHint": "Renouvelez, relouez ou libérez un autre véhicule pour déverrouiller",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "Libéré - emplacement loué expiré",
     "IGUI_MVM_State_LOCKED": "Verrouillé - emplacement loué expiré",
     "IGUI_MVM_Section_Guard": "Protection anti-dégâts",

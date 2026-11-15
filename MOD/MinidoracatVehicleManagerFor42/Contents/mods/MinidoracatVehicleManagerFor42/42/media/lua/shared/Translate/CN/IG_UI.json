@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "宽限到 %1",
     "IGUI_MVM_Lock_RentKeep": "保留到 %1，之后解除绑定",
     "IGUI_MVM_Lock_RentEnded": "宽限已过",
-    "IGUI_MVM_Lock_RentHint": "续租或解除另一辆车就能恢复",
+    "IGUI_MVM_Lock_RentHint": "续租、重新租用或解除另一辆车就能恢复",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "租用名额到期，已解除绑定",
     "IGUI_MVM_State_LOCKED": "已锁定：租用名额到期",
     "IGUI_MVM_Section_Guard": "防破坏",

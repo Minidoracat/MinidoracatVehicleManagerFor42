@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "Grace until %1",
     "IGUI_MVM_Lock_RentKeep": "Kept until %1, then unclaimed",
     "IGUI_MVM_Lock_RentEnded": "Grace period over",
-    "IGUI_MVM_Lock_RentHint": "Renew or unclaim another vehicle to unlock",
+    "IGUI_MVM_Lock_RentHint": "Renew, rent again, or unclaim another vehicle to unlock",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "Unclaimed - rented slot ended",
     "IGUI_MVM_State_LOCKED": "Locked - rented slot ended",
     "IGUI_MVM_Section_Guard": "Damage guard",

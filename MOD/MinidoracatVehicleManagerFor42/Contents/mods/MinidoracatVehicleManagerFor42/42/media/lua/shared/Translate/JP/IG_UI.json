@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "猶予は %1 まで",
     "IGUI_MVM_Lock_RentKeep": "%1 まで保持、その後登録解除",
     "IGUI_MVM_Lock_RentEnded": "猶予期間終了",
-    "IGUI_MVM_Lock_RentHint": "更新するか別の車両の登録を解除すると戻ります",
+    "IGUI_MVM_Lock_RentHint": "更新・再レンタルするか、別の車両の登録を解除すると戻ります",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "レンタル枠の終了により登録解除",
     "IGUI_MVM_State_LOCKED": "ロック中：レンタル枠終了",
     "IGUI_MVM_Section_Guard": "破壊防止",

@@ -154,7 +154,7 @@ function RL.evaluate(owner)
         end
     end
     -- 只在有寬限截止時間時通知鎖定。沒有寬限中的租約（寬限 0 小時、或寬限在停機時過完）時 Economy 同一次排程就會
-    -- 先報到期、再移除租約，玩家只會看到幾毫秒後的保留通知；鎖定照樣寫在車隊視窗與使用時的提示（E2E rentlock 實測）
+    -- 先報到期、再移除租約，玩家只會看到幾毫秒後的保留通知（RentKeepDays＝0 時是解除通知）；鎖定照樣寫在車隊視窗與使用時的提示（E2E rentlock 實測）
     if added > 0 and r.untilMs then notify(owner, "IGUI_MVM_Rent_Locked", locked - kept, r.untilMs, true) end
     if freed > 0 then notify(owner, "IGUI_MVM_Rent_Unlocked", freed, nil, false) end
     if keptNew > 0 then notify(owner, "IGUI_MVM_Rent_Kept", keptNew, keepUntil, true) end

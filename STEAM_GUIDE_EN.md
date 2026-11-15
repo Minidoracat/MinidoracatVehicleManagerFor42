@@ -139,7 +139,7 @@ Set by admins:
 [*] who got in the car towing yours, which unhitched your car
 [*] repairs done by damage guard
 [*] cars that lost damage guard because your guard slots went down
-[*] rented slots locking, unlocking or unclaiming cars
+[*] rented slots locking, unlocking, keeping or unclaiming cars
 [/list]
 [*] [b]Recorded while offline[/b]: when you log in with new notices you get a message, the steering wheel icon shows the unread count and the tab shows it as "Notices (count)". Opening the tab marks them read.
 [*] [b]Grouped[/b]: repeated attacks on the same car by the same player within 10 minutes become one entry with a count.
@@ -193,8 +193,8 @@ In MiniMap's Map Display Settings (the minimap's gear), the Vehicle Manager cate
 [list]
 [*] A grace period starts (set by the server owner), and slots in grace can't be used for new claims.
 [*] Cars over your limit are locked, newest first: neither you nor shared players can use them, and renewing or unclaiming other cars unlocks them right away.
-[*] If you're still over the limit when the grace period ends, the locked cars are unclaimed.
-[*] You get a notice at every step (also kept in the Notices tab), and the fleet window shows when the grace period ends.
+[*] If you're still over the limit when the grace period ends, the locked cars are kept for a while (set by the server owner, 7 days by default): they stay yours, locked and protected. Renting a slot again or unclaiming other cars unlocks them; when the keep period ends, they are unclaimed.
+[*] You get a notice at every step (also kept in the Notices tab), and the fleet window shows when the grace or keep period ends.
 [/list]
 [*] [b]When a rented guard slot ends[/b]: cars over your guard slots only lose damage guard; they stay yours.
 [*] [b]Refunds[/b]: only lower how many new cars you can claim; cars you already claimed stay claimed.

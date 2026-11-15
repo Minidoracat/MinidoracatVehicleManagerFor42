@@ -132,7 +132,8 @@ function cacheFileExists(path) return files[path] ~= nil end -- 與 getFileReade
 
 SandboxVars = { MinidoracatVehicleManager = { ClaimsPerPlayer = 3, MaxMembersPerVehicle = 6,
     ClaimDistance = 2.5, AllowFactionShare = true, InactivityReleaseDays = 0,
-    ReleaseFinalizeHours = 24, TombstoneRetentionDays = 14, NameMaxBytes = 32, ParkedGuard = 2, GuardSlotsPerPlayer = 1 } }
+    ReleaseFinalizeHours = 24, TombstoneRetentionDays = 14, NameMaxBytes = 32, ParkedGuard = 2, GuardSlotsPerPlayer = 1,
+    RentKeepDays = 7 } }
 local SB = SandboxVars.MinidoracatVehicleManager
 -- SandboxOptions：set 只改 Java 端的值，toLua 才投影到 SandboxVars；saveServerLuaFile 回 SBOX.saveOk，成功才記下「檔案」內容
 SBOX = { values = {}, saveOk = true, saves = 0, sets = 0, file = nil }
@@ -5971,7 +5972,7 @@ end
 check(z0[2].recordState == "RELEASED" and z0[2].endReason == "RENT_EXPIRED" and z0[1].recordState == "ACTIVE"
     and zk.IGUI_MVM_Rent_Released == 1 and zk.IGUI_MVM_Rent_Kept == nil,
     "RentKeepDays＝0：租約移除當下就釋出，只通知 Rent_Released")
-SB.RentKeepDays = 1
+SB.RentKeepDays = 7
 
 -- 載著受保護車的拖車：保留期滿也不釋出，保持鎖定
 local CO = player("rcar", 1, 1)
@@ -6015,6 +6016,19 @@ check(O.graceSlots("rgr") == 0, "讀取失敗：graceSlots 為 0")
 H.fail = nil
 ENT.rgr = rent(1, "active", 1)
 check(claim(GR, world[152]).ok, "續租後：可以綁")
+
+-- 重啟：保留截止跟著帳本存檔，開服那次重算照樣保留（載貨拖車）
+local keepAt = rt.lockKeepUntilMs
+GOS.save()
+local diskK, gmdK = deepcopy(O.R.meta), deepcopy(gmd)
+boot(diskK, true, true)
+gmd, serverMode = gmdK, true
+check(O.ready() == true and O.R.loaded == "disk", "重啟：帳本從分片檔載回")
+rt = O.state().recordsByOid[rt.oid]
+RL.lastMs = 0
+RL.minute()
+check(rt and rt.lock == "RENT" and rt.lockKeepUntilMs == keepAt and rt.recordState == "ACTIVE",
+    "重啟後：保留截止與鎖定從存檔讀回，開服重算不清掉")
 
 -- Economy 沒裝：清掉所有租約鎖定
 MinidoracatEconomy = nil

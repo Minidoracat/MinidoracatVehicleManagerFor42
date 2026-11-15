@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "Karencja do %1",
     "IGUI_MVM_Lock_RentKeep": "Zachowany do %1, potem zwolnienie",
     "IGUI_MVM_Lock_RentEnded": "Okres karencji minął",
-    "IGUI_MVM_Lock_RentHint": "Przedłuż wynajem albo zwolnij inny pojazd, aby odblokować",
+    "IGUI_MVM_Lock_RentHint": "Przedłuż lub wynajmij ponownie albo zwolnij inny pojazd, aby odblokować",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "Zwolniony - wynajęty slot się skończył",
     "IGUI_MVM_State_LOCKED": "Zablokowany - wynajęty slot się skończył",
     "IGUI_MVM_Section_Guard": "Ochrona przed uszkodzeniami",

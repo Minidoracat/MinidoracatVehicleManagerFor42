@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "Gracia hasta %1",
     "IGUI_MVM_Lock_RentKeep": "Conservado hasta %1, luego se libera",
     "IGUI_MVM_Lock_RentEnded": "Período de gracia terminado",
-    "IGUI_MVM_Lock_RentHint": "Renueva o libera otro vehículo para desbloquear",
+    "IGUI_MVM_Lock_RentHint": "Renueva, vuelve a alquilar o libera otro vehículo para desbloquear",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "Liberado - terminó el espacio alquilado",
     "IGUI_MVM_State_LOCKED": "Bloqueado - terminó el espacio alquilado",
     "IGUI_MVM_Section_Guard": "Protección contra daños",

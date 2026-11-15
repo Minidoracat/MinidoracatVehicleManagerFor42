@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "Ek süre %1 tarihine kadar",
     "IGUI_MVM_Lock_RentKeep": "%1 tarihine kadar tutulur, ardından sahiplik bırakılır",
     "IGUI_MVM_Lock_RentEnded": "Ek süre bitti",
-    "IGUI_MVM_Lock_RentHint": "Kilidi açmak için uzat veya başka bir aracın sahipliğini bırak",
+    "IGUI_MVM_Lock_RentHint": "Kilidi açmak için uzat, yeniden kirala veya başka bir aracın sahipliğini bırak",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "Sahipliği bırakıldı - kiralık slotun süresi bitti",
     "IGUI_MVM_State_LOCKED": "Kilitli - kiralık slotun süresi bitti",
     "IGUI_MVM_Section_Guard": "Hasar koruması",

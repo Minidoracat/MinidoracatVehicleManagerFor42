@@ -381,7 +381,7 @@
     "IGUI_MVM_Lock_Rent": "Carência até %1",
     "IGUI_MVM_Lock_RentKeep": "Mantido até %1, depois liberado",
     "IGUI_MVM_Lock_RentEnded": "Carência encerrada",
-    "IGUI_MVM_Lock_RentHint": "Renove ou libere outro veículo para desbloquear",
+    "IGUI_MVM_Lock_RentHint": "Renove, alugue de novo ou libere outro veículo para desbloquear",
     "IGUI_MVM_State_RELEASED_RENT_EXPIRED": "Liberado - a vaga alugada terminou",
     "IGUI_MVM_State_LOCKED": "Bloqueado - a vaga alugada terminou",
     "IGUI_MVM_Section_Guard": "Proteção contra danos",
