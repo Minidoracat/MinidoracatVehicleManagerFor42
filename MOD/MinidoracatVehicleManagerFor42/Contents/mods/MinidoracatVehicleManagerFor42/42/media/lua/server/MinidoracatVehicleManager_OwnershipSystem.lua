@@ -1032,7 +1032,7 @@ end
 -- 就把房間錨點記在紀錄上。每筆紀錄各記自己的；兩筆記到同一間（上游一台車配一間，正常不會發生）時記一筆稽核，
 -- 巡查對其中任一筆有權限就不請出。沒綁定的車進了某筆紀錄記的房間：那筆記的是舊的對應，放掉並記稽核（不然從沒綁定的車
 -- 進去的人會被請出；那台綁定車下次有人進房間時重記）。已終結的紀錄不清欄位（轉讓時帶到新紀錄），查詢時濾掉
-function O.noteRoom(vehicle, room)
+function O.noteRoom(vehicle, room, player)
     if vehicle == nil or type(room) ~= "table" or not MVM.isInt(room.x) or not MVM.isInt(room.y) or not O.ready() then return end
     local _, rec = O.lookup(vehicle)
     if rec ~= nil and rec.roomX == room.x and rec.roomY == room.y then return end
@@ -1047,7 +1047,7 @@ function O.noteRoom(vehicle, room)
         other.roomX, other.roomY = nil, nil
         R.rooms[other.oid] = nil
         O.bump(other)
-        O.audit("WARN", "ROOM_RELEASED", { oid = other.oid, owner = other.ownerUser, vehicle = (native(vehicle)) })
+        O.audit("WARN", "ROOM_RELEASED", { actor = O.principal(player), oid = other.oid, owner = other.ownerUser, vehicle = (native(vehicle)) })
     end
     if rec == nil then return end
     rec.roomX, rec.roomY = room.x, room.y

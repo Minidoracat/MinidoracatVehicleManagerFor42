@@ -189,13 +189,14 @@ Faction = { getFaction = function(name) for _, f in ipairs(factions) do if f.nam
 local online, outbox = {}, {}
 local function player(name, x, y, opts)
     local p = { _cls = "IsoPlayer", name = name, x = x or 0, y = y or 0, z = 0, num = 0, admin = opts and opts.admin,
-        sid = opts and opts.sid or 0 }
+        sid = opts and opts.sid or 0, onlineId = #online * 4 } -- 每個 mock 各自一條連線（slot*4）
     function p:getSteamID() return self.sid + 0.0 end
     function p:getUsername() return self.name end
     function p:getX() return self.x end
     function p:getY() return self.y end
     function p:getZ() return self.z end
     function p:getPlayerNum() return self.num end
+    function p:getOnlineID() return self.onlineId end
     function p:getVehicle() return self.vehicle end
     function p:getUseableVehicle() return self.useable end -- 身旁可用的車（IsoPlayer.java:4216-4249）
     function p:getPrimaryHandItem() return self.hand end
@@ -208,6 +209,7 @@ local function player(name, x, y, opts)
 end
 function getOnlinePlayers() return javaList(online) end
 function getSpecificPlayer(i) return online[i + 1] end
+function getPlayerByOnlineID(id) for _, q in ipairs(online) do if q.onlineId == id then return q end end end
 function sendServerCommand(p, module, command, payload)
     outbox[p.name][#outbox[p.name] + 1] = { module = module, command = command, payload = payload }
 end
@@ -7138,8 +7140,8 @@ out("情境 RVP：Project RV Interior 室內巡查（多人伺服器記下綁定
 boot()
 local G, AC = MVM.Guards, MVM.ACTIONS
 local OW, MB, ST = player("rpow", 1, 1), player("rpmb", 1, 1), player("rpst", 1, 1)
-local ADM, P2, NO = player("rpadm", 1, 1, { admin = true }), player("rpp2", 1, 1), player("", 1, 1)
-P2.num = 1
+local ADM, P2, NO, SH = player("rpadm", 1, 1, { admin = true }), player("rpp2", 1, 1), player("", 1, 1), player("rpsh", 1, 1)
+P2.num, P2.onlineId = 1, SH.onlineId + 1 -- P2 是 SH 那條連線的分割畫面第 2 位
 local car, loose, car2 = GH.car(97), GH.car(98), GH.car(99)
 local r = rec(claim(OW, car).oid)
 local hooks, sent = {}, {}
@@ -7218,7 +7220,10 @@ check(evicted(OW) and lastOf(OW, "enforcement").reason == "RENT_LOCKED", "租用
 r.lock = nil
 cmd(ADM, "setAdminOverride", { enabled = false })
 check(evicted(ADM), "沒開越權的管理員：請出")
-check(not evicted(P2) and denied(P2, r.oid) == 0 and GH.count(P2, "enforcement") == 0, "分割畫面第 2 位：不查（上游的離開只會移動同一連線的第 1 位）")
+check(not evicted(P2) and denied(P2, r.oid) == 0 and GH.count(P2, "enforcement") == 0, "分割畫面第 2 位：不查")
+check(not evicted(SH) and denied(SH, r.oid) == 0 and GH.count(SH, "enforcement") == 0, "分割畫面連線的第 1 位：也不查（上游移動的不一定是被請的那位）")
+P2.onlineId = -1
+check(evicted(SH) and denied(SH, r.oid) == 1, "分割畫面的另一位離線後：第 1 位照常請出")
 check(evicted(NO) and denied(NO, r.oid) == 1, "沒有身分的第 1 位玩家：請出")
 r.removedAtMs = nowMs
 check(evicted(ST), "車已移出世界（例如在拖車上）：照樣請出")
@@ -7272,9 +7277,9 @@ l0 = #logLines
 local rv1, rv2 = fresh.revision, r2.revision
 enter(loose, ROOM)
 local released = 0
-for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_RELEASED", 1, true) and (logLines[i]:find(fresh.oid, 1, true) or logLines[i]:find(r2.oid, 1, true)) then released = released + 1 end end
+for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_RELEASED", 1, true) and logLines[i]:find("\trpow\t", 1, true) and (logLines[i]:find(fresh.oid, 1, true) or logLines[i]:find(r2.oid, 1, true)) then released = released + 1 end end
 check(claims(24361, 12061) == 0 and fresh.roomX == nil and r2.roomY == nil and fresh.revision == rv1 + 1 and r2.revision == rv2 + 1 and released == 2,
-    "沒綁定的車進了有紀錄記著的房間：兩筆都放掉（revision +1）、各寫一筆 ROOM_RELEASED")
+    "沒綁定的車進了有紀錄記著的房間：兩筆都放掉（revision +1）、各寫一筆 ROOM_RELEASED（記下是誰進去的）")
 check(not evicted(OW), "放掉之後在那間房的人：不請出")
 enter(car, ROOM)
 enter(car2, ROOM)

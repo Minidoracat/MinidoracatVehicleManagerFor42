@@ -324,7 +324,7 @@ function G.hookRV()
     if isServer() then
         if R.wrapped["RVHooks.postEnter"] then return end
         R.wrapped["RVHooks.postEnter"] = true
-        RVHooks.register("postEnter", function(ctx) O.noteRoom(ctx.vehicle, ctx.room) end)
+        RVHooks.register("postEnter", function(ctx) O.noteRoom(ctx.vehicle, ctx.room, ctx.player) end)
         return
     end
     if R.wrapped["RVHooks.preEnter"] then return end
@@ -345,8 +345,8 @@ Events.EveryOneMinute.Add(function() G.install("recheck") end)
 -- ------------------------------------------------------------------ watchdog ---
 -- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人。
 -- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上、或站在記了房間範圍裡的人解
--- （舊做法每 0.1 秒對全部在線玩家各解一次）。佔座檢查不查沒有身分的玩家；室內巡查（roomCheck）照查，只跳過分割畫面
--- 第 2～4 位。召喚者另外每秒重驗（summonCheck）
+-- （舊做法每 0.1 秒對全部在線玩家各解一次）。佔座檢查不查沒有身分的玩家；室內巡查（roomCheck）照查，只跳過分割畫面的
+-- 連線。召喚者另外每秒重驗（summonCheck）
 
 -- 召喚途中召喚者沒有 DRIVE 了（收回分享、租用鎖定、轉讓、陣營暫停、途中被別人綁定）：停掉召喚，同上車要 DRIVE。
 -- 每秒走一次放行過的召喚者（不經 S.players：SP 那份只有第 0 位，分割畫面其他位置也召喚得了）
@@ -372,7 +372,8 @@ end
 -- （server/RVServerMP_V3.lua:393-401；伺服器上四參數的 sendClientCommand 直接觸發 OnClientCommand），實際移動由他的遊戲執行：
 -- 回到車的位置，從座位進去的人回原座位。沒有進入紀錄的人，上游要在某間已分配房間的範圍內才補得到紀錄（:345-372），
 -- 補不到就請不動。固定請出，不看沙盒 WatchdogAction（那個選項只管坐在車上的人）；沒有身分的人照查。
--- 分割畫面第 2～4 位不查：上游的離開只會移動同一連線的第 1 位（client/RVClientMP_V3.lua:205-211）
+-- 分割畫面的連線整條不查（第 1 位也不查）：上游的離開移動的是那台遊戲當下的 getPlayer()（client/RVClientMP_V3.lua:205-211），
+-- 不一定是被請的那位。同一連線的玩家 OnlineID 連號：slot*4＋序號（ConnectCoopPacket.java:125）
 local function roomCheck(player, t)
     if not R.wrapped["RVHooks.postEnter"] or player:getPlayerNum() ~= 0 or player:isDead() or MVM.recent(t, R.rvAt[player], RV_GRACE_MS) then return end
     local recs = O.roomClaims(player:getX(), player:getY())
@@ -383,6 +384,8 @@ local function roomCheck(player, t)
         if ok then return end
         reason = reason or why
     end
+    local id = player:getOnlineID()
+    for k = 1, 3 do if getPlayerByOnlineID(id + k) ~= nil then return end end
     R.rvAt[player] = t
     O.deny(O.principal(player), "ROOM", recs[1].oid, "DENY_ROOM")
     enforce(player, "ROOM", reason, recs[1].oid)
