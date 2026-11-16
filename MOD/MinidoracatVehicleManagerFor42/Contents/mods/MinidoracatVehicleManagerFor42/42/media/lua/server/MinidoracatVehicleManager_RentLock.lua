@@ -27,7 +27,8 @@ local function rentals(owner)
         if type(x) ~= "table" or not MVM.isInt(x.quantity) or x.quantity < 0 then return nil end
         if x.state == "grace" then
             r.grace = r.grace + x.quantity
-            if type(x.graceUntil) == "number" and (r.untilMs == nil or x.graceUntil > r.untilMs) then r.untilMs = x.graceUntil end
+            -- 幾張同時寬限取最早的截止；那張移除後 RL.evaluate 讓多出的鎖定車進保留，其餘寬限鎖改寫成剩下的最早截止
+            if type(x.graceUntil) == "number" and (r.untilMs == nil or x.graceUntil < r.untilMs) then r.untilMs = x.graceUntil end
         elseif x.state == "expired" then
             r.expired = r.expired + x.quantity
         elseif x.state == "pending" or x.state == "paused_system" then
@@ -136,7 +137,7 @@ function RL.evaluate(owner)
                 changed(rec)
                 kept, keptNew, fresh[rec] = kept + 1, keptNew + 1, true
             elseif rec.lockUntilMs ~= r.untilMs then
-                rec.lockUntilMs = r.untilMs -- 寬限截止改變（部分續租、只剩到期的租約）
+                rec.lockUntilMs = r.untilMs -- 寬限截止改變（部分續租、較早那張結束、只剩到期的租約）
                 changed(rec)
             end
         end

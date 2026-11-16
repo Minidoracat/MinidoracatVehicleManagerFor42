@@ -5963,6 +5963,51 @@ E.onChanged("rkp", MVM.ECON_PRODUCT)
 check(kr[4].lock == nil and kr[4].lockKeepUntilMs == nil and lastOf(KP, "notice").key == "IGUI_MVM_Rent_Unlocked",
     "保留中重新租用：解鎖、清掉保留截止，通知 Rent_Unlocked")
 
+-- 兩張租約同時在寬限、截止不同：寬限鎖與鎖定通知寫較早那張的截止；較早那張移除後，進保留的車清掉寬限截止，其餘改寫剩下那張的
+local MN = player("rmin", 1, 1)
+O.mapSet("quotaOverrides", "rmin", 1)
+ENT.rmin = rents(2, { { "active", 1 }, { "active", 1 } })
+local mn = {}
+for i = 1, 3 do mn[i] = rec(claim(MN, vehicle(190 + i, 1900 + i, 9900 + i, "Base.CarNormal", 1, 1)).oid) end
+nowMs = nowMs + 1000
+ENT.rmin = rents(2, { { "grace", 1, GU2 }, { "grace", 1, GU } })
+E.onChanged("rmin", MVM.ECON_PRODUCT)
+local noteMn = lastOf(MN, "notice")
+check(mn[3].lockUntilMs == GU and mn[2].lockUntilMs == GU and mn[1].lock == nil
+    and noteMn.key == "IGUI_MVM_Rent_Locked" and noteMn.n == 2 and noteMn.atMs == GU,
+    "兩張租約同時寬限、截止不同：寬限鎖與 Rent_Locked 都寫較早的截止")
+ENT.rmin = rents(1, { { "expired", 1 }, { "grace", 1, GU2 } })
+E.onChanged("rmin", MVM.ECON_PRODUCT)
+check(mn[3].lockUntilMs == GU2 and mn[2].lockUntilMs == GU2 and mn[3].lockKeepUntilMs == nil and mn[2].lockKeepUntilMs == nil
+    and lastOf(MN, "notice") == noteMn,
+    "較早那張到期、還列在 Economy 上：兩台都還是寬限鎖，截止改成剩下那張的，不再通知")
+ENT.rmin = rents(1, { { "grace", 1, GU2 } })
+local tMn = nowMs
+E.onChanged("rmin", MVM.ECON_PRODUCT)
+check(mn[3].lockKeepUntilMs == tMn + KD and mn[3].lockUntilMs == nil and mn[2].lock == "RENT" and mn[2].lockUntilMs == GU2
+    and mn[2].lockKeepUntilMs == nil and mn[1].lock == nil,
+    "較早那張移除：最新 1 台進保留，另一台的寬限截止改成剩下那張的")
+
+-- 鎖定車比寬限中的名額少：較早那張移除時沒有多出來的鎖定車，不進保留，只改寬限截止
+do
+    local MF = player("rmin2", 1, 1)
+    O.mapSet("quotaOverrides", "rmin2", 1)
+    ENT.rmin2 = rents(2, { { "active", 1 }, { "active", 1 } })
+    local mf = {}
+    for i = 1, 2 do mf[i] = rec(claim(MF, vehicle(200 + i, 2000 + i, 9200 + i, "Base.CarNormal", 1, 1)).oid) end
+    nowMs = nowMs + 1000
+    ENT.rmin2 = rents(2, { { "grace", 1, GU2 }, { "grace", 1, GU } })
+    E.onChanged("rmin2", MVM.ECON_PRODUCT)
+    local note = lastOf(MF, "notice")
+    check(mf[2].lockUntilMs == GU and mf[1].lock == nil and note.key == "IGUI_MVM_Rent_Locked" and note.n == 1 and note.atMs == GU,
+        "兩張寬限、只超出 1 台：鎖最新 1 台，寫較早的截止")
+    ENT.rmin2 = rents(1, { { "grace", 1, GU2 } })
+    E.onChanged("rmin2", MVM.ECON_PRODUCT)
+    check(mf[2].lock == "RENT" and mf[2].lockUntilMs == GU2 and mf[2].lockKeepUntilMs == nil and mf[1].lock == nil
+        and lastOf(MF, "notice") == note,
+        "較早那張移除、沒有多出來的鎖定車：不進保留、不通知，寬限截止改成剩下那張的")
+end
+
 -- 寬限 0：Economy 同一次走訪先報到期、再移除租約 → 只有一則保留通知
 local G0 = player("rg0", 1, 1)
 O.mapSet("quotaOverrides", "rg0", 1)
