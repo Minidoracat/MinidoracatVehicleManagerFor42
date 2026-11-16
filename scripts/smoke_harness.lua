@@ -157,7 +157,10 @@ function getSandboxOptions()
 end
 
 local serverOpts = {}
-function getServerOptions() return { getBoolean = function(_, k) return serverOpts[k] == true end } end
+function getServerOptions()
+    return { getBoolean = function(_, k) return serverOpts[k] == true end,
+        getOption = function(_, k) if serverOpts[k] ~= nil then return tostring(serverOpts[k]) end end } -- 字串（ServerOptions.java:328）
+end
 Capability = { ManipulateVehicle = "ManipulateVehicle" }
 function checkPermissions(p, cap) return p.admin == true and cap == "ManipulateVehicle" end
 local steamActive = false -- true＝Steam 伺服器（身分要對上綁定的 SteamID）
@@ -202,6 +205,7 @@ local function player(name, x, y, opts)
     function p:getPrimaryHandItem() return self.hand end
     function p:sendObjectChange(kind) self.objectChanges = (self.objectChanges or 0) + 1; self.lastChange = kind end
     function p:isDead() return self.dead == true end
+    function p:isAsleep() return self.asleep == true end
     function p:getInventory() return { haveThisKeyId = function() return self.hasKey == true end } end
     outbox[name] = outbox[name] or {}
     online[#online + 1] = p
@@ -7138,6 +7142,7 @@ end)();
 (function()
 out("情境 RVP：Project RV Interior 室內巡查（多人伺服器記下綁定車的房間，房間裡沒有 CARGO 的人請出去）")
 boot()
+serverOpts.AntiCheatSpeed = 3 -- 只記錄：室內巡查才請人出去
 local G, AC = MVM.Guards, MVM.ACTIONS
 local OW, MB, ST = player("rpow", 1, 1), player("rpmb", 1, 1), player("rpst", 1, 1)
 local ADM, P2, NO, SH = player("rpadm", 1, 1, { admin = true }), player("rpp2", 1, 1), player("", 1, 1), player("rpsh", 1, 1)
@@ -7208,8 +7213,19 @@ r.recordState = "ACTIVE"
 ST.dead = true
 check(not evicted(ST), "死亡中：不請出")
 ST.dead = nil
+ST.asleep = true
+check(not evicted(ST), "睡著：等醒來再請")
+ST.asleep = nil
+for _, v in ipairs({ 2, 1, false }) do
+    serverOpts.AntiCheatSpeed = v or nil
+    check(not evicted(ST) and GH.count(ST, "enforcement") == 0 and denied(ST, r.oid) == 0
+        and O.R.denyAgg["rpst|CARGO|" .. r.oid .. "|NOT_AUTHORIZED"] == nil,
+        "AntiCheatSpeed=" .. tostring(v or "讀不到") .. "（踢出、封鎖、讀不到）：不請出、不提示、不記拒絕")
+end
 
-check(evicted(ST) and GH.count(ST, "enforcement") == 1 and denied(ST, r.oid) == 1, "沒有分享的人：請出（離開指令、提示、ROOM 稽核各一）")
+serverOpts.AntiCheatSpeed = 4
+check(evicted(ST) and GH.count(ST, "enforcement") == 1 and denied(ST, r.oid) == 1, "沒有分享的人（AntiCheatSpeed=4）：請出（離開指令、提示、ROOM 稽核各一）")
+serverOpts.AntiCheatSpeed = 3
 local e = lastOf(ST, "enforcement")
 check(e.action == "ROOM" and e.reason == "NOT_AUTHORIZED" and e.oid == r.oid and e.to == "rpst", "提示：ROOM、NOT_AUTHORIZED、這筆紀錄")
 r.grants = { { user = "rpmb", bits = AC.PASSENGER + AC.DRIVE } }
@@ -7221,7 +7237,8 @@ r.lock = nil
 cmd(ADM, "setAdminOverride", { enabled = false })
 check(evicted(ADM), "沒開越權的管理員：請出")
 check(not evicted(P2) and denied(P2, r.oid) == 0 and GH.count(P2, "enforcement") == 0, "分割畫面第 2 位：不查")
-check(not evicted(SH) and denied(SH, r.oid) == 0 and GH.count(SH, "enforcement") == 0, "分割畫面連線的第 1 位：也不查（上游移動的不一定是被請的那位）")
+check(not evicted(SH) and denied(SH, r.oid) == 0 and GH.count(SH, "enforcement") == 0 and O.R.denyAgg["rpsh|CARGO|" .. r.oid .. "|NOT_AUTHORIZED"] == nil,
+    "分割畫面連線的第 1 位：也不查、不記拒絕（上游移動的不一定是被請的那位）")
 P2.onlineId = -1
 check(evicted(SH) and denied(SH, r.oid) == 1, "分割畫面的另一位離線後：第 1 位照常請出")
 check(evicted(NO) and denied(NO, r.oid) == 1, "沒有身分的第 1 位玩家：請出")
@@ -7264,8 +7281,8 @@ local r2 = rec(claim(ST, car2).oid)
 l0 = #logLines
 enter(car2, ROOM)
 local shared = 0
-for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_SHARED", 1, true) and logLines[i]:find(r2.oid, 1, true) then shared = shared + 1 end end
-check(shared >= 1 and claims(24361, 12061) == 2, "第二筆紀錄記到同一間房：寫 ROOM_SHARED")
+for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_SHARED", 1, true) and logLines[i]:find("\trpow\t", 1, true) and logLines[i]:find(r2.oid, 1, true) then shared = shared + 1 end end
+check(shared >= 1 and claims(24361, 12061) == 2, "第二筆紀錄記到同一間房：寫 ROOM_SHARED（記下是誰進去的）")
 l0 = #logLines
 enter(car2, ROOM)
 check(not GH.logged(l0, "ROOM_SHARED"), "同一筆再進：不重寫 ROOM_SHARED")
@@ -7278,8 +7295,8 @@ local rv1, rv2 = fresh.revision, r2.revision
 enter(loose, ROOM)
 local released = 0
 for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_RELEASED", 1, true) and logLines[i]:find("\trpow\t", 1, true) and (logLines[i]:find(fresh.oid, 1, true) or logLines[i]:find(r2.oid, 1, true)) then released = released + 1 end end
-check(claims(24361, 12061) == 0 and fresh.roomX == nil and r2.roomY == nil and fresh.revision == rv1 + 1 and r2.revision == rv2 + 1 and released == 2,
-    "沒綁定的車進了有紀錄記著的房間：兩筆都放掉（revision +1）、各寫一筆 ROOM_RELEASED（記下是誰進去的）")
+check(claims(24361, 12061) == 0 and fresh.roomX == nil and r2.roomY == nil and fresh.revision == rv1 + 1 and r2.revision == rv2 + 1 and released == 2
+    and r.roomX == 24360, "沒綁定的車進了有紀錄記著的房間：兩筆都放掉（revision +1）、各寫一筆 ROOM_RELEASED（記下是誰進去的）；已終結的舊紀錄不動")
 check(not evicted(OW), "放掉之後在那間房的人：不請出")
 enter(car, ROOM)
 enter(car2, ROOM)
@@ -7289,6 +7306,7 @@ check(claims(24361, 12061) == 2 and evicted(OW) and not evicted(MB), "綁定車�
 GOS.save()
 local disk, gmdSaved = deepcopy(O.R.meta), deepcopy(gmd)
 boot(disk, true, true); gmd = gmdSaved
+serverOpts.AntiCheatSpeed = 3
 OW, MB = player("rpow", 1, 1), player("rpmb", 1, 1)
 check(O.ready() == true and O.R.loaded == "disk" and claims(24361, 12061) == 2, "伺服器重啟：記的房間從存檔載回")
 check(evicted(OW) and not evicted(MB), "伺服器重啟後：沒有權限的人照樣請出，有權限的人留下")

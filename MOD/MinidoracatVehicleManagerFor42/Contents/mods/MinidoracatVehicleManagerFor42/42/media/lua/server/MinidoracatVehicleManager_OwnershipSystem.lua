@@ -1040,7 +1040,7 @@ function O.noteRoom(vehicle, room, player)
     for _, other in pairs(R.rooms) do
         if other ~= rec and other.roomX == room.x and other.roomY == room.y and O.AUTHORIZABLE[other.recordState] then
             if rec == nil then stale[#stale + 1] = other
-            else O.audit("WARN", "ROOM_SHARED", { oid = rec.oid, owner = rec.ownerUser, reason = other.oid }) end
+            else O.audit("WARN", "ROOM_SHARED", { actor = O.principal(player), oid = rec.oid, owner = rec.ownerUser, reason = other.oid }) end
         end
     end
     for _, other in ipairs(stale) do -- 走訪完才動 R.rooms

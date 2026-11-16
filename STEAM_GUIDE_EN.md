@@ -240,6 +240,7 @@ Edited right in the Admin tab; these are the same settings as the sandbox option
 [list]
 [*] [b]Impersonation risk[/b]: in vanilla, split-screen players type their own name and the server doesn't verify it, while vanilla safehouses and factions trust names, so other players can be impersonated.
 [*] [b]Recommendation[/b]: if your server doesn't need split-screen, set AllowCoop to false in the server settings (this mod already gives split-screen players no vehicle access).
+[*] [b]Project RV Interior[/b]: players using split-screen are not moved out of interior rooms by this mod (see the FAQ).
 [/list]
 === ⚙️ Moving from Mysterious Vehicle Claim Key
 For admins:
@@ -275,7 +276,7 @@ MVCK public permissions become "Share with everyone":
 [*] [b]Empty parked cars[/b]: zombies don't attack them, and other players driving into one don't damage it; while someone is inside, zombies and crashes damage the car as in vanilla.
 [*] [b]Cheating clients in a seat[/b]: someone may briefly get into a seat; the server notices within about a second and acts on it. Admins choose "Log and warn" or "Remove from vehicle" in the sandbox option "Unauthorized occupant response"; either way it's written to the audit log and that player is warned.
 [*] [b]Containers[/b]: whether they're listed is decided on the player's side, so a modified client may still take items from them, the same as vanilla locked cars; opening and closing the trunk door is still blocked by the server.
-[*] [b]Project RV Interior rooms[/b]: the "enter" action from the vehicle is blocked, and on multiplayer servers anyone inside the room without the Trunk permission is sent back to the vehicle. This is not a server-side guarantee: a player with a modified client may still get into the room or stay in it.
+[*] [b]Project RV Interior rooms[/b]: the "enter" action from the vehicle is blocked, and on multiplayer servers anyone inside the room without the Trunk permission is sent back to the vehicle (or to their seat, if they entered from one); see the FAQ for the conditions. This is not a server-side guarantee: a player with a modified client may still get into the room or stay in it.
 [*] [b]Attack notices[/b]: reported to the server by the attacker's own game, so a modified client can skip them and no notice appears; damage guard itself runs on the server and isn't affected.
 [*] [b]Server-side[/b]: every decision is made on the server; clients only receive data they're allowed to see.
 [/list]
@@ -310,6 +311,8 @@ MVCK public permissions become "Share with everyone":
 [*] Only if you share the Trunk permission. Players with only Ride or Drive can't enter, even while sitting in the car.
 [*] If you take the share away while they're still inside: on multiplayer servers they're asked to leave within about a second and return to the vehicle (or to their seat, if they entered from one). The same happens when the vehicle is transferred to someone else or locked by a rental slot.
 [*] Right after updating to this version, or after unclaiming and claiming again: the server only knows a room once someone has entered it from that vehicle.
+[*] Players are only moved out when the server option AntiCheatSpeed is 3 (log only) or 4 (off). Project RV Interior moves players instantly, so with kick (the default) or ban the game's anti-cheat would punish the moved player; the mod leaves them alone in that case.
+[*] Split-screen players are not moved out. Sleeping players are moved out after they wake up.
 [*] Unclaimed vehicles follow Project RV Interior's own rules: anyone can enter.
 [/list]
 [h3]Can my friends see where my car is?[/h3]

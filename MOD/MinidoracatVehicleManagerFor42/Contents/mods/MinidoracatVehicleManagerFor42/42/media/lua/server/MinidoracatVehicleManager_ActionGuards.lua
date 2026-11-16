@@ -314,6 +314,13 @@ function G.wrapSummon()
     api.startSummon = w
 end
 
+-- 室內巡查只在伺服器的 AntiCheatSpeed 是 3（只記錄）或 4（關閉）時請人出去：Project RV Interior 的進出是瞬間移動，設成封鎖或
+-- 踢出（預設）時被請出的人會被引擎的反作弊處置（ServerOptions.java:197、AntiCheat.java:129-141）。讀不到設定也不請
+local function rvExitSafe()
+    local v = tonumber(getServerOptions():getOption("AntiCheatSpeed"))
+    return v == 3 or v == 4
+end
+
 -- Project RV Interior（Workshop 3543229299）的車內房間，要 CARGO。
 -- 單人進房間不經伺服器指令（client/RVClientSP.lua:118-141）：掛它的 preEnter（shared/RVHooks.lua:14-29），規則同多人的
 -- CG.RULES.RVServer.enterRV，回 false＝取消。回呼出錯時它照常讓人進去（RVHooks.lua:47-49）：不會把單人玩家鎖在自己車外。
@@ -325,6 +332,7 @@ function G.hookRV()
         if R.wrapped["RVHooks.postEnter"] then return end
         R.wrapped["RVHooks.postEnter"] = true
         RVHooks.register("postEnter", function(ctx) O.noteRoom(ctx.vehicle, ctx.room, ctx.player) end)
+        if not rvExitSafe() then MVM.log("room patrol off: AntiCheatSpeed is not 3 or 4 (it would kick or ban players moved out of a room)") end
         return
     end
     if R.wrapped["RVHooks.preEnter"] then return end
@@ -372,20 +380,22 @@ end
 -- （server/RVServerMP_V3.lua:393-401；伺服器上四參數的 sendClientCommand 直接觸發 OnClientCommand），實際移動由他的遊戲執行：
 -- 回到車的位置，從座位進去的人回原座位。沒有進入紀錄的人，上游要在某間已分配房間的範圍內才補得到紀錄（:345-372），
 -- 補不到就請不動。固定請出，不看沙盒 WatchdogAction（那個選項只管坐在車上的人）；沒有身分的人照查。
+-- 睡著的人等醒來再請（上游的離開不叫醒人，直接改座標）；反作弊會處置時不請（rvExitSafe）。
 -- 分割畫面的連線整條不查（第 1 位也不查）：上游的離開移動的是那台遊戲當下的 getPlayer()（client/RVClientMP_V3.lua:205-211），
 -- 不一定是被請的那位。同一連線的玩家 OnlineID 連號：slot*4＋序號（ConnectCoopPacket.java:125）
 local function roomCheck(player, t)
-    if not R.wrapped["RVHooks.postEnter"] or player:getPlayerNum() ~= 0 or player:isDead() or MVM.recent(t, R.rvAt[player], RV_GRACE_MS) then return end
+    if not R.wrapped["RVHooks.postEnter"] or player:getPlayerNum() ~= 0 or player:isDead() or player:isAsleep()
+        or MVM.recent(t, R.rvAt[player], RV_GRACE_MS) then return end
     local recs = O.roomClaims(player:getX(), player:getY())
-    if recs == nil then return end
+    if recs == nil or not rvExitSafe() then return end
+    local id = player:getOnlineID()
+    for k = 1, 3 do if getPlayerByOnlineID(id + k) ~= nil then return end end
     local reason
     for _, rec in ipairs(recs) do
         local ok, why = O.allowsRecord(player, rec, "CARGO", { silent = true })
         if ok then return end
         reason = reason or why
     end
-    local id = player:getOnlineID()
-    for k = 1, 3 do if getPlayerByOnlineID(id + k) ~= nil then return end end
     R.rvAt[player] = t
     O.deny(O.principal(player), "ROOM", recs[1].oid, "DENY_ROOM")
     enforce(player, "ROOM", reason, recs[1].oid)
