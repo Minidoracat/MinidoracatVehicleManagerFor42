@@ -139,15 +139,17 @@
       "acked_time_updated": 1793005293,
       "affects": [
         "CG.RULES.RVServer.enterRV（進車內房間，CARGO）",
-        "ActionGuards G.hookRV（單人模式的 RVHooks preEnter，CARGO）"
+        "ActionGuards G.hookRV（單人模式的 RVHooks preEnter，CARGO；多人伺服器的 RVHooks postEnter：記下綁定車的房間）",
+        "ActionGuards 室內巡查 roomCheck（RVServer.exitRV 指令、房間的 60 格格線）"
       ],
-      "recheck": "核對 server/RVServerMP_V3.lua 的 RVServer.enterRV：指令名、找車的方式（送指令的人所在或身旁的車、vehicleId 欄位）、收到清空的參數是否仍安靜結束，以及 CG.RULES 註解行號；有沒有新增其他進車內房間的指令或入口 → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例；exitRV／UpdateVehPos 有沒有開始帶車輛參數。單人模式（client/RVClientSP.lua）進房間前是否仍觸發 RVHooks 的 preEnter、回 false 是否仍取消，RVHooks.register 的簽名（harness 情境 RV）。mod.info 的 versionMin 變了、或新增高於 42/ 的版本目錄＝載入的檔案搬家，watch_files 與出處跟著改。",
+      "recheck": "核對 server/RVServerMP_V3.lua 的 RVServer.enterRV：指令名、找車的方式（送指令的人所在或身旁的車、vehicleId 欄位）、收到清空的參數是否仍安靜結束，以及 CG.RULES 註解行號；有沒有新增其他進車內房間的指令或入口 → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例；exitRV／UpdateVehPos 有沒有開始帶車輛參數。單人模式（client/RVClientSP.lua）進房間前是否仍觸發 RVHooks 的 preEnter、回 false 是否仍取消，RVHooks.register 的簽名（harness 情境 RV）。多人伺服器（harness 情境 RVP）：進房間之後是否仍觸發 RVHooks 的 postEnter、ctx 是否仍有 vehicle 與 room.x／room.y、回呼回 false 的後果；exitRV 是否仍不帶參數、仍由伺服器把人帶回車旁；shared/RVVehicleTypes.lua 的房間間距是否仍是 60 格、單間房是否仍小於 30 格；已配給車的房間是否開始收回重配。mod.info 的 versionMin 變了、或新增高於 42/ 的版本目錄＝載入的檔案搬家，watch_files 與出處跟著改。",
       "watch_files": [
         "mods/modPROJECTRVInterior/42/mod.info",
         "mods/modPROJECTRVInterior/42/media/lua/server/RVServerMP_V3.lua",
         "mods/modPROJECTRVInterior/42/media/lua/client/RVClientMP_V3.lua",
         "mods/modPROJECTRVInterior/42/media/lua/client/RVClientSP.lua",
-        "mods/modPROJECTRVInterior/42/media/lua/shared/RVHooks.lua"
+        "mods/modPROJECTRVInterior/42/media/lua/shared/RVHooks.lua",
+        "mods/modPROJECTRVInterior/42/media/lua/shared/RVVehicleTypes.lua"
       ]
     }
   ]

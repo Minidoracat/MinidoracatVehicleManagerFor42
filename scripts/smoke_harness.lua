@@ -200,6 +200,7 @@ local function player(name, x, y, opts)
     function p:getUseableVehicle() return self.useable end -- 身旁可用的車（IsoPlayer.java:4216-4249）
     function p:getPrimaryHandItem() return self.hand end
     function p:sendObjectChange(kind) self.objectChanges = (self.objectChanges or 0) + 1; self.lastChange = kind end
+    function p:isDead() return self.dead == true end
     function p:getInventory() return { haveThisKeyId = function() return self.hasKey == true end } end
     outbox[name] = outbox[name] or {}
     online[#online + 1] = p
@@ -416,7 +417,7 @@ local function boot(diskState, keepGmd, keepGos)
     S.R.acks, S.R.rate, S.R.attempts, S.R.streams, S.R.unverified, S.R.recheck = {}, {}, {}, {}, {}, {}
     S.R.pub, S.R.sandboxSeen = nil, nil
     O.R.identityConflicts, steamActive = nil, false
-    G.R.intents, G.R.due, G.R.seen, G.R.lastRun, G.R.lastPrune = {}, {}, {}, 0, 0
+    G.R.intents, G.R.due, G.R.seen, G.R.rvAt, G.R.lastRun, G.R.lastPrune = {}, {}, {}, {}, 0, 0
     MVM.Tracking.last, MVM.Tracking.seat, MVM.Tracking.who, MVM.Tracking.seen, MVM.Tracking.lastRun = {}, {}, {}, {}, 0
     for k in pairs(MVM.Parked.R) do
         local v = MVM.Parked.R[k]
@@ -7090,7 +7091,7 @@ check(AD.sessions[car2] == nil and G.R.summons[DR] == nil, "新的那台失權�
 MinidoracatAutoDriveAPI = nil
 end)();
 (function()
-out("情境 RV：Project RV Interior 單人模式進車內房間的掛鉤（多人不掛、只掛一次、沒有 CARGO 就取消）")
+out("情境 RV：Project RV Interior 的掛鉤（多人伺服器只掛 postEnter、單人只掛一個 preEnter、沒有 CARGO 就取消）")
 boot()
 local G, AC = MVM.Guards, MVM.ACTIONS
 local OW, P1 = player("rvow", 1, 1), player("rvsp1", 1, 1)
@@ -7099,11 +7100,13 @@ local car, loose = GH.car(95), GH.car(96)
 local r = rec(claim(OW, car).oid)
 local hooks, got = {}, {}
 local keepHooks, keepReceive = RVHooks, MVM.clientReceive
-G.R.wrapped["RVHooks.preEnter"] = nil
+G.R.wrapped["RVHooks.preEnter"], G.R.wrapped["RVHooks.postEnter"] = nil, nil
 local fake = { register = function(flag, fn) hooks[#hooks + 1] = { flag = flag, fn = fn }; return true end }
 RVHooks = fake
 G.install("recheck")
-check(#hooks == 0, "多人伺服器不掛（由指令防火牆判）")
+check(#hooks == 1 and hooks[1].flag == "postEnter" and G.R.wrapped["RVHooks.preEnter"] == nil,
+    "多人伺服器：只掛 postEnter（進入由指令防火牆判）")
+hooks = {}
 serverMode = false
 RVHooks = nil
 check(pcall(G.install, "recheck") and G.R.wrapped["RVHooks.preEnter"] == nil, "單人沒裝 RV Interior：install 不出錯、不記成已掛")
@@ -7128,7 +7131,151 @@ r.grants = {}
 check(enter(P1, loose) ~= false and #got == n, "沒綁定的車：不取消")
 MVM.clientReceive, RVHooks = keepReceive, keepHooks
 serverMode = true
-G.R.wrapped["RVHooks.preEnter"] = nil
+G.R.wrapped["RVHooks.preEnter"], G.R.wrapped["RVHooks.postEnter"] = nil, nil
+end)();
+(function()
+out("情境 RVP：Project RV Interior 室內巡查（多人伺服器記下綁定車的房間，房間裡沒有 CARGO 的人請出去）")
+boot()
+local G, AC = MVM.Guards, MVM.ACTIONS
+local OW, MB, ST = player("rpow", 1, 1), player("rpmb", 1, 1), player("rpst", 1, 1)
+local ADM, P2 = player("rpadm", 1, 1, { admin = true }), player("rpp2", 1, 1)
+P2.num = 1
+local car, loose, car2 = GH.car(97), GH.car(98), GH.car(99)
+local r = rec(claim(OW, car).oid)
+local hooks, sent = {}, {}
+local keepHooks, keepSend = RVHooks, sendClientCommand
+G.R.wrapped["RVHooks.preEnter"], G.R.wrapped["RVHooks.postEnter"] = nil, nil
+RVHooks = { register = function(flag, fn) hooks[#hooks + 1] = { flag = flag, fn = fn }; return true end }
+sendClientCommand = function(p, module, command) sent[#sent + 1] = { p = p, module = module, command = command } end
+G.install("recheck")
+G.install("recheck")
+check(#hooks == 1 and hooks[1].flag == "postEnter", "多人伺服器：只掛一個 postEnter，重複 install 不重掛")
+
+-- 記房間
+local ROOM = { x = 24360, y = 12060, z = 0 }
+local function enter(v, room) return hooks[1].fn({ player = OW, vehicle = v, room = room, side = "server" }) end
+local function claims(x, y) local c = O.roomClaims(x, y); return c and #c or 0 end
+local rev = r.revision
+check(enter(car, ROOM) == nil and r.roomX == 24360 and r.roomY == 12060 and r.revision == rev + 1 and claims(24361, 12061) == 1,
+    "從綁定車進房間：記在紀錄上（revision +1）；回呼不回傳值")
+enter(car, ROOM)
+check(r.revision == rev + 1, "同一間房再進：不重寫")
+enter(loose, { x = 24420, y = 12060, z = 0 })
+check(claims(24420, 12060) == 0, "沒綁定的車：不記")
+enter(car, { x = 24420.5, y = 12060, z = 0 })
+enter(car, nil)
+check(r.roomX == 24360 and r.revision == rev + 1, "房間座標不是整數、沒給房間：不記")
+
+-- 巡查
+local function dog() nowMs = nowMs + 1000; G.watchdog() end
+local function exits(p)
+    local n = 0
+    for _, m in ipairs(sent) do if m.p == p and m.module == "RVServer" and m.command == "exitRV" then n = n + 1 end end
+    return n
+end
+-- p 站到房間錨點的 dx,dy（冷卻清掉）跑一輪巡查：回有沒有對他送出離開指令。跑完站回主世界
+local function evicted(p, dx, dy)
+    G.R.rvAt[p] = nil
+    p.x, p.y = ROOM.x + (dx or 1), ROOM.y + (dy or 1)
+    local n = exits(p)
+    dog()
+    p.x, p.y = 1, 1
+    return exits(p) == n + 1
+end
+local function denied(p, oid) return O.R.denyAgg[(O.principal(p) or "") .. "|ROOM|" .. oid .. "|DENY_ROOM"] or 0 end
+
+r.grants = { { user = "rpmb", bits = AC.CARGO } }
+check(not evicted(OW) and GH.count(OW, "enforcement") == 0, "車主在自己的房間：不請出、不提示")
+check(not evicted(MB) and GH.count(MB, "enforcement") == 0, "有 CARGO 的成員：不請出")
+cmd(ADM, "setAdminOverride", { enabled = true })
+local l0 = #logLines
+check(not evicted(ADM) and not GH.logged(l0, "ADMIN_BYPASS"), "越權中的管理員：不請出、不寫 ADMIN_BYPASS")
+ST.x, ST.y = 1, 1
+dog()
+check(exits(ST) == 0, "人在主世界：不請出")
+ST.vehicle = loose
+check(not evicted(ST), "人在車上：不走室內巡查")
+ST.vehicle = nil
+r.recordState = "RELEASED"
+check(not evicted(ST), "記了這間房的紀錄已解除綁定：不請出")
+r.recordState = "ACTIVE"
+ST.dead = true
+check(not evicted(ST), "死亡中：不請出")
+ST.dead = nil
+
+check(evicted(ST) and GH.count(ST, "enforcement") == 1 and denied(ST, r.oid) == 1, "沒有分享的人：請出（離開指令、提示、ROOM 稽核各一）")
+local e = lastOf(ST, "enforcement")
+check(e.action == "ROOM" and e.reason == "NOT_AUTHORIZED" and e.oid == r.oid and e.to == "rpst", "提示：ROOM、NOT_AUTHORIZED、這筆紀錄")
+r.grants = { { user = "rpmb", bits = AC.PASSENGER + AC.DRIVE } }
+check(evicted(MB), "分享被改成只有搭乘與駕駛：請出")
+r.grants = {}
+r.lock = "RENT"
+check(evicted(OW) and lastOf(OW, "enforcement").reason == "RENT_LOCKED", "租用鎖定：連車主也請出（RENT_LOCKED）")
+r.lock = nil
+cmd(ADM, "setAdminOverride", { enabled = false })
+check(evicted(ADM), "沒開越權的管理員：請出")
+check(evicted(P2) and denied(P2, r.oid) == 1, "沒有身分的第 2 位玩家：請出")
+r.removedAtMs = nowMs
+check(evicted(ST), "車已移出世界（例如在拖車上）：照樣請出")
+r.removedAtMs = nil
+
+-- 冷卻：請出後 5 秒內不重查（不送指令、不提示、不寫稽核）
+G.R.rvAt[ST] = nil
+ST.x, ST.y = ROOM.x + 1, ROOM.y + 1
+local n, en = exits(ST), GH.count(ST, "enforcement")
+dog()
+local cargo = O.R.denyAgg["rpst|CARGO|" .. r.oid .. "|NOT_AUTHORIZED"]
+for _ = 1, 4 do dog() end
+check(exits(ST) == n + 1 and GH.count(ST, "enforcement") == en + 1 and O.R.denyAgg["rpst|CARGO|" .. r.oid .. "|NOT_AUTHORIZED"] == cargo,
+    "請出後 4 秒內還在房間：不重送、不重複提示、不多記拒絕")
+dog()
+check(exits(ST) == n + 2, "滿 5 秒還在房間：再請一次")
+ST.x, ST.y = 1, 1
+
+-- 範圍：錨點四周各 30 格（半開區間），不比樓層
+check(evicted(ST, 29, 0) and not evicted(ST, 30, 0) and evicted(ST, -30, 0) and not evicted(ST, -31, 0), "x：-30～29 算這間房")
+check(evicted(ST, 0, 29) and not evicted(ST, 0, 30) and evicted(ST, 0, -30) and not evicted(ST, 0, -31), "y：-30～29 算這間房")
+ST.z = 1
+check(evicted(ST), "不同樓層：照樣算")
+ST.z = 0
+
+-- 轉讓：房間跟著車到新紀錄，舊車主請出、新車主留下
+l0 = #logLines
+local t = cmd(OW, "transfer", { vehicleId = car.id, expectedOid = r.oid, expectedEpoch = r.epoch, recipient = "rpmb" })
+local fresh = t.ok and rec(t.oid) or {}
+check(fresh.roomX == 24360 and fresh.roomY == 12060 and claims(24361, 12061) == 1 and not GH.logged(l0, "ROOM_SHARED"),
+    "轉讓：新紀錄帶著房間，舊紀錄不再算、不記成兩筆同房")
+check(evicted(OW) and not evicted(MB), "轉讓後：舊車主請出、新車主留下")
+O.rebuildIndex()
+check(claims(24361, 12061) == 1 and O.roomClaims(24361, 12061)[1] == fresh, "重建索引（重啟）：房間還在")
+
+-- 兩筆紀錄記到同一間房：記一筆稽核；對任一筆有權限就不請出
+local r2 = rec(claim(ST, car2).oid)
+l0 = #logLines
+enter(car2, ROOM)
+local shared = 0
+for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_SHARED", 1, true) and logLines[i]:find(r2.oid, 1, true) then shared = shared + 1 end end
+check(shared >= 1 and claims(24361, 12061) == 2, "第二筆紀錄記到同一間房：寫 ROOM_SHARED")
+l0 = #logLines
+enter(car2, ROOM)
+check(not GH.logged(l0, "ROOM_SHARED"), "同一筆再進：不重寫 ROOM_SHARED")
+check(not evicted(MB) and not evicted(ST), "對其中一筆有權限的人（兩位車主）：都不請出")
+check(evicted(OW), "對兩筆都沒有權限的人：請出")
+
+-- 單人：不掛 postEnter、不巡查
+G.R.wrapped["RVHooks.postEnter"] = nil
+hooks = {}
+serverMode = false
+G.install("recheck")
+check(#hooks == 1 and hooks[1].flag == "preEnter" and G.R.wrapped["RVHooks.postEnter"] == nil, "單人：不掛 postEnter")
+n = #sent
+OW.x, OW.y = ROOM.x + 1, ROOM.y + 1
+G.R.rvAt = {}
+dog()
+check(#sent == n, "單人：不巡查")
+serverMode = true
+RVHooks, sendClientCommand = keepHooks, keepSend
+G.R.wrapped["RVHooks.preEnter"], G.R.wrapped["RVHooks.postEnter"] = nil, nil
 end)();
 out("")
 if failures > 0 then

@@ -33,10 +33,11 @@ O.AUTHORIZABLE = { ACTIVE = true, WITNESS_STALE = true, PENDING_RELEASE = true, 
 O.TOMBSTONE = { ORPHANED = true, DESTROYED = true, RELEASED = true }
 
 -- RAM derived state（§4.1）：開機由 recordsByOid 重建，不存檔。outOfWorld＝已移出世界（removedAtMs）的可授權紀錄；
--- keyIdPending＝授權裝車後拖車紀錄 oid → { keyId＝被裝車的 keyId, atMs }（O.noteLoad）
+-- keyIdPending＝授權裝車後拖車紀錄 oid → { keyId＝被裝車的 keyId, atMs }（O.noteLoad）；
+-- rooms＝oid → 記了車內房間（roomX／roomY，O.noteRoom）的紀錄
 local R = { bySqlId = {}, byKeyId = {}, byOwner = {}, status = "INIT", loaded = "none",
     denyAgg = {}, factionRefs = {}, suspectKeys = {}, lastMaintMs = 0, lastScanMs = 0,
-    shards = {}, where = {}, st = nil, overrides = {}, outOfWorld = {}, keyIdPending = {} }
+    shards = {}, where = {}, st = nil, overrides = {}, outOfWorld = {}, keyIdPending = {}, rooms = {} }
 O.R = R
 
 local function now() return getTimestampMs() end
@@ -521,7 +522,7 @@ end
 -- §4.2 規則 0／7：只索引可授權、仍在世界上的紀錄；同 sqlId 兩筆或缺必要欄位 → quarantine
 function O.rebuildIndex()
     local st = O.state()
-    R.bySqlId, R.byKeyId, R.byOwner, R.outOfWorld = {}, {}, {}, {}
+    R.bySqlId, R.byKeyId, R.byOwner, R.outOfWorld, R.rooms = {}, {}, {}, {}, {}
     if st == nil then return end
     for _, rec in pairs(st.recordsByOid) do
         if rec.ownerUser ~= nil then addToList(R.byOwner, rec.ownerUser, rec) end
@@ -529,6 +530,7 @@ function O.rebuildIndex()
             if not MVM.isInt(rec.sqlIdHint) or not MVM.isInt(rec.keyIdHint) or type(rec.vehicleScript) ~= "string" then
                 quarantine(rec, "SCHEMA_INVALID")
             end
+            if MVM.isInt(rec.roomX) and MVM.isInt(rec.roomY) then R.rooms[rec.oid] = rec end
             if rec.removedAtMs then
                 R.outOfWorld[rec.oid] = rec
             else
@@ -1024,6 +1026,40 @@ function O.hasCargo(rec)
         if r.carrierSqlId == rec.sqlIdHint then return true end
     end
     return false
+end
+
+-- Project RV Interior 的車內房間（室內巡查用，ActionGuards 的 roomCheck）：有人經伺服器驗過、從這台綁定車進了房間，
+-- 就把房間錨點記在紀錄上。每筆紀錄各記自己的；兩筆記到同一間（上游一台車配一間，正常不會發生）時記一筆稽核，
+-- 巡查對其中任一筆有權限就不請出。已終結的紀錄不清欄位（轉讓時帶到新紀錄），查詢時濾掉
+function O.noteRoom(vehicle, room)
+    if vehicle == nil or type(room) ~= "table" or not MVM.isInt(room.x) or not MVM.isInt(room.y) or not O.ready() then return end
+    local _, rec = O.lookup(vehicle)
+    if rec == nil or (rec.roomX == room.x and rec.roomY == room.y) then return end
+    for _, other in pairs(R.rooms) do
+        if other ~= rec and other.roomX == room.x and other.roomY == room.y and O.AUTHORIZABLE[other.recordState] then
+            O.audit("WARN", "ROOM_SHARED", { oid = rec.oid, owner = rec.ownerUser, reason = other.oid })
+        end
+    end
+    rec.roomX, rec.roomY = room.x, room.y
+    R.rooms[rec.oid] = rec
+    O.bump(rec)
+end
+
+-- 上游的房間排在 60 格格線上（shared/RVVehicleTypes.lua）：以錨點為中心、每邊 60 格的方塊互不重疊，不比樓層
+local ROOM_HALF = 30
+
+-- 這個座標落在哪些可授權紀錄記的房間範圍裡（沒有回 nil）
+-- shortcut: 每次掃全部記了房間的紀錄, 記了房間的紀錄上千筆時改用格線索引
+function O.roomClaims(x, y)
+    local out = nil
+    for _, rec in pairs(R.rooms) do
+        local dx, dy = x - rec.roomX, y - rec.roomY
+        if dx >= -ROOM_HALF and dx < ROOM_HALF and dy >= -ROOM_HALF and dy < ROOM_HALF and O.AUTHORIZABLE[rec.recordState] then
+            out = out or {}
+            out[#out + 1] = rec
+        end
+    end
+    return out
 end
 
 -- 用車鑰匙編號（keyId）問 TRACK，不需要車子載入（其他 MOD 對沒載入的車輪詢最後位置用，例 Tesla 手機 App 每 2 秒）：

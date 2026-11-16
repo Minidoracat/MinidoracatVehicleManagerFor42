@@ -914,6 +914,7 @@ H.transfer = function(player, who, a)
     O.setState(rec, "RELEASED", "TRANSFER_OUT", { actor = who }) -- setState 已推給舊收件者（非 owner 收 removes）
     local fresh = O.createRecord(a.recipient, v, O.hostPart(v, nil))
     fresh.customName = rec.customName
+    O.noteRoom(v, { x = rec.roomX, y = rec.roomY }) -- Project RV Interior 的房間跟著車走：舊車主與舊成員由室內巡查請出
     O.audit("INFO", "TRANSFER", { actor = who, oid = fresh.oid, epoch = fresh.epoch, owner = a.recipient,
         vehicle = fresh.sqlIdHint, reason = "from " .. who .. " old " .. rec.oid })
     S.push(S.audience(fresh), fresh, false)

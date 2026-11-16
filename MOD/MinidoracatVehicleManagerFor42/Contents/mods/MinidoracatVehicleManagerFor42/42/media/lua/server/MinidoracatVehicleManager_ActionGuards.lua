@@ -5,7 +5,8 @@
 --   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）；召喚 MinidoracatAutoDriveAPI.startSummon 要 DRIVE
 --   5. 佔座 watchdog 與拖掛對帳（事後偵測，D 級）
 --   6. 放行的 complete／裝置槽變更之後通知停車保全重記基準（MVM.Parked.touch）
---   7. Project RV Interior 單人模式進車內房間：掛它的 preEnter，要 CARGO（多人由指令防火牆判）
+--   7. Project RV Interior 的車內房間（要 CARGO）：單人掛它的 preEnter 擋進入（多人的進入由指令防火牆判）；
+--      多人伺服器掛 postEnter 記下綁定車的房間，watchdog 把房間裡沒有權限的人請出去（室內巡查）
 -- 未受保護的車（無紀錄）一律照原版走，不要求 intent。
 if isClient() then return end
 require "MinidoracatVehicleManager_API"
@@ -35,10 +36,12 @@ local INTENTS_PER_ACTOR = 16
 -- watchdog 每 WATCHDOG_MS 跑一次、每次最多查 WATCHDOG_BATCH 人（每秒上限 100 人，與舊的 0.1 秒×10 人相同）。
 -- 每人照沙盒 WatchdogIntervalSeconds 到期；到期後最慢 0.25 秒內查到（舊做法 0.1 秒）
 local WATCHDOG_MS, WATCHDOG_BATCH = 250, 25
+-- 室內巡查請出一次後這麼久不再查這個人：等他的位置同步回來，也不重複觸發上游的離開流程（client/RVClientMP_V3.lua:79-116）
+local RV_GRACE_MS = 5000
 
 -- due／seen：IsoPlayer → 下次檢查時間／最後一次在在線清單看到的時間（watchdog）；summons：IsoPlayer → 經本 MOD 放行的召喚車 id；
--- summonErrs：重驗出錯已記過 log 的車 id
-local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, summons = {}, summonErrs = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
+-- summonErrs：重驗出錯已記過 log 的車 id；rvAt：IsoPlayer → 室內巡查上次請他出去的時間
+local R = { intents = {}, wrapped = {}, marks = {}, due = {}, seen = {}, summons = {}, summonErrs = {}, rvAt = {}, rewraps = 0, lastRun = 0, lastPrune = 0 }
 G.R = R
 
 local function now() return getTimestampMs() end
@@ -311,11 +314,20 @@ function G.wrapSummon()
     api.startSummon = w
 end
 
--- Project RV Interior（Workshop 3543229299）單人模式進車內房間不經伺服器指令（client/RVClientSP.lua:118-141）：掛它的
--- preEnter（shared/RVHooks.lua:14-29），規則同多人的 CG.RULES.RVServer.enterRV（要 CARGO），回 false＝取消。
--- 回呼出錯時它照常讓人進去（RVHooks.lua:47-49）：不會把單人玩家鎖在自己車外
+-- Project RV Interior（Workshop 3543229299）的車內房間，要 CARGO。
+-- 單人進房間不經伺服器指令（client/RVClientSP.lua:118-141）：掛它的 preEnter（shared/RVHooks.lua:14-29），規則同多人的
+-- CG.RULES.RVServer.enterRV，回 false＝取消。回呼出錯時它照常讓人進去（RVHooks.lua:47-49）：不會把單人玩家鎖在自己車外。
+-- 多人伺服器掛 postEnter（server/RVServerMP_V3.lua:147，這時已過進入規則、ctx.vehicle 是伺服器找到的車）：記下綁定車的房間
+-- 給室內巡查（roomCheck）用。這個回呼不回傳值：回 false 會讓上游跳過進房間之後的收尾
 function G.hookRV()
-    if isServer() or R.wrapped["RVHooks.preEnter"] or type(RVHooks) ~= "table" or type(RVHooks.register) ~= "function" then return end
+    if type(RVHooks) ~= "table" or type(RVHooks.register) ~= "function" then return end
+    if isServer() then
+        if R.wrapped["RVHooks.postEnter"] then return end
+        R.wrapped["RVHooks.postEnter"] = true
+        RVHooks.register("postEnter", function(ctx) O.noteRoom(ctx.vehicle, ctx.room) end)
+        return
+    end
+    if R.wrapped["RVHooks.preEnter"] then return end
     R.wrapped["RVHooks.preEnter"] = true
     RVHooks.register("preEnter", function(ctx)
         local ok, reason, rec = O.canUse(ctx.player, ctx.vehicle, "CARGO", { op = "RVHooks.preEnter", mod = "PROJECTRVInterior42" })
@@ -354,9 +366,30 @@ local function summonCheck(player)
     O.audit("WARN", "SUMMON_STOPPED", { actor = O.principal(player), oid = rec and rec.oid, owner = rec and rec.ownerUser, reason = reason })
 end
 
-local function occupantCheck(player)
+-- 室內巡查（多人伺服器、裝了 Project RV Interior 才有）：人站在某筆綁定紀錄記的房間範圍裡（O.roomClaims），對記了這間房的
+-- 紀錄都沒有 CARGO 就請出去——收回分享、轉讓、租用鎖定之後還在房間裡的人。請出＝替他送上游自己的離開指令
+-- （server/RVServerMP_V3.lua:393-401：沒有進入紀錄時它先補一筆再帶回車旁；伺服器上四參數的 sendClientCommand 直接觸發
+-- OnClientCommand），實際移動由他的遊戲執行。固定請出，不看沙盒 WatchdogAction（那個選項只管坐在車上的人）；沒有身分的人照查
+local function roomCheck(player, t)
+    if not R.wrapped["RVHooks.postEnter"] or player:isDead() or MVM.recent(t, R.rvAt[player], RV_GRACE_MS) then return end
+    local recs = O.roomClaims(player:getX(), player:getY())
+    if recs == nil then return end
+    local reason
+    for _, rec in ipairs(recs) do
+        local ok, why = O.allowsRecord(player, rec, "CARGO", { silent = true })
+        if ok then return end
+        reason = reason or why
+    end
+    R.rvAt[player] = t
+    O.deny(O.principal(player), "ROOM", recs[1].oid, "DENY_ROOM")
+    enforce(player, "ROOM", reason, recs[1].oid)
+    sendClientCommand(player, "RVServer", "exitRV", {})
+end
+
+local function occupantCheck(player, t)
     local v = player:getVehicle()
-    if v == nil or O.principal(player) == nil then return end
+    if v == nil then return roomCheck(player, t) end
+    if O.principal(player) == nil then return end
     local seat = v:getSeat(player)
     local ok, reason, rec = O.canUse(player, v, seat == 0 and "DRIVE" or "PASSENGER", { silent = true })
     if rec ~= nil and not ok then
@@ -407,7 +440,7 @@ function G.watchdog()
         if due <= t and checked < WATCHDOG_BATCH then
             checked = checked + 1
             R.due[player] = t + interval
-            occupantCheck(player)
+            occupantCheck(player, t)
         end
     end
     -- 每秒：召喚者重驗；離線玩家的到期紀錄清掉（留著只佔記憶體，不影響誰被查）
@@ -430,7 +463,7 @@ function G.watchdog()
     for player, at in pairs(R.seen) do
         if at ~= t then gone = gone or {}; gone[#gone + 1] = player end
     end
-    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player] = nil, nil end
+    for _, player in ipairs(gone or {}) do R.seen[player], R.due[player], R.rvAt[player] = nil, nil, nil end
 end
 
 Events.OnTick.Add(G.watchdog)
