@@ -5,6 +5,7 @@
 --   4. AutoDrive 裝置槽唯一突變點 MDAD.applyDeviceChange（Phase 0 gate 25 實證）；召喚 MinidoracatAutoDriveAPI.startSummon 要 DRIVE
 --   5. 佔座 watchdog 與拖掛對帳（事後偵測，D 級）
 --   6. 放行的 complete／裝置槽變更之後通知停車保全重記基準（MVM.Parked.touch）
+--   7. Project RV Interior 單人模式進車內房間：掛它的 preEnter，要 CARGO（多人由指令防火牆判）
 -- 未受保護的車（無紀錄）一律照原版走，不要求 intent。
 if isClient() then return end
 require "MinidoracatVehicleManager_API"
@@ -253,6 +254,7 @@ function G.install(reason)
     end
     G.wrapAutoDrive()
     G.wrapSummon()
+    G.hookRV()
     if reason ~= "recheck" then MVM.log("action guards installed (" .. tostring(reason) .. ")") end
 end
 
@@ -307,6 +309,20 @@ function G.wrapSummon()
     if R.wrapped["startSummon"] then O.audit("WARN", "ADAPTER_REWRAPPED", { reason = "MinidoracatAutoDriveAPI.startSummon" }) end
     R.wrapped["startSummon"] = true
     api.startSummon = w
+end
+
+-- Project RV Interior（Workshop 3543229299）單人模式進車內房間不經伺服器指令（client/RVClientSP.lua:118-141）：掛它的
+-- preEnter（shared/RVHooks.lua:14-29），規則同多人的 CG.RULES.RVServer.enterRV（要 CARGO），回 false＝取消。
+-- 回呼出錯時它照常讓人進去（RVHooks.lua:47-49）：不會把單人玩家鎖在自己車外
+function G.hookRV()
+    if isServer() or R.wrapped["RVHooks.preEnter"] or type(RVHooks) ~= "table" or type(RVHooks.register) ~= "function" then return end
+    R.wrapped["RVHooks.preEnter"] = true
+    RVHooks.register("preEnter", function(ctx)
+        local ok, reason, rec = O.canUse(ctx.player, ctx.vehicle, "CARGO", { op = "RVHooks.preEnter", mod = "PROJECTRVInterior42" })
+        if rec == nil or ok then return end
+        enforce(ctx.player, "RVHooks.preEnter", reason, rec.oid)
+        return false
+    end)
 end
 
 -- dedicated：所有 MOD 的 server Lua 載完後才有 OnServerStarted；SP：進遊戲才載入 server Lua

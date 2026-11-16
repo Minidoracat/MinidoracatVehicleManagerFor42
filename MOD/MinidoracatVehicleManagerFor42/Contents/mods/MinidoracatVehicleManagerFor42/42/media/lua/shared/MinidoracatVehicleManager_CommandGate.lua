@@ -227,6 +227,15 @@ local RULES = {
     },
     -- 整車拆解子 MOD 42/media/lua/server/VRO_SalvageCommands.lua:205-210：移除整台車（ISVehicleSalvage.lua:163 最後送），同 vehicle.remove
     vro_salvage = { removeVehicle = one("MANAGE") },
+    -- Project RV Interior（Workshop 3543229299）42/media/lua/server/RVServerMP_V3.lua:379-392：進車內房間，要 CARGO
+    -- （房間裡的容器比照後車廂；坐在車上的人也一樣）。目標是送指令的人所在或身旁的車（同處理器的找法，:20-33），
+    -- 指令指定的車另列一個目標；同一台只列一次（越權稽核不重複寫）
+    RVServer = {
+        enterRV = function(p, a)
+            local v, byId = p:getVehicle() or p:getUseableVehicle(), veh(a.vehicleId)
+            return { { vehicle = v, action = "CARGO" }, byId ~= v and { vehicle = byId, action = "CARGO" } or nil }
+        end,
+    },
 }
 CG.RULES = RULES
 

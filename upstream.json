@@ -131,6 +131,24 @@
         "mods/damnlib/42.20/media/lua/client/DAMN_Armor_Client.lua",
         "mods/damnlib/42.20/media/lua/shared/Kludges/VanillaDoorAnimationSync.lua"
       ]
+    },
+    {
+      "wid": "3543229299",
+      "mod_id": "PROJECTRVInterior42",
+      "name": "Project RV Interior",
+      "acked_time_updated": 1793005293,
+      "affects": [
+        "CG.RULES.RVServer.enterRV（進車內房間，CARGO）",
+        "ActionGuards G.hookRV（單人模式的 RVHooks preEnter，CARGO）"
+      ],
+      "recheck": "核對 server/RVServerMP_V3.lua 的 RVServer.enterRV：指令名、找車的方式（送指令的人所在或身旁的車、vehicleId 欄位）、收到清空的參數是否仍安靜結束，以及 CG.RULES 註解行號；有沒有新增其他進車內房間的指令或入口 → CG.RULES 加一列（附出處檔:行號）＋ harness 情境 F1 加正反例；exitRV／UpdateVehPos 有沒有開始帶車輛參數。單人模式（client/RVClientSP.lua）進房間前是否仍觸發 RVHooks 的 preEnter、回 false 是否仍取消，RVHooks.register 的簽名（harness 情境 RV）。mod.info 的 versionMin 變了、或新增高於 42/ 的版本目錄＝載入的檔案搬家，watch_files 與出處跟著改。",
+      "watch_files": [
+        "mods/modPROJECTRVInterior/42/mod.info",
+        "mods/modPROJECTRVInterior/42/media/lua/server/RVServerMP_V3.lua",
+        "mods/modPROJECTRVInterior/42/media/lua/client/RVClientMP_V3.lua",
+        "mods/modPROJECTRVInterior/42/media/lua/client/RVClientSP.lua",
+        "mods/modPROJECTRVInterior/42/media/lua/shared/RVHooks.lua"
+      ]
     }
   ]
 }

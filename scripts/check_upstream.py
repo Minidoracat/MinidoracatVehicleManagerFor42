@@ -133,7 +133,8 @@ def ack(u, src_dir, now):
         return
     files = hash_tree(cur_root)
     STATE.mkdir(exist_ok=True)
-    (STATE / f"{wid}.files.json").write_text(json.dumps(files, indent=1) + "\n", encoding="utf-8")
+    # newline="\n"：.gitattributes 規定 *.json 是 LF，Windows 預設會寫成 CRLF
+    (STATE / f"{wid}.files.json").write_text(json.dumps(files, indent=1) + "\n", encoding="utf-8", newline="\n")
     snap_root = SNAPSHOTS / wid
     if snap_root.exists():
         shutil.rmtree(snap_root)
@@ -166,7 +167,7 @@ def main():
                 print(f"  {u['wid']}: Steam 回 result={d.get('result') if d else None}，不 ack")
                 continue
             ack(u, src_dir, int(d["time_updated"]))
-        UPSTREAM.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        UPSTREAM.write_text(json.dumps(data, ensure_ascii=False, indent=2) + "\n", encoding="utf-8", newline="\n")
         return 0
 
     changed = []

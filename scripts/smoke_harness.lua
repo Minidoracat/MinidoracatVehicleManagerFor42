@@ -197,6 +197,7 @@ local function player(name, x, y, opts)
     function p:getZ() return self.z end
     function p:getPlayerNum() return self.num end
     function p:getVehicle() return self.vehicle end
+    function p:getUseableVehicle() return self.useable end -- 身旁可用的車（IsoPlayer.java:4216-4249）
     function p:getPrimaryHandItem() return self.hand end
     function p:sendObjectChange(kind) self.objectChanges = (self.objectChanges or 0) + 1; self.lastChange = kind end
     function p:getInventory() return { haveThisKeyId = function() return self.hasKey == true end } end
@@ -4311,7 +4312,7 @@ local function strictFields(m, c)
 end
 local last = nil
 local MODS = { vehicle = true, commonlib = true, atatuning2 = true, msw = true, W900 = true, rLib = true, that_damn_lib = true,
-    VRO_vehicle = true, EER_vehicle = true, EHR_vehicle = true, ELR_vehicle = true, vro_salvage = true }
+    VRO_vehicle = true, EER_vehicle = true, EHR_vehicle = true, ELR_vehicle = true, vro_salvage = true, RVServer = true }
 local function third(m, c, _, args)
     if not MODS[m] then return end -- 不看 CG.RULES：拿掉規則的突變也要測得出來
     last = { hit = nil, err = false }
@@ -4406,6 +4407,7 @@ local CASES = {
     { "ELR_vehicle", "setLightbarSirenMode", args1({ mode = 0 }), { "REPAIR" } },
     { "ELR_vehicle", "setLightbarSirenMode", args1({ mode = 2 }), { "DRIVE" } },
     { "vro_salvage", "removeVehicle", args1({}), { "MANAGE" } },
+    { "RVServer", "enterRV", function(V) return { vehicleId = V.id, vx = V.x, vy = V.y, vz = 0, vscript = "base.carnormal" } end, { "CARGO" } },
 }
 local covered = { ["that_damn_lib.setPartModData"] = true } -- 一律拒絕，F2 另測
 for _, k in ipairs(CASES) do covered[k[1] .. "." .. k[2]] = true end
@@ -4449,6 +4451,54 @@ grant(MVM.ACTIONS.TOW)
 local towImpulse = send(MB, "W900", "moveVehicleImpulse", { vehicle = pv.id }).hit ~= nil
 rp.grants = {}
 check(towImpulse, "W900.moveVehicleImpulse：只有 TOW 的成員也放行（DRIVE 或 TOW 任一）")
+
+-- Project RV Interior：目標是送指令的人所在或身旁的車，加上指令指定的車（上面的通用列只測指定的車）
+local RVL = "CMD:RVServer.enterRV"
+local function rv(p, beside, id) -- 回處理器會不會動作（args 沒被清空）
+    nowMs = nowMs + 2100 -- 避開提示節流（CG.NOTIFY_MS）
+    p.useable = beside
+    local a = { vehicleId = id, vx = 1, vy = 1, vz = 0, vscript = "base.carnormal" }
+    fire("OnClientCommand", "RVServer", "enterRV", p, a)
+    p.useable = nil
+    return a.vx ~= nil
+end
+local function enfs(p)
+    local n, last = 0, nil
+    for _, m in ipairs(outbox[p.name]) do if m.command == "enforcement" then n, last = n + 1, m.payload end end
+    return n, last
+end
+for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+local rvE0 = enfs(ST)
+check(not rv(ST, pv, ut.id) and denied(RVL, "NOT_AUTHORIZED"), "RV Interior：陌生人站在受保護車旁、指定別台車：擋、DENY")
+local rvE1, rvEnf = enfs(ST)
+check(rvE1 == rvE0 + 1 and rvEnf.action == RVL and rvEnf.reason == "NOT_AUTHORIZED", "被擋的人收到一則 enforcement（" .. RVL .. "）")
+check(not rv(ST, pv, nil), "陌生人站在受保護車旁、不指定車：擋")
+check(not rv(ST, uv, pv.id), "陌生人站在沒綁定的車旁、指定受保護車：擋")
+MB.vehicle = pv
+grant(MVM.ACTIONS.PASSENGER + MVM.ACTIONS.DRIVE)
+check(not rv(MB, nil, nil), "成員坐在受保護車上、只有搭乘與駕駛：擋")
+grant(MVM.ACTIONS.CARGO)
+check(rv(MB, nil, nil), "只有 CARGO 的成員坐在車上：放行")
+MB.vehicle = nil
+check(rv(MB, pv, nil), "只有 CARGO 的成員站在車旁：放行")
+rp.grants = {}
+check(rv(OW, pv, pv.id), "車主站在自己車旁：放行")
+for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+check(not rv(OW, pv, pv.id + 0.5) and denied(RVL, "BAD_ID"), "指定的 id 不是整數：BAD_ID")
+rp.lock = "RENT"
+check(not rv(OW, pv, nil) and denied(RVL, "RENT_LOCKED"), "租用鎖定的車連車主也擋")
+rp.lock = nil
+for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+local rvUp = { x = 1 }
+fire("OnClientCommand", "RVServer", "exitRV", ST, {})
+fire("OnClientCommand", "RVServer", "UpdateVehPos", ST, rvUp)
+check(rv(ST, uv, ut.id) and rv(ST, nil, nil) and rvUp.x == 1 and not denied("CMD:RVServer"),
+    "身旁與指定的車都沒綁定、身旁沒車也沒指定、exitRV／UpdateVehPos：照常、無 DENY")
+local rvCanUse, rvJudged = O.canUse, 0
+O.canUse = function(...) rvJudged = rvJudged + 1; return rvCanUse(...) end
+rv(OW, pv, pv.id)
+O.canUse = rvCanUse
+check(rvJudged == 1, "身旁的車與指定的車是同一台：只判一次")
 
 out("情境 F2：距離、解析不到、壞 id、出錯、見證鍵、通知、未載入")
 for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
@@ -7038,6 +7088,43 @@ r2.grants = {}
 dog()
 check(AD.sessions[car2] == nil and G.R.summons[DR] == nil, "新的那台失權：照樣停掉")
 MinidoracatAutoDriveAPI = nil
+end)();
+(function()
+out("情境 RV：Project RV Interior 單人模式進車內房間的掛鉤（多人不掛、只掛一次、沒有 CARGO 就取消）")
+boot()
+local G, AC = MVM.Guards, MVM.ACTIONS
+local OW, P1 = player("rvow", 1, 1), player("rvsp1", 1, 1)
+P1.num = 1
+local car, loose = GH.car(95), GH.car(96)
+local r = rec(claim(OW, car).oid)
+local hooks, got = {}, {}
+local keepHooks, keepReceive = RVHooks, MVM.clientReceive
+G.R.wrapped["RVHooks.preEnter"] = nil
+RVHooks = nil
+check(pcall(G.install, "recheck"), "沒裝 RV Interior：install 不出錯")
+RVHooks = { register = function(flag, fn) hooks[#hooks + 1] = { flag = flag, fn = fn }; return true end }
+G.install("recheck")
+check(#hooks == 0, "多人伺服器不掛（由指令防火牆判）")
+serverMode = false
+MVM.clientReceive = function(command, payload) got[#got + 1] = { command = command, payload = payload } end
+G.install("recheck")
+G.install("recheck")
+check(#hooks == 1 and hooks[1].flag == "preEnter", "單人：只掛一個 preEnter")
+local function enter(p, v) return hooks[1].fn({ player = p, vehicle = v, side = "SP" }) end
+check(enter(P1, car) == false, "第 2 位玩家沒有分享：取消進入")
+local e = got[#got]
+check(e ~= nil and e.command == "enforcement" and e.payload.to == "local:1" and e.payload.action == "RVHooks.preEnter"
+    and e.payload.reason == "NOT_AUTHORIZED" and e.payload.oid == r.oid, "取消時送 enforcement（NOT_AUTHORIZED）")
+r.grants = { { user = "local:1", bits = AC.PASSENGER + AC.DRIVE } }
+check(enter(P1, car) == false, "第 2 位只有搭乘與駕駛：取消")
+r.grants = { { user = "local:1", bits = AC.CARGO } }
+local n = #got
+check(enter(P1, car) ~= false and #got == n, "第 2 位有 CARGO：不取消、不提示")
+r.grants = {}
+check(enter(P1, loose) ~= false and #got == n, "沒綁定的車：不取消")
+MVM.clientReceive, RVHooks = keepReceive, keepHooks
+serverMode = true
+G.R.wrapped["RVHooks.preEnter"] = nil
 end)();
 out("")
 if failures > 0 then
