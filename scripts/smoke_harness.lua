@@ -7100,12 +7100,16 @@ local r = rec(claim(OW, car).oid)
 local hooks, got = {}, {}
 local keepHooks, keepReceive = RVHooks, MVM.clientReceive
 G.R.wrapped["RVHooks.preEnter"] = nil
-RVHooks = nil
-check(pcall(G.install, "recheck"), "沒裝 RV Interior：install 不出錯")
-RVHooks = { register = function(flag, fn) hooks[#hooks + 1] = { flag = flag, fn = fn }; return true end }
+local fake = { register = function(flag, fn) hooks[#hooks + 1] = { flag = flag, fn = fn }; return true end }
+RVHooks = fake
 G.install("recheck")
 check(#hooks == 0, "多人伺服器不掛（由指令防火牆判）")
 serverMode = false
+RVHooks = nil
+check(pcall(G.install, "recheck") and G.R.wrapped["RVHooks.preEnter"] == nil, "單人沒裝 RV Interior：install 不出錯、不記成已掛")
+RVHooks = {}
+check(pcall(G.install, "recheck") and G.R.wrapped["RVHooks.preEnter"] == nil, "單人、RVHooks 沒有 register：install 不出錯、不記成已掛")
+RVHooks = fake
 MVM.clientReceive = function(command, payload) got[#got + 1] = { command = command, payload = payload } end
 G.install("recheck")
 G.install("recheck")
