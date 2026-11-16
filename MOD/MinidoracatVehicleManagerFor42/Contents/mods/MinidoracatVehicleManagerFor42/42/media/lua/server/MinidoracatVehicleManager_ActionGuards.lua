@@ -344,8 +344,9 @@ Events.EveryOneMinute.Add(function() G.install("recheck") end)
 
 -- ------------------------------------------------------------------ watchdog ---
 -- 每位在線玩家各自到期（不用全域 tick 取模，Phase 0 gate 11），每 tick 最多查 WATCHDOG_BATCH 人。
--- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上的人解
--- （舊做法每 0.1 秒對全部在線玩家各解一次）。沒有身分的玩家照舊不查。召喚者另外每秒重驗（summonCheck）
+-- 到期表以 IsoPlayer 物件為鍵：每次只走訪引擎的在線清單，principal 只替到期且在車上、或站在記了房間範圍裡的人解
+-- （舊做法每 0.1 秒對全部在線玩家各解一次）。佔座檢查不查沒有身分的玩家；室內巡查（roomCheck）照查，只跳過分割畫面
+-- 第 2～4 位。召喚者另外每秒重驗（summonCheck）
 
 -- 召喚途中召喚者沒有 DRIVE 了（收回分享、租用鎖定、轉讓、陣營暫停、途中被別人綁定）：停掉召喚，同上車要 DRIVE。
 -- 每秒走一次放行過的召喚者（不經 S.players：SP 那份只有第 0 位，分割畫面其他位置也召喚得了）
@@ -368,10 +369,12 @@ end
 
 -- 室內巡查（多人伺服器、裝了 Project RV Interior 才有）：人站在某筆綁定紀錄記的房間範圍裡（O.roomClaims），對記了這間房的
 -- 紀錄都沒有 CARGO 就請出去——收回分享、轉讓、租用鎖定之後還在房間裡的人。請出＝替他送上游自己的離開指令
--- （server/RVServerMP_V3.lua:393-401：沒有進入紀錄時它先補一筆再帶回車旁；伺服器上四參數的 sendClientCommand 直接觸發
--- OnClientCommand），實際移動由他的遊戲執行。固定請出，不看沙盒 WatchdogAction（那個選項只管坐在車上的人）；沒有身分的人照查
+-- （server/RVServerMP_V3.lua:393-401；伺服器上四參數的 sendClientCommand 直接觸發 OnClientCommand），實際移動由他的遊戲執行：
+-- 回到車的位置，從座位進去的人回原座位。沒有進入紀錄的人，上游要在某間已分配房間的範圍內才補得到紀錄（:345-372），
+-- 補不到就請不動。固定請出，不看沙盒 WatchdogAction（那個選項只管坐在車上的人）；沒有身分的人照查。
+-- 分割畫面第 2～4 位不查：上游的離開只會移動同一連線的第 1 位（client/RVClientMP_V3.lua:205-211）
 local function roomCheck(player, t)
-    if not R.wrapped["RVHooks.postEnter"] or player:isDead() or MVM.recent(t, R.rvAt[player], RV_GRACE_MS) then return end
+    if not R.wrapped["RVHooks.postEnter"] or player:getPlayerNum() ~= 0 or player:isDead() or MVM.recent(t, R.rvAt[player], RV_GRACE_MS) then return end
     local recs = O.roomClaims(player:getX(), player:getY())
     if recs == nil then return end
     local reason

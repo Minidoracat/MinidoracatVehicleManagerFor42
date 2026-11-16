@@ -7138,7 +7138,7 @@ out("情境 RVP：Project RV Interior 室內巡查（多人伺服器記下綁定
 boot()
 local G, AC = MVM.Guards, MVM.ACTIONS
 local OW, MB, ST = player("rpow", 1, 1), player("rpmb", 1, 1), player("rpst", 1, 1)
-local ADM, P2 = player("rpadm", 1, 1, { admin = true }), player("rpp2", 1, 1)
+local ADM, P2, NO = player("rpadm", 1, 1, { admin = true }), player("rpp2", 1, 1), player("", 1, 1)
 P2.num = 1
 local car, loose, car2 = GH.car(97), GH.car(98), GH.car(99)
 local r = rec(claim(OW, car).oid)
@@ -7165,6 +7165,10 @@ check(claims(24420, 12060) == 0, "沒綁定的車：不記")
 enter(car, { x = 24420.5, y = 12060, z = 0 })
 enter(car, nil)
 check(r.roomX == 24360 and r.revision == rev + 1, "房間座標不是整數、沒給房間：不記")
+O.R.status = "RECOVERY_REQUIRED"
+enter(car, { x = 24480, y = 12060, z = 0 })
+O.R.status = "READY"
+check(r.roomX == 24360 and r.revision == rev + 1, "帳本不可寫（RECOVERY_REQUIRED）：不記")
 
 -- 巡查
 local function dog() nowMs = nowMs + 1000; G.watchdog() end
@@ -7214,7 +7218,8 @@ check(evicted(OW) and lastOf(OW, "enforcement").reason == "RENT_LOCKED", "租用
 r.lock = nil
 cmd(ADM, "setAdminOverride", { enabled = false })
 check(evicted(ADM), "沒開越權的管理員：請出")
-check(evicted(P2) and denied(P2, r.oid) == 1, "沒有身分的第 2 位玩家：請出")
+check(not evicted(P2) and denied(P2, r.oid) == 0 and GH.count(P2, "enforcement") == 0, "分割畫面第 2 位：不查（上游的離開只會移動同一連線的第 1 位）")
+check(evicted(NO) and denied(NO, r.oid) == 1, "沒有身分的第 1 位玩家：請出")
 r.removedAtMs = nowMs
 check(evicted(ST), "車已移出世界（例如在拖車上）：照樣請出")
 r.removedAtMs = nil
@@ -7261,6 +7266,27 @@ enter(car2, ROOM)
 check(not GH.logged(l0, "ROOM_SHARED"), "同一筆再進：不重寫 ROOM_SHARED")
 check(not evicted(MB) and not evicted(ST), "對其中一筆有權限的人（兩位車主）：都不請出")
 check(evicted(OW), "對兩筆都沒有權限的人：請出")
+
+-- 沒綁定的車進了有紀錄記著的房間：那些紀錄記的是舊的對應，放掉並記稽核，之後在那間房的人不請出；綁定車再有人進去就重記
+l0 = #logLines
+local rv1, rv2 = fresh.revision, r2.revision
+enter(loose, ROOM)
+local released = 0
+for i = l0 + 1, #logLines do if logLines[i]:find("ROOM_RELEASED", 1, true) and (logLines[i]:find(fresh.oid, 1, true) or logLines[i]:find(r2.oid, 1, true)) then released = released + 1 end end
+check(claims(24361, 12061) == 0 and fresh.roomX == nil and r2.roomY == nil and fresh.revision == rv1 + 1 and r2.revision == rv2 + 1 and released == 2,
+    "沒綁定的車進了有紀錄記著的房間：兩筆都放掉（revision +1）、各寫一筆 ROOM_RELEASED")
+check(not evicted(OW), "放掉之後在那間房的人：不請出")
+enter(car, ROOM)
+enter(car2, ROOM)
+check(claims(24361, 12061) == 2 and evicted(OW) and not evicted(MB), "綁定車再有人進房間：重記，照樣請出沒有權限的人")
+
+-- 伺服器重啟（存檔 → 重新載入帳本）：房間寫在紀錄上，載回後照樣查得到、照樣請出
+GOS.save()
+local disk, gmdSaved = deepcopy(O.R.meta), deepcopy(gmd)
+boot(disk, true, true); gmd = gmdSaved
+OW, MB = player("rpow", 1, 1), player("rpmb", 1, 1)
+check(O.ready() == true and O.R.loaded == "disk" and claims(24361, 12061) == 2, "伺服器重啟：記的房間從存檔載回")
+check(evicted(OW) and not evicted(MB), "伺服器重啟後：沒有權限的人照樣請出，有權限的人留下")
 
 -- 單人：不掛 postEnter、不巡查
 G.R.wrapped["RVHooks.postEnter"] = nil

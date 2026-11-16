@@ -275,7 +275,7 @@ MVCK public permissions become "Share with everyone":
 [*] [b]Empty parked cars[/b]: zombies don't attack them, and other players driving into one don't damage it; while someone is inside, zombies and crashes damage the car as in vanilla.
 [*] [b]Cheating clients in a seat[/b]: someone may briefly get into a seat; the server notices within about a second and acts on it. Admins choose "Log and warn" or "Remove from vehicle" in the sandbox option "Unauthorized occupant response"; either way it's written to the audit log and that player is warned.
 [*] [b]Containers[/b]: whether they're listed is decided on the player's side, so a modified client may still take items from them, the same as vanilla locked cars; opening and closing the trunk door is still blocked by the server.
-[*] [b]Project RV Interior rooms[/b]: only the "enter" action from the vehicle is blocked; it doesn't guarantee that nobody else can reach the room. Someone already inside isn't moved out when their permission is taken away.
+[*] [b]Project RV Interior rooms[/b]: the "enter" action from the vehicle is blocked, and on multiplayer servers anyone inside the room without the Trunk permission is sent back to the vehicle. This is not a server-side guarantee: a player with a modified client may still get into the room or stay in it.
 [*] [b]Attack notices[/b]: reported to the server by the attacker's own game, so a modified client can skip them and no notice appears; damage guard itself runs on the server and isn't affected.
 [*] [b]Server-side[/b]: every decision is made on the server; clients only receive data they're allowed to see.
 [/list]
@@ -308,6 +308,8 @@ MVCK public permissions become "Share with everyone":
 [h3]The server runs Project RV Interior. Can other players enter the room inside my car?[/h3]
 [list]
 [*] Only if you share the Trunk permission. Players with only Ride or Drive can't enter, even while sitting in the car.
+[*] If you take the share away while they're still inside: on multiplayer servers they're asked to leave within about a second and return to the vehicle (or to their seat, if they entered from one). The same happens when the vehicle is transferred to someone else or locked by a rental slot.
+[*] Right after updating to this version, or after unclaiming and claiming again: the server only knows a room once someone has entered it from that vehicle.
 [*] Unclaimed vehicles follow Project RV Interior's own rules: anyone can enter.
 [/list]
 [h3]Can my friends see where my car is?[/h3]
