@@ -46,6 +46,7 @@ They follow permissions; without permission they don't show up in the inventory.
 [tr][td]Trunk, truck bed, trailers, modded cargo boxes[/td][td]Trunk[/td][/tr]
 [tr][td]Seats, glovebox[/td][td]Ride[/td][/tr]
 [/table]
+On servers that also run Project RV Interior, entering the interior room of a claimed vehicle needs the Trunk permission too.
 === 🧰 Damage guard
 Claiming stops other players from driving, opening or stripping your car; damage guard is what keeps a parked car safe from axes and guns.
 [h3]When it works[/h3]
@@ -274,6 +275,7 @@ MVCK public permissions become "Share with everyone":
 [*] [b]Empty parked cars[/b]: zombies don't attack them, and other players driving into one don't damage it; while someone is inside, zombies and crashes damage the car as in vanilla.
 [*] [b]Cheating clients in a seat[/b]: someone may briefly get into a seat; the server notices within about a second and acts on it. Admins choose "Log and warn" or "Remove from vehicle" in the sandbox option "Unauthorized occupant response"; either way it's written to the audit log and that player is warned.
 [*] [b]Containers[/b]: whether they're listed is decided on the player's side, so a modified client may still take items from them, the same as vanilla locked cars; opening and closing the trunk door is still blocked by the server.
+[*] [b]Project RV Interior rooms[/b]: only the "enter" action from the vehicle is blocked; it doesn't guarantee that nobody else can reach the room. Someone already inside isn't moved out when their permission is taken away.
 [*] [b]Attack notices[/b]: reported to the server by the attacker's own game, so a modified client can skip them and no notice appears; damage guard itself runs on the server and isn't affected.
 [*] [b]Server-side[/b]: every decision is made on the server; clients only receive data they're allowed to see.
 [/list]
@@ -302,6 +304,11 @@ MVCK public permissions become "Share with everyone":
 [*] No. Its "Salvage Vehicle" option can't remove a car someone else has claimed.
 [*] Its repairs (including engine rebuild, heater and lightbar) need the Repair permission you share; taking parts off already needs Salvage.
 [*] To salvage your own claimed car, unclaim it first.
+[/list]
+[h3]The server runs Project RV Interior. Can other players enter the room inside my car?[/h3]
+[list]
+[*] Only if you share the Trunk permission. Players with only Ride or Drive can't enter, even while sitting in the car.
+[*] Unclaimed vehicles follow Project RV Interior's own rules: anyone can enter.
 [/list]
 [h3]Can my friends see where my car is?[/h3]
 [list]
