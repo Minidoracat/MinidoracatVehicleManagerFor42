@@ -6466,18 +6466,23 @@ check(#items == 4 and items[1].e.id == 4 and items[4].e.id == 1 and items[2].unr
 check(#F.noticeItems(b, "old car", 0) == 1, "紀錄分頁：搜尋比對通知文字（不分大小寫）")
 MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n2", seq = 0, rows = {}, notices = NS, noticeRead = 0 })
 check(#toasts == 3, "之後的快照不再提示離線通知")
--- 保留期登入提醒：登入後第一份快照，自己有保留中的車就提醒一次（台數＋最早的截止），接在離線通知提示之後
+-- 租約鎖定的登入提醒：登入後第一份快照，自己有寬限中、保留中的車就各提醒一次（台數＋最早的截止），接在離線通知提示之後
 local K1, K2 = 1790439302927, 1790439302927 + 86400000
+local G1 = K1 - 86400000
 local keptRows = { { oid = "k1", role = "OWNER", state = "ACTIVE", lock = "RENT", lockKeepUntilMs = K2 },
     { oid = "k2", role = "OWNER", state = "ACTIVE", lock = "RENT", lockKeepUntilMs = K1 },
-    { oid = "g1", role = "OWNER", state = "ACTIVE", lock = "RENT", lockUntilMs = K1 - 86400000 },
-    { oid = "m1", role = "MEMBER", state = "ACTIVE", owner = "x", myBits = 1, lock = "RENT", lockKeepUntilMs = K1 - 86400000 } }
+    { oid = "m1", role = "MEMBER", state = "ACTIVE", owner = "x", myBits = 1, lock = "RENT", lockKeepUntilMs = G1 } }
+local graceRows = { { oid = "g1", role = "OWNER", state = "ACTIVE", lock = "RENT", lockUntilMs = K2 },
+    { oid = "g2", role = "OWNER", state = "ACTIVE", lock = "RENT", lockUntilMs = G1 },
+    { oid = "m2", role = "MEMBER", state = "ACTIVE", owner = "x", myBits = 1, lock = "RENT", lockUntilMs = G1 - 86400000 } }
 local keptToast = "IGUI_MVM_Rent_Kept(2," .. MVM.dateTimeText(K1) .. ")"
+local graceToast = "IGUI_MVM_Rent_Locked(2," .. MVM.dateTimeText(G1) .. ")"
 MVM.Client.noticeHinted = nil
 local t0 = #toasts
 MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n3", seq = 0, rows = keptRows, notices = {}, noticeRead = 0 })
-check(#toasts == t0 + 1 and toasts[#toasts] == keptToast and MVM.dateTimeText(K1) ~= MVM.dateTimeText(K2),
-    "登入快照有保留中的車：提醒一則，只數自己是車主的保留車（寬限鎖、被分享的不算），寫最早的截止")
+check(#toasts == t0 + 1 and toasts[#toasts] == keptToast and MVM.dateTimeText(K1) ~= MVM.dateTimeText(K2)
+    and MVM.dateTimeText(G1) ~= MVM.dateTimeText(K1),
+    "登入快照有保留中的車：提醒一則，只數自己是車主的保留車（被分享的不算），寫最早的截止")
 MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n4", seq = 0, rows = keptRows, notices = {}, noticeRead = 0 })
 check(#toasts == t0 + 1, "之後的快照不再提醒保留期")
 MVM.Client.noticeHinted = nil
@@ -6485,13 +6490,25 @@ MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n5", seq = 0, rows 
 check(#toasts == t0 + 3 and toasts[#toasts - 1] == "IGUI_MVM_Notice_Offline(1)" and toasts[#toasts] == keptToast,
     "同時有離線通知：兩則，離線通知提示在前、保留期提醒在後")
 MVM.Client.noticeHinted = nil
-MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n6", seq = 0, rows = { keptRows[3], keptRows[4] }, notices = {}, noticeRead = 0 })
-check(#toasts == t0 + 3, "沒有自己的保留車（只有寬限鎖與被分享的車）：不提醒")
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n6", seq = 0,
+    rows = { keptRows[3], graceRows[3], { oid = "u1", role = "OWNER", state = "ACTIVE", lock = "RENT" } }, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 3, "沒有自己的寬限或保留車（只有被分享的車、還沒有截止時間的鎖）：不提醒")
 MVM.Client.noticeHinted = nil
 MVM.clientReceive("fleetSnapshot", { to = "other", streamId = "n7", seq = 0, rows = keptRows, notices = NS, noticeRead = 0 })
 check(#toasts == t0 + 3 and MVM.Client.noticeHinted == nil, "不是寄給本機玩家的快照：不提醒，也不用掉這次登入的提醒")
 MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n8", seq = 0, rows = keptRows, notices = {}, noticeRead = 0 })
 check(#toasts == t0 + 4 and toasts[#toasts] == keptToast, "之後自己的第一份快照照樣提醒")
+MVM.Client.noticeHinted = nil
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n9", seq = 0, rows = graceRows, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 5 and toasts[#toasts] == graceToast,
+    "登入快照有寬限中的車：提醒一則（鎖定當下那句），只數自己是車主的，寫最早的寬限截止")
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n10", seq = 0, rows = graceRows, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 5, "之後的快照不再提醒寬限期")
+MVM.Client.noticeHinted = nil
+MVM.clientReceive("fleetSnapshot", { to = "ncl", streamId = "n11", seq = 0,
+    rows = { keptRows[1], graceRows[1], keptRows[2], graceRows[2] }, notices = {}, noticeRead = 0 })
+check(#toasts == t0 + 7 and toasts[#toasts - 1] == graceToast and toasts[#toasts] == keptToast,
+    "寬限與保留的車都有：各一則，寬限在前、保留在後，各算各的台數與截止")
 isClient, HaloTextHelper.addBadText, HaloTextHelper.addGoodText = savedIsClient, savedBad, savedGood
 SB.ParkedGuard = MVM.GUARD.ALL
 end)();

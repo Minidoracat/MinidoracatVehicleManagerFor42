@@ -25,7 +25,7 @@ do
         and UI.CAPABILITIES and UI.CAPABILITIES.whatsNew and UI.WhatsNew then
         UI.WhatsNew.register({
             modId = "MinidoracatVehicleManagerFor42",
-            since = "0.10.0",
+            since = "0.13.0",
             name = "IGUI_MVM_SourceName",
             text = "IGUI_MVM_WhatsNew",
         })
@@ -193,22 +193,26 @@ function MVM.clientReceive(command, payload)
             end
         end
         -- 通知紀錄（舊到新）與已讀到的時間；登入後第一份快照有離線時的通知就提示一次，
-        -- 自己有保留中的車（租用名額已結束，RentLock）再提醒最早的截止與怎麼恢復（從列算、不寫通知紀錄：保留期可以比紀錄留得久）
+        -- 自己有被租用名額鎖住的車（RentLock）再各提醒一則，寫台數、最早的截止與怎麼恢復：[1] 寬限中（續租就解鎖）、
+        -- [2] 保留中（租約已結束）。從列算、不寫通知紀錄：保留期可以比紀錄留得久
         b.notices = type(payload.notices) == "table" and payload.notices or {}
         b.noticeRead = MVM.isInt(payload.noticeRead) and payload.noticeRead or 0
         if not C.noticeHinted and principal(0) == payload.to then
             C.noticeHinted = true
             local n, p = MVM.noticeUnread(b), getSpecificPlayer(0)
             if n > 0 and p then MVM.notify(p, getText("IGUI_MVM_Notice_Offline", n), true) end
-            local kept, first = 0, nil
+            local count, first = { 0, 0 }, {}
             for _, row in pairs(b.rows) do
-                local at = row.role == "OWNER" and row.lockKeepUntilMs
+                local i = row.lockKeepUntilMs and 2 or 1
+                local at = row.role == "OWNER" and (row.lockKeepUntilMs or row.lockUntilMs)
                 if at then
-                    kept = kept + 1
-                    if first == nil or at < first then first = at end
+                    count[i] = count[i] + 1
+                    if first[i] == nil or at < first[i] then first[i] = at end
                 end
             end
-            if kept > 0 and p then MVM.notify(p, getText("IGUI_MVM_Rent_Kept", kept, MVM.dateTimeText(first)), true) end
+            for i, key in ipairs({ "IGUI_MVM_Rent_Locked", "IGUI_MVM_Rent_Kept" }) do
+                if count[i] > 0 and p then MVM.notify(p, getText(key, count[i], MVM.dateTimeText(first[i])), true) end
+            end
         end
     elseif command == "publicDelta" then
         if type(payload.oid) ~= "string" then return end
