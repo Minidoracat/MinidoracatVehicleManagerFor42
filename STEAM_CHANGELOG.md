@@ -1,5 +1,5 @@
-[h1]Minidoracat Vehicle Manager for B42 42.22.2-0.14.0[/h1]
-[i]2026-11-16[/i]
+[h1]Minidoracat Vehicle Manager for B42 42.22.2-0.15.0[/h1]
+[i]2026-11-22[/i]
 
 [b]English summary[/b]
 [list]
@@ -9,17 +9,14 @@
 [*] Single player: when an action is blocked, the actions queued after it no longer run, and blocked refueling or siphoning stops right away.
 [/list]
 
-[b]English summary[/b]
+[h3]🔄 變更[/h3]
 [list]
-[*] New: Project RV Interior support. On servers that run both mods, entering the interior room of a claimed vehicle now needs the Trunk permission from its owner.
-[*] Players with only Ride or Drive can't enter either, even while sitting in the vehicle; they see the "this vehicle is claimed" notice.
-[*] Owners, players with Trunk, and unclaimed vehicles work as before.
-[*] Someone already inside the room without Trunk (share taken away, vehicle transferred, or vehicle locked by a rental slot) is asked to leave by the server within about a second and returns to the vehicle (or to their seat, if they entered from one). After this update, the server starts doing this for a room once someone has entered it from that vehicle.
-[*] Players are only moved out when the server option AntiCheatSpeed is 3 (log only) or 4 (off). With kick (the default) or ban, the game's anti-cheat would punish the moved player, because Project RV Interior moves players instantly. Split-screen players are not moved out; sleeping players are moved out after they wake up.
-[*] This is not a server-side guarantee: a player with a modified client may still get into or stay in a room.
+[*] [b]鎖、解鎖一扇門改看那扇門的權限[/b]：之前別人綁定的車，只要有「搭乘」權限就能鎖、解鎖引擎蓋和後車廂；反過來，只有「安裝修理」權限、沒帶鑰匙的人解不開引擎蓋，用「車輛資訊」開引擎蓋時卡在解鎖那一步。現在鎖、解鎖和開關門一樣看門：座位的車門要「搭乘」，後車廂要「後車廂」，引擎蓋要「安裝修理」或「拆零件」。坐在車上整車上鎖照舊只要「搭乘」，單人用手把操作時也不會連帶鎖上或解開後車廂。車主自己與沒綁定的車照常。
+[*] [b]免鑰匙（虛擬鑰匙）照上面的權限[/b]：有「後車廂」權限的人不帶鑰匙也能解開後車廂；有「安裝修理」或「拆零件」權限的人能解開並打開引擎蓋。車輛右鍵的「解鎖（虛擬鑰匙）」只列出你解得開的門。單人遊戲沒帶鑰匙、站在車外的車主，之前用虛擬鑰匙解不開車門，現在解得開。
+[*] [b]調整頭燈角度要「安裝修理」權限[/b]：之前別人綁定的車誰都能調。
 [/list]
 
-[h3]✨ 新增[/h3]
+[h3]🔧 修正[/h3]
 [list]
-[*] [b]支援 Project RV Interior：別人綁定車輛的車內房間要「後車廂」權限[/b]：伺服器同時裝了 Project RV Interior 時，之前沒有權限的人也能從別人綁定的車進到車內房間。現在要車主分享「後車廂」權限才進得去；只有「搭乘」或「駕駛」權限的人也一樣（包括已經坐在車上的），被擋時會看到這台車已被綁定的提示。車主自己、有「後車廂」權限的人和沒綁定的車照常。已經在房間裡、沒有權限的人（分享被收回、車轉讓給別人、車被租用名額鎖定）也會被伺服器請出去，約一秒內回到車旁（從座位進去的人回到原座位）。請出的條件：更新到這版後，要有人從這台車進過一次房間，伺服器才認得這間房；伺服器的 AntiCheatSpeed 要設成 3（只記錄）或 4（關閉），設成踢出（預設值）或封鎖時不請出，因為 Project RV Interior 的進出是瞬間移動，被請出的人會被遊戲的反作弊踢掉；用分割畫面遊玩的玩家不請出，睡著的人等醒來才請。這不是伺服器保證：改過客戶端的人仍可能進到或留在房間。
+[*] [b]單人遊戲被擋下的動作，後面排的動作不再照做[/b]：之前被擋下開引擎蓋後，「車輛資訊」視窗照樣打開、又排一次開蓋，提示跳兩次。現在被擋下就停在那裡，提示一次。被擋下的加油、抽油也會立刻停下，不用等時間跑完。
 [/list]
