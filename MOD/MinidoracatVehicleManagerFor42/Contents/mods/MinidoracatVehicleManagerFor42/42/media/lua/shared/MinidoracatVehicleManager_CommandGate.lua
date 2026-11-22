@@ -166,6 +166,12 @@ local RULES = {
         detachTrailer = tows("vehicle"), detachTrailerSpontaneous = tows("vehicle"), -- :344-360
         setHSV = one("REPAIR"), setSkinIndex = one("REPAIR"), setBloodIntensity = one("REPAIR"), -- :270-277,371-389
         remove = one("MANAGE"), -- :303-310 移除整台車
+        configHeadlight = one("REPAIR"), -- :312-328 頭燈角度（同修理類動作）
+        -- :82-90 沒有車輛 id：處理器用送的人坐的車。同鎖後車廂門的動作（doorAction）；不在車上＝沒有目標
+        setTrunkLocked = function(p)
+            local v = p:getVehicle()
+            return v and { { vehicle = v, action = "CARGO" } } or nil
+        end,
     },
     -- tsarslib common/media/lua/server/CommonTemplates/CommonCommands.lua
     commonlib = {
@@ -339,6 +345,11 @@ function CG.onCommand(module, command, player, args)
     end
     if allow then return end
     CG.neutralize(module, args)
+    -- 沒有 id 可改成 -1：填回現在的鎖狀態，處理器照跑但不改變（清成 nil 會傳 nil 給 Java 的 boolean 參數）
+    if label == "CMD:vehicle.setTrunkLocked" then
+        local v = player:getVehicle()
+        args.locked = v ~= nil and v:isTrunkLocked()
+    end
     reason = reason or "NOT_AUTHORIZED"
     O.deny(O.principal(player) or ("?" .. tostring(player and player:getUsername())), label, oid, reason)
     if quiet then return end

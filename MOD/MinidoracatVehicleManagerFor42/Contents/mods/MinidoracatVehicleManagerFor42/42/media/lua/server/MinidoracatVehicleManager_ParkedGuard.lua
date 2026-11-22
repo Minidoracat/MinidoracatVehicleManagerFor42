@@ -224,7 +224,7 @@ local function occupied(v, rec)
         local chr = v:getCharacter(seat)
         if chr and instanceof(chr, "IsoPlayer") then
             if O.principal(chr) == rec.ownerUser then return true end
-            if O.allowsRecord(chr, rec, seat == 0 and "DRIVE" or "PASSENGER", { silent = true }) then return true end
+            if O.allowsRecord(chr, rec, seat == 0 and "DRIVE" or "PASSENGER", { query = true }) then return true end
         end
     end
     return false

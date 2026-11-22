@@ -97,18 +97,34 @@ local function enforce(player, action, reason, oid)
     end
 end
 
+-- 多選一（例：前蓋 REPAIR 或 SALVAGE）：先只問（query），挑不靠越權就放行的那一個（沒有才用越權的）正式判定，
+-- 拒絕與 ADMIN_BYPASS 只記實際採用的那一筆。全都不過時挑有紀錄的拒絕（陣營分享暫停優先，提示才說得出怎麼辦）
 local function canUseAny(actor, vehicle, actions, context)
-    local ok, reason, rec
-    for _, act in ipairs(actions) do
-        ok, reason, rec = O.canUse(actor, vehicle, act, context)
-        if ok then return true, reason, rec, act end
+    local pick = actions[1]
+    if #actions > 1 then
+        local probe = { query = true }
+        for k, v in pairs(context or {}) do if probe[k] == nil then probe[k] = v end end
+        local allowed, viaAdmin, denied = nil, nil, nil
+        for _, act in ipairs(actions) do
+            local ok, reason, rec = O.canUse(actor, vehicle, act, probe)
+            if ok and reason ~= "ADMIN" then allowed = act; break end
+            if ok then viaAdmin = viaAdmin or act
+            elseif rec ~= nil and (denied == nil or reason == "FACTION_PAUSED") then denied = act end
+        end
+        pick = allowed or viaAdmin or denied or pick
     end
-    return false, reason, rec, actions[1]
+    local ok, reason, rec = O.canUse(actor, vehicle, pick, context)
+    return ok, reason, rec, pick
 end
 
 -- 一台車的判定：受保護的車（有紀錄）要有權限；伺服器上每台受保護的車各要消費一筆 intent（消費記在 a[flag]）
 local function judge(spec, a, vehicle, part, actions, flag)
     local ok, reason, rec, act = canUseAny(a.character, vehicle, actions, { part = part, op = spec.class, silent = a[flag] == true })
+    if rec == nil and not ok then
+        -- 動作碼沒登記（第三方 adapter 的 action 函式回錯）時 canUse 不查紀錄：綁定的車從嚴拒絕，沒綁定的車照原版
+        local _, found = O.lookup(vehicle)
+        if found ~= nil then return false, reason, found, act end
+    end
     if rec == nil or not ok then return rec == nil, reason, rec, act end
     if isServer() and not a[flag] then
         if not takeIntent(O.principal(a.character), spec.class, vehicle, part) then
@@ -178,6 +194,19 @@ end
 -- 特別處理：虛擬鑰匙三個 adapter（受保護的車：已授權的人，或坐在車上開、解鎖自己座位門的人）
 local function virtualKey(a) return MVM.sandbox("VirtualKey", true) and a._mvmRec ~= nil end
 
+-- 單機手把的原版整車上鎖會另外動到的後車廂（ISLockDoors.lua:58-65；Java 找 TrunkDoor、沒有就 DoorRear）。
+-- 伺服器與鍵鼠不動後車廂；那個零件同時是座位門（例：有些車的後座門叫 DoorRear）時是原版座位門迴圈改的，不算
+local function joypadTrunk(a)
+    local v, chr = a.vehicle, a.character
+    if v == nil or a._mvmRec == nil or isServer() or JoypadState == nil or not JoypadState.players[chr:getPlayerNum() + 1] then return nil end
+    local trunk = v:getPartById("TrunkDoor") or v:getPartById("DoorRear")
+    if trunk == nil then return nil end
+    for seat = 0, v:getMaxPassengers() - 1 do
+        if v:getPassengerDoor(seat) == trunk then return nil end
+    end
+    return v
+end
+
 local SPECIAL = {
     ISStartVehicleEngine = { complete = function(a, orig)
         local v = a.character:getVehicle()
@@ -187,18 +216,36 @@ local SPECIAL = {
         end
         return orig(a)
     end },
-    ISUnlockVehicleDoor = { complete = function(a, orig)
-        local door = a.part and a.part:getDoor()
-        if virtualKey(a) and door then
-            door:setLocked(false) -- 權威解鎖，不經 canUnlockDoor 的鑰匙檢查
-            a.part:getVehicle():transmitPartDoor(a.part)
-            return true
-        end
-        return orig(a)
-    end },
+    ISUnlockVehicleDoor = {
+        -- 單機的解鎖在 start（ISUnlockVehicleDoor.lua:26-35，沒鑰匙就 forceStop、complete 不跑）；多人伺服器不呼叫 start。
+        -- 虛擬鑰匙先解開，原版的 toggleLockedDoor 看到沒鎖就照常往下走
+        start = function(a, orig)
+            local door = a.part and a.part:getDoor()
+            if virtualKey(a) and door then door:setLocked(false) end
+            return orig(a)
+        end,
+        complete = function(a, orig)
+            local door = a.part and a.part:getDoor()
+            if virtualKey(a) and door then
+                door:setLocked(false) -- 權威解鎖，不經 canUnlockDoor 的鑰匙檢查
+                a.part:getVehicle():transmitPartDoor(a.part)
+                return true
+            end
+            return orig(a)
+        end },
     ISOpenVehicleDoor = { complete = function(a, orig)
         if virtualKey(a) and a.part then a.part:getVehicle():setPreviouslyEntered(true) end -- 授權者開門不觸發警報
         return orig(a)
+    end },
+    -- 單機手把整車上鎖連後車廂一起改：後車廂要載貨權限，沒有就改回原狀
+    ISLockDoors = { complete = function(a, orig)
+        local v = joypadTrunk(a)
+        local before = v ~= nil and v:isTrunkLocked()
+        local r = orig(a)
+        if v ~= nil and v:isTrunkLocked() ~= before and not O.canUse(a.character, v, "CARGO", { query = true }) then
+            v:setTrunkLocked(before)
+        end
+        return r
     end },
 }
 
@@ -211,10 +258,24 @@ local function touchAll(spec, a)
     return list
 end
 
+-- 單機拒絕後自己停下這一串（多人由伺服器回拒絕、客戶端 forceStop，LuaTimedActionNew.java:99-100）。
+-- complete 在 perform 之後才呼叫、引擎不看回傳值（IsoGameCharacter.java:9185-9188），那時下一個動作已經開始；
+-- 佇列空時不清：clear 會對被拒的動作多呼叫一次 stop（IsoGameCharacter.java:5468-5477）
+local function haltLocal(a, stage)
+    if isServer() then return end
+    if stage ~= "complete" then
+        if a.action then a:forceStop() end -- 同原版解鎖失敗：stop 會清佇列
+        return
+    end
+    local q = ISTimedActionQueue and ISTimedActionQueue.queues and ISTimedActionQueue.queues[a.character]
+    if q and q.queue[1] ~= nil then ISTimedActionQueue.clear(a.character) end
+end
+
 local function makeWrapper(spec, stage, orig)
     local special = SPECIAL[spec.class] and SPECIAL[spec.class][stage]
     return function(a, ...)
         if not G.decide(spec, a) then
+            haltLocal(a, stage)
             if stage == "complete" then return false end
             return
         end
@@ -229,8 +290,9 @@ end
 
 local function wrapUpdate(spec, orig)
     return function(a, ...)
-        -- update 在 client 也會跑（本機預覽）；權威端每次都重驗，撤權後停止扣油／加油
+        -- update 在 client 也會跑（本機預覽）；權威端每次都重驗，撤權後停止扣油／加油（單機連動作一起停）
         if isClient() or G.decide(spec, a) then return orig(a, ...) end
+        haltLocal(a, "update")
     end
 end
 

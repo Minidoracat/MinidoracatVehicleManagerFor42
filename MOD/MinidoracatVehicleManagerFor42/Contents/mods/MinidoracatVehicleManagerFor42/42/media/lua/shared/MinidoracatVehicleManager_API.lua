@@ -144,6 +144,8 @@ API.apiVersion = 1
 
 -- canUse(actor, vehicle, actionCode, context?) -> allowed, reasonCode
 -- server：OwnershipSystem 載入時覆寫為權威實作。client：依投影快取回答，僅供 UX。
+-- context.query = true：只問不做（顯示、輪詢、先問再決定），不記拒絕、不寫越權稽核；真的要替玩家動車時不要帶。
+-- 陣營換領袖的暫停照樣會觸發（狀態收斂，不是紀錄）。context.silent = true 只省越權稽核
 function API.canUse(actor, vehicle, actionCode, context)
     if MVM.ACTIONS[actionCode] == nil then return false, "UNKNOWN_ACTION" end
     if MVM.clientCanUse then return MVM.clientCanUse(actor, vehicle, actionCode) end

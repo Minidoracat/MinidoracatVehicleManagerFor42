@@ -64,8 +64,10 @@ local BUILTIN = {
     { class = "ISStartVehicleEngine", action = "DRIVE", vehicleOf = seatVehicle, stages = { "complete" } },
     { class = "ISShutOffVehicleEngine", action = "DRIVE", vehicleOf = seatVehicle, stages = { "complete" } },
     { class = "ISLockDoors", action = "PASSENGER", vehicleOf = ownVehicle, stages = { "complete" }, push = { "alldoors" } },
-    { class = "ISLockVehicleDoor", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
-    { class = "ISUnlockVehicleDoor", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" }, free = ownSeatDoor },
+    -- 鎖／解鎖一扇門＝開那扇門的權限（doorAction）；整車上鎖 ISLockDoors 維持 PASSENGER
+    { class = "ISLockVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
+    -- 單機的解鎖在 start 就做（ISUnlockVehicleDoor.lua:26-35），多人伺服器只呼叫 complete
+    { class = "ISUnlockVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "start", "complete" }, push = { "door" }, free = ownSeatDoor },
     { class = "ISOpenVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" }, free = ownSeatDoor },
     { class = "ISCloseVehicleDoor", action = doorAction, vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "door" } },
     { class = "ISOpenCloseVehicleWindow", action = "PASSENGER", vehicleOf = partVehicle("part"), partOf = partOf("part"), stages = { "complete" }, push = { "window" } },

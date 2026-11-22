@@ -946,7 +946,7 @@ end
 -- --------------------------------------------------------------- canUse ---
 -- 權威授權。回 allowed, reason, record。順序：租用到期鎖定（MANAGE 除外）→ 車主 → 分享／陣營／公開（MANAGE 除外）
 -- → 管理員越權 → 拒絕。管理員身分本身不放行，要在車隊視窗開啟越權；有分享權限的管理員照一般成員記，不寫 ADMIN_BYPASS。
--- QUARANTINED 紀錄只有越權中的管理員能用。公開分享也要有身分（同分享：分割畫面與身分未確認的人不能用）
+-- 鎖定的車與 QUARANTINED 紀錄只有越權中的管理員能用（記成越權）。公開分享也要有身分（同分享：分割畫面與身分未確認的人不能用）
 function O.canUse(actor, vehicle, action, context)
     if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION" end
     if actor == nil or vehicle == nil then return false, "BAD_TARGET" end
@@ -956,17 +956,20 @@ function O.canUse(actor, vehicle, action, context)
     return O.allowsRecord(actor, rec, action, context)
 end
 
--- 已找到紀錄後的判定（canUse 與指令防火牆共用；不在世界上的紀錄，例如拖車載著的車，也用這個）
+-- 已找到紀錄後的判定（canUse 與指令防火牆共用；不在世界上的紀錄，例如拖車載著的車，也用這個）。
+-- context.query＝只問不做（顯示、輪詢、先問再決定）：不記拒絕、不寫 ADMIN_BYPASS；context.silent 只省 ADMIN_BYPASS
 function O.allowsRecord(actor, rec, action, context)
     if MVM.ACTIONS[action] == nil then return false, "UNKNOWN_ACTION", rec end
     local who = O.principal(actor)
-    -- 鎖定的車連車主也不能用（解除綁定、改名、分享等車主管理命令不經這裡）；越權中的管理員照常
-    if rec.lock ~= nil and action ~= "MANAGE" and not O.overrideActive(actor) then
-        O.deny(who, action, rec.oid, "RENT_LOCKED")
+    local query = context ~= nil and context.query == true
+    -- 鎖定的車連車主也不能用（解除綁定、改名、分享等車主管理命令不經這裡）；越權中的管理員照常，記成越權
+    local locked = rec.lock ~= nil and action ~= "MANAGE"
+    if locked and not O.overrideActive(actor) then
+        if not query then O.deny(who, action, rec.oid, "RENT_LOCKED") end
         return false, "RENT_LOCKED", rec
     end
     local quarantined = rec.recordState == "QUARANTINED"
-    if not quarantined then
+    if not quarantined and not locked then
         if who ~= nil and who == rec.ownerUser then return true, "OWNER", rec end
         if action ~= "MANAGE" then
             local bits = O.grantBits(rec, who)
@@ -977,7 +980,7 @@ function O.allowsRecord(actor, rec, action, context)
     end
     if O.overrideActive(actor) then
         -- watchdog 每秒查（silent）：不重複寫 bypass
-        if not (context ~= nil and context.silent == true) then
+        if not (context ~= nil and (context.silent == true or query)) then
             O.audit("WARN", "ADMIN_BYPASS", { actor = who, oid = rec.oid, owner = rec.ownerUser,
                 reason = action .. (context and context.mod and (" " .. s(context.mod)) or "") })
         end
@@ -987,7 +990,7 @@ function O.allowsRecord(actor, rec, action, context)
     local reason = quarantined and "QUARANTINED"
         or (action ~= "MANAGE" and MVM.bitsAllow(rec.factionActionBits or 0, action) and O.factionPausedFor(rec, who) and "FACTION_PAUSED")
         or "NOT_AUTHORIZED"
-    O.deny(who, action, rec.oid, reason)
+    if not query then O.deny(who, action, rec.oid, reason) end
     return false, reason, rec
 end
 

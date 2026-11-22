@@ -15,6 +15,7 @@ require "Vehicles/TimedActions/ISSwitchVehicleSeat"
 require "Vehicles/TimedActions/ISAttachTrailerToVehicle"
 require "Vehicles/TimedActions/ISDetachTrailerFromVehicle"
 require "Vehicles/TimedActions/ISHotwireVehicle"
+require "Vehicles/TimedActions/ISConfigHeadlight"
 
 local MVM = MinidoracatVehicleManager
 local C = MVM.Client
@@ -22,7 +23,8 @@ local C = MVM.Client
 -- ------------------------------------------------------------------ intent ---
 -- 受保護的車（本機投影看得到見證）各送一筆；spec.also 的車（例：拖吊的拖車）也要各送一筆
 local function sendIntent(action)
-    if not isClient() or type(action) ~= "table" then return end
+    -- ignoreAction：原版 add／addAfter 直接丟掉不排入（ISTimedActionQueue.lua:158-160,204-206）
+    if not isClient() or type(action) ~= "table" or action.ignoreAction then return end
     local spec = MVM.adapterFor(action.Type)
     if spec == nil or action.character == nil then return end
     local function send(vehicle, part)
@@ -115,6 +117,8 @@ end
 -- 修的零件所屬的車；修物品欄裡的東西（Vehicle Repair Overhaul 的 DoFixAction 沒有 part）回 nil＝照原樣
 local function repairCar(a) return a.vehicle or (a.part and a.part:getVehicle()) end
 local function canRepair(a) return allowed(a.character, repairCar(a), "REPAIR") end
+-- 調頭燈角度（ISConfigHeadlight 沒有 complete：多人在 perform 先送 vehicle.configHeadlight 再改本機燈光，伺服器擋下時本機已變）
+guardValid(ISConfigHeadlight, canRepair)
 
 function MVM.guardThirdParty()
     -- MSW（rSemiTruck 多槽拖車）：裝車要被裝的車與拖車都有 TOW，卸車要拖車有 TOW；綁定的車只能裝上已綁定的拖車
@@ -179,12 +183,21 @@ function ISVehicleMenu.showRadialMenu(playerObj)
     return result
 end
 
-local function lockedDoor(vehicle)
+-- 這位玩家用虛擬鑰匙解得開的第一扇鎖著的門（駕駛座門優先）：每扇門要開那扇門的權限（doorAction）。
+-- 不列前蓋：原版「車輛資訊」會自己先排解鎖（ISVehicleMenu.lua:997-999）
+local function unlockableDoor(player, vehicle)
+    local function ok(p)
+        if not (p and p:getDoor() and p:getDoor():isLocked() and p:getId() ~= "EngineDoor") then return false end
+        for _, act in ipairs(MVM.doorAction({ part = p })) do
+            if virtualKeyFor(player, vehicle, act) then return true end
+        end
+        return false
+    end
     local front = vehicle:getPartById("DoorFrontLeft")
-    if front and front:getDoor() and front:getDoor():isLocked() then return front end
+    if ok(front) then return front end
     for i = 0, vehicle:getPartCount() - 1 do
         local p = vehicle:getPartByIndex(i)
-        if p and p:getDoor() and p:getDoor():isLocked() and p:getId() ~= "EngineDoor" then return p end
+        if ok(p) then return p end
     end
     return nil
 end
@@ -193,10 +206,8 @@ end
 MVM.clientMenuHooks = MVM.clientMenuHooks or {}
 table.insert(MVM.clientMenuHooks, function(player, sub, vehicle, row)
     if row == nil or (row.role == "OTHER" and (row.publicBits or 0) == 0) then return end
-    local door = lockedDoor(vehicle)
-    if door and virtualKeyFor(player, vehicle, "PASSENGER") then
-        sub:addOption(getText("ContextMenu_MVM_UnlockVirtualKey"), player, ISVehicleMenu.onUnlockDoor, door)
-    end
+    local door = unlockableDoor(player, vehicle)
+    if door then sub:addOption(getText("ContextMenu_MVM_UnlockVirtualKey"), player, ISVehicleMenu.onUnlockDoor, door) end
 end)
 
 -- ------------------------------------------------------------ enforcement ---

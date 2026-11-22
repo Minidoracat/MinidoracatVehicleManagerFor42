@@ -286,6 +286,10 @@ local function vehicle(id, sqlId, keyId, script, x, y, partIds)
     function v:setPreviouslyEntered(b) self.previouslyEntered = b end
     function v:getSeat(chr) for i, c in pairs(self.seats) do if c == chr then return i end end return -1 end
     function v:getPassengerDoor(seat) return self.seatDoors and self.seatDoors[seat] or nil end
+    -- 同 BaseVehicle.isTrunkLocked／setTrunkLocked（:9573-9594）：TrunkDoor，沒有就 DoorRear
+    local function trunk(self) local p = self.parts.TrunkDoor or self.parts.DoorRear; return p and p.door end
+    function v:isTrunkLocked() local d = trunk(self); return d ~= nil and d.locked == true end
+    function v:setTrunkLocked(b) local d = trunk(self); if d then d.locked = b end end
     function v:isDriver(chr) return self.seats[0] == chr end
     function v:exit(chr) for i, c in pairs(self.seats) do if c == chr then self.seats[i] = nil end end chr.vehicle = nil end
     function v:getVehicleTowing() return self.towing end
@@ -369,7 +373,13 @@ for _, n in ipairs({ "ISRefuelFromGasPump", "ISDeflateTire", "ISInflateTire" }) 
 vclass("ISSmashWindow", { "serverStart", "update", "complete" })
 vclass("ISSmashVehicleWindow", { "complete" })
 vclass("ISStartVehicleEngine", { "update", "complete" }, { complete = function(a) a.character:getVehicle():tryStartEngine(false); return true end })
-vclass("ISUnlockVehicleDoor", { "update", "complete" })
+-- start 照原版單機分支（ISUnlockVehicleDoor.lua:26-35）：canUnlockDoor（有鑰匙或坐在這台車上）才解；還鎖著就 forceStop，否則 forceComplete
+vclass("ISUnlockVehicleDoor", { "start", "update", "complete" }, { start = function(a)
+    if isServer() then return end
+    local d = a.part.door
+    if d.locked and (a.character.hasKey or a.character.vehicle == a.vehicle) then d.locked = false end
+    if d.locked then a:forceStop() else a.forceValid = true end
+end })
 IsoObjectChange = { EXIT_VEHICLE = "EXIT_VEHICLE" }
 function instanceof(o, cls) return type(o) == "table" and o._cls == cls end
 
@@ -1325,7 +1335,7 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
     local dirty = 0
     ISInventoryPage = { dirtyUI = function() dirty = dirty + 1 end }
     ISTimedActionQueue = { add = function() end, addAfter = function() end }
-    for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do
+    for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle", "ISConfigHeadlight" }) do
         _G[n] = { isValid = function() return true end }
     end
     local vanilla = { canAccessContainer = function(v) return v.vanillaNo ~= true end }
@@ -1439,7 +1449,7 @@ do -- 越權狀態（client）＋車上容器依權限開放（ClientGuards 包 
         "公開關閉：回到他人的車")
     me.admin = nil
     ISInventoryPage, ISTimedActionQueue, BaseVehicle, __classmetatables = nil, nil, nil, nil
-    for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
+    for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle", "ISConfigHeadlight" }) do _G[n] = nil end
 end
 isClient = serverIsClient
 
@@ -4158,7 +4168,7 @@ local me = player("kow", 1, 1)
 function me:getRole() return nil end
 local queued = 0
 ISTimedActionQueue = { add = function() queued = queued + 1 end, addAfter = function() end }
-for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do
+for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle", "ISConfigHeadlight" }) do
     _G[n] = { isValid = function() return true end }
 end
 MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil
@@ -4252,6 +4262,37 @@ check(queued == 1 and sentFor[63] == "ATAISLoadVehicle" and sentFor[64] == nil a
 clientSent = {}
 ISTimedActionQueue.add(A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = looseC }))
 check(#clientSent == 1 and clientSent[1].args.vehicleId == 62, "未綁定的車不送 intent，只送拖車的")
+clientSent = {}
+local skipped = A("ATAISLoadVehicle", { character = me, trailer = myTr, vehicle = theirCar, ignoreAction = true })
+ISTimedActionQueue.add(skipped)
+ISTimedActionQueue.addAfter(nil, skipped)
+check(#clientSent == 0, "ignoreAction 的動作（原版佇列不排）：add、addAfter 都不送 intent")
+do -- 調頭燈角度要修理權限（ISConfigHeadlight 沒有 complete，排入時就擋）
+    MVM.notify = function(_, text) told = text end
+    local function aim(v) told = nil; return setmetatable({ character = me, vehicle = v, part = v.parts.Engine }, { __index = ISConfigHeadlight }):isValid() end
+    check(aim(myCar) and aim(looseC) and not aim(theirCar) and told == "IGUI_MVM_Protected",
+        "調頭燈：自己的車、沒綁定的車照常，別人綁定的車擋下並提示")
+    MVM.notify = realNotify
+end
+do -- 右鍵「虛擬鑰匙解鎖」只列這位玩家解得開的門：後車廂要載貨權限
+    local tv = carry(vehicle(72, 912, 9912, "Base.CarNormal", 1, 1, { "Engine", "EngineDoor", "DoorFrontLeft", "TrunkDoor" }), { oid = "kTrunk" })
+    function tv:isKeysInIgnition() return false end
+    tv.parts.DoorFrontLeft.door.locked, tv.parts.EngineDoor.door.locked, tv.parts.TrunkDoor.door.locked = false, true, true
+    local hook = MVM.clientMenuHooks[#MVM.clientMenuHooks]
+    local function offered(bits, seq)
+        MVM.clientReceive("fleetDelta", { to = "kow", streamId = "kt3", seq = seq, removes = {},
+            upserts = { { oid = "kTrunk", role = "MEMBER", state = "ACTIVE", myBits = bits } } })
+        local got = nil
+        hook(me, { addOption = function(_, _, _, _, door) got = door end }, tv, MVM.clientProjection(0, tv))
+        return got
+    end
+    local onlyLid = offered(MVM.ACTIONS.REPAIR + MVM.ACTIONS.SALVAGE, 2)
+    check(offered(MVM.ACTIONS.PASSENGER + MVM.ACTIONS.DRIVE, 3) == nil and offered(MVM.ACTIONS.CARGO, 4) == tv.parts.TrunkDoor and onlyLid == nil,
+        "虛擬鑰匙解鎖選項：只鎖著前蓋與後車廂時，只有搭乘與駕駛不列，有載貨才列（門是後車廂），有修理也不列前蓋")
+    tv.parts.DoorFrontLeft.door.locked = true
+    check(offered(MVM.ACTIONS.CARGO, 5) == tv.parts.TrunkDoor and offered(MVM.ACTIONS.PASSENGER, 6) == tv.parts.DoorFrontLeft,
+        "虛擬鑰匙解鎖選項：駕駛座門也鎖著時，只有載貨跳過它列後車廂；有搭乘就列駕駛座門")
+end
 -- 打到車回報（hitReport）：揮擊當下記下範圍內、自己不能拆零件的綁定車，下一個 tick 零件耐久下降才送；同一台車 2 秒一次
 function me:isLocalPlayer() return true end
 local gun = { _cls = "HandWeapon", range = 1.5 }
@@ -4287,7 +4328,7 @@ check(#swing(theirCar) == 1, "條件都對：照常回報")
 isClient = savedIsClient
 ISTimedActionQueue, MSW_ISLoadVehicle, MSW_ISLaunchVehicle = nil, nil, nil
 ISVehicleSalvage, VRO, ISRebuildEngine, EHRRepairHeater, ELRRepairLightbar, ELRTurnOffLightbar = nil, nil, nil, nil, nil, nil
-for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle" }) do _G[n] = nil end
+for _, n in ipairs({ "ISEnterVehicle", "ISSwitchVehicleSeat", "ISAttachTrailerToVehicle", "ISDetachTrailerFromVehicle", "ISConfigHeadlight" }) do _G[n] = nil end
 end)();
 
 (function() -- 主 chunk 區域變數已滿 200：本情境用自己的函式作用域
@@ -4310,7 +4351,10 @@ end
 -- （原版、damnlib、rLib 不檢查欄位就 getVehicleById／assert，Java 收到 nil 會拋錯）
 local ID_FIELDS = { "vehicle", "vehicleA", "vehicleB", "trailer", "container", "vehicleId", "_vehicleId" }
 local function strictFields(m, c)
-    if m == "vehicle" then return c == "attachTrailer" and { vehicleA = "number", vehicleB = "number" } or { vehicle = "number" } end
+    if m == "vehicle" then
+        if c == "setTrunkLocked" then return { locked = "boolean" } end -- 沒有車輛 id：處理器用送的人坐的車
+        return c == "attachTrailer" and { vehicleA = "number", vehicleB = "number" } or { vehicle = "number" }
+    end
     if m == "rLib" then return c == "SetVehicleBattery" and { vehicleId = "number", battery = "number" } or { vehicleId = "number", set = "boolean" } end
     if m == "that_damn_lib" and c == "setPartModData" then return { vehicle = "number" } end
     if m == "EER_vehicle" then return { vehicleId = "number" } end
@@ -4381,6 +4425,7 @@ local CASES = {
     { "vehicle", "setSkinIndex", args1({ index = 2 }), { "REPAIR" } },
     { "vehicle", "setBloodIntensity", args1({ id = 0, intensity = 1 }), { "REPAIR" } },
     { "vehicle", "remove", args1({}), { "MANAGE" } },
+    { "vehicle", "configHeadlight", args1({ part = "Engine", dir = 1 }), { "REPAIR" } },
     { "commonlib", "loadVehicle", function(V, O2) return { trailer = carrierFor(V, O2).id, vehicle = V.id } end, { "TOW" } },
     { "commonlib", "launchVehicle", function(V) return { trailer = V.id, x = V.x + 3, y = V.y } end, { "TOW" } },
     { "commonlib", "installTuning", args1({ part = "Engine", model = "m" }), { "REPAIR" } },
@@ -4416,7 +4461,7 @@ local CASES = {
     { "vro_salvage", "removeVehicle", args1({}), { "MANAGE" } },
     { "RVServer", "enterRV", function(V) return { vehicleId = V.id, vx = V.x, vy = V.y, vz = 0, vscript = "base.carnormal" } end, { "CARGO" } },
 }
-local covered = { ["that_damn_lib.setPartModData"] = true } -- 一律拒絕，F2 另測
+local covered = { ["that_damn_lib.setPartModData"] = true, ["vehicle.setTrunkLocked"] = true } -- 一律拒絕 F2、沒有 id 的鎖後車廂下面另測
 for _, k in ipairs(CASES) do covered[k[1] .. "." .. k[2]] = true end
 local missing = {}
 for m, cmds in pairs(CG.RULES) do for c in pairs(cmds) do if not covered[m .. "." .. c] then missing[#missing + 1] = m .. "." .. c end end end
@@ -4458,6 +4503,33 @@ grant(MVM.ACTIONS.TOW)
 local towImpulse = send(MB, "W900", "moveVehicleImpulse", { vehicle = pv.id }).hit ~= nil
 rp.grants = {}
 check(towImpulse, "W900.moveVehicleImpulse：只有 TOW 的成員也放行（DRIVE 或 TOW 任一）")
+;(function() -- vehicle.setTrunkLocked：沒有車輛 id，處理器用送的人坐的車；鎖後車廂門＝CARGO（同 ISLockVehicleDoor 的 doorAction）
+    local L = "CMD:vehicle.setTrunkLocked"
+    pv.parts.TrunkDoor.door.locked = true
+    local function tl(p, seated, want) -- 回處理器收到的 locked 與有沒有記拒絕
+        p.vehicle = seated
+        for key in pairs(O.R.denyAgg) do O.R.denyAgg[key] = nil end
+        local args = { locked = want == true }
+        send(p, "vehicle", "setTrunkLocked", args)
+        p.vehicle = nil
+        return args.locked, denied(L)
+    end
+    grant(bitsOf({ "PASSENGER", "DRIVE" }))
+    local l1, d1 = tl(MB, pv)
+    pv.parts.TrunkDoor.door.locked = false
+    local l1b, d1b = tl(MB, pv, true)
+    pv.parts.TrunkDoor.door.locked = true
+    check(l1 == true and d1 and l1b == false and d1b,
+        "setTrunkLocked：只有搭乘與駕駛的成員坐在車上解或鎖後車廂 → 處理器收到現在的鎖狀態（不變）、記拒絕")
+    grant(MVM.ACTIONS.CARGO)
+    local l2, d2 = tl(MB, pv)
+    rp.grants = {}
+    local l3, d3 = tl(OW, pv)
+    check(l2 == false and not d2 and l3 == false and not d3, "setTrunkLocked：有 CARGO 的成員與車主照送的值")
+    local l4, d4 = tl(ST, uv)
+    local l5, d5 = tl(ST, nil)
+    check(l4 == false and not d4 and l5 == false and not d5, "setTrunkLocked：沒綁定的車、不在車上照原版")
+end)();
 
 -- Project RV Interior：目標是送指令的人所在或身旁的車，加上指令指定的車（上面的通用列只測指定的車）
 local RVL = "CMD:RVServer.enterRV"
@@ -5770,6 +5842,202 @@ sit(OW, nil)
 end)();
 
 (function()
+out("情境 LK：鎖／解鎖一扇門＝開那扇門的權限；單機解鎖在 start 判定、被拒後停下這一串；只問不做（query）不記拒絕")
+boot()
+G.install("LK")
+local OW, MB, ST = player("lkown", 1, 1), player("lkmem", 1, 1), player("lkstr", 1, 1)
+local v = GH.car(114)
+for _, pid in ipairs({ "EngineDoor", "TrunkDoor" }) do
+    local pt = part(pid); pt.vehicle = v; v.parts[pid] = pt; v.order[#v.order + 1] = pt
+end
+local r = rec(claim(OW, v).oid)
+local function give(names)
+    local n = 0
+    for _, a in ipairs(names) do n = n + MVM.ACTIONS[a] end
+    r.grants = { { user = "lkmem", bits = n } }
+end
+-- 回 complete 的結果與之後門鎖狀態（假的上鎖 complete 不改鎖，用回傳值判）
+local function act(p, cls, pid, locked)
+    v.parts[pid].door.locked = locked
+    intent(p, cls, v, pid)
+    local ok = stage(A(cls, { character = p, part = v.parts[pid], vehicle = v }), "complete")
+    return ok, v.parts[pid].door.locked
+end
+give({ "PASSENGER", "DRIVE" })
+local u1, l1 = act(MB, "ISUnlockVehicleDoor", "EngineDoor", true)
+local u2, l2 = act(MB, "ISUnlockVehicleDoor", "TrunkDoor", true)
+local k1 = act(MB, "ISLockVehicleDoor", "EngineDoor", false)
+local k2 = act(MB, "ISLockVehicleDoor", "TrunkDoor", false)
+local u3, l3 = act(MB, "ISUnlockVehicleDoor", "DoorFrontLeft", true)
+check(u1 == false and l1 == true and u2 == false and l2 == true and k1 == false and k2 == false and u3 == true and l3 == false,
+    "只有搭乘與駕駛：前蓋、後車廂鎖不了也解不開（鎖不變），車門照舊解得開")
+give({ "REPAIR" })
+local u4, l4 = act(MB, "ISUnlockVehicleDoor", "EngineDoor", true)
+local k4 = act(MB, "ISLockVehicleDoor", "EngineDoor", false)
+give({ "SALVAGE" })
+local u5, l5 = act(MB, "ISUnlockVehicleDoor", "EngineDoor", true)
+local u6, l6 = act(MB, "ISUnlockVehicleDoor", "TrunkDoor", true)
+check(u4 == true and l4 == false and k4 == true and u5 == true and l5 == false and u6 == false and l6 == true,
+    "只有修理或只有拆零件：前蓋解得開（虛擬鑰匙）、鎖得上，後車廂不行")
+give({ "CARGO" })
+local u7, l7 = act(MB, "ISUnlockVehicleDoor", "TrunkDoor", true)
+local k7 = act(MB, "ISLockVehicleDoor", "TrunkDoor", false)
+local u8 = act(MB, "ISUnlockVehicleDoor", "EngineDoor", true)
+check(u7 == true and l7 == false and k7 == true and u8 == false, "只有載貨：後車廂解得開、鎖得上，前蓋不行")
+give({ "PASSENGER" })
+intent(MB, "ISLockDoors", v)
+check(stage(A("ISLockDoors", { character = MB, vehicle = v }), "complete") == true, "整車上鎖（ISLockDoors）照舊只要搭乘")
+
+-- (g) context.query：只問不做，不記拒絕、不寫越權稽核；沒帶 query 或只帶 silent 照舊記
+r.grants = {}
+local function denies(who)
+    local n = 0
+    for key, c in pairs(O.R.denyAgg) do if key:find(who .. "|", 1, true) == 1 then n = n + c end end
+    return n
+end
+local d0 = denies("lkstr")
+local q1 = O.canUse(ST, v, "DRIVE", { query = true })
+local d1 = denies("lkstr")
+O.canUse(ST, v, "DRIVE", { silent = true })
+local d2 = denies("lkstr")
+O.canUse(ST, v, "DRIVE")
+check(q1 == false and d1 == d0 and d2 == d0 + 1 and denies("lkstr") == d0 + 2, "query：拒絕不記；只帶 silent 與不帶照舊記")
+r.lock = "RENT"
+local q2, why2 = O.canUse(OW, v, "DRIVE", { query = true })
+r.lock = nil
+check(q2 == false and why2 == "RENT_LOCKED" and denies("lkown") == 0, "query：租用鎖定照樣回 RENT_LOCKED，不記拒絕")
+local ADM = player("lkadm", 1, 1, { admin = true })
+O.setOverride(ADM, true)
+local n0 = #logLines
+local q3, why3 = O.canUse(ADM, v, "DRIVE", { query = true })
+local quiet = not GH.logged(n0, "ADMIN_BYPASS")
+O.canUse(ADM, v, "DRIVE")
+check(q3 == true and why3 == "ADMIN" and quiet and GH.logged(n0, "ADMIN_BYPASS"), "query：越權中的管理員放行、不寫 ADMIN_BYPASS；不帶 query 照寫")
+r.grants = { { user = "lkmem", bits = MVM.ACTIONS.SALVAGE }, { user = "lkadm", bits = MVM.ACTIONS.SALVAGE } }
+local dm, n1 = denies("lkmem"), #logLines
+local u9 = act(MB, "ISUnlockVehicleDoor", "EngineDoor", true)
+local u10 = act(ADM, "ISUnlockVehicleDoor", "EngineDoor", true)
+r.grants = {}
+local function bypasses(from, to)
+    local c = 0
+    for i = from + 1, to do if logLines[i]:find("ADMIN_BYPASS", 1, true) then c = c + 1 end end
+    return c
+end
+local n2 = #logLines
+local u11 = act(ADM, "ISUnlockVehicleDoor", "EngineDoor", true)
+check(u9 == true and u10 == true and denies("lkmem") == dm and bypasses(n1, n2) == 0 and u11 == true and bypasses(n2, #logLines) == 1,
+    "前蓋多選一（修理或拆零件）：只有拆零件的成員、越權中但有拆零件分享的管理員放行，不記修理的拒絕、不寫 ADMIN_BYPASS；沒有分享的越權管理員只寫一筆")
+local function lockedBypass(bits, pid)
+    r.grants, r.lock = { { user = "lkadm", bits = bits } }, "RENT"
+    local n = #logLines
+    local ok = act(ADM, "ISUnlockVehicleDoor", pid, true)
+    r.grants, r.lock = {}, nil
+    return ok == true and bypasses(n, #logLines) == 1
+end
+check(lockedBypass(MVM.ACTIONS.SALVAGE, "EngineDoor") and lockedBypass(MVM.ACTIONS.REPAIR, "EngineDoor")
+    and lockedBypass(MVM.ACTIONS.REPAIR + MVM.ACTIONS.SALVAGE, "EngineDoor") and lockedBypass(MVM.ACTIONS.CARGO, "TrunkDoor"),
+    "租用鎖定的車：有分享的越權管理員放行也寫一筆 ADMIN_BYPASS（越過的是鎖定；前蓋不論分享哪一種、後車廂單一權限都一樣）")
+do -- 第三方 adapter 的 action 函式回沒登記的動作碼：綁定的車拒絕，沒綁定的車照原版
+    vclass("LKBogus", { "complete" })
+    MinidoracatVehicleManagerAPI.registerActionAdapter({ class = "LKBogus", action = function() return "BOGUS" end,
+        vehicleOf = function(a) return a.vehicle end, stages = { "complete" } })
+    G.install("LK-bogus")
+    local free = GH.car(115)
+    intent(ST, "LKBogus", v)
+    local onClaimed = stage(A("LKBogus", { character = ST, vehicle = v }), "complete")
+    local onFree = stage(A("LKBogus", { character = ST, vehicle = free }), "complete")
+    check(onClaimed == false and calls("LKBogus.complete") == 1 and onFree == true,
+        "adapter 回沒登記的動作碼：綁定的車拒絕（原版不跑），沒綁定的車照原版")
+end
+O.setOverride(ADM, false)
+v.seats[1], ST.vehicle = ST, v
+local d3 = denies("lkstr")
+GH.tick(); GH.tick()
+check(denies("lkstr") == d3, "停車保全看乘員有沒有權限是只問：沒權限的乘客不累計拒絕")
+v:exit(ST)
+
+-- (c)(d) 單機：解鎖在 start 判定（原版在 start 就切換鎖），被拒後停下這一串；每個動作只提示一次
+serverMode = false -- 單機的身分是 local:0：lkown 的車對本機玩家是別人的車
+local got, cleared = {}, 0
+local keepReceive = MVM.clientReceive
+MVM.clientReceive = function(command, payload) if command == "enforcement" then got[#got + 1] = payload end end
+ISTimedActionQueue = { queues = {}, clear = function() cleared = cleared + 1 end }
+local function sp(cls, pid, locked, nextAction)
+    v.parts[pid].door.locked = locked
+    ISTimedActionQueue.queues[ST] = { queue = { nextAction } }
+    local a = A(cls, { character = ST, part = v.parts[pid], vehicle = v, action = {} })
+    a.forceStop = function(self) self.stopped = (self.stopped or 0) + 1 end
+    return a
+end
+ST.hasKey = true
+local s0, g0 = calls("ISUnlockVehicleDoor.start"), #got
+local a1 = sp("ISUnlockVehicleDoor", "DoorFrontLeft", true, {})
+stage(a1, "start")
+check(calls("ISUnlockVehicleDoor.start") == s0 and v.parts.DoorFrontLeft.door.locked == true and a1.stopped == 1 and cleared == 0,
+    "單機：別人的車、手上有鑰匙，解鎖在 start 就被擋（原版沒跑、鎖不變、動作停下）")
+stage(a1, "complete")
+check(#got == g0 + 1 and got[#got].reason == "NOT_AUTHORIZED", "單機：同一個動作 start、complete 都被擋，只提示一次")
+ST.hasKey = false
+r.ownerUser = "local:0"
+local a2 = sp("ISUnlockVehicleDoor", "DoorFrontLeft", true, {})
+stage(a2, "start")
+check(v.parts.DoorFrontLeft.door.locked == false and a2.stopped == nil and a2.forceValid == true and stage(a2, "complete") == true,
+    "單機：車主沒帶鑰匙，虛擬鑰匙在 start 就解開")
+SB.VirtualKey = false
+local a3 = sp("ISUnlockVehicleDoor", "DoorFrontLeft", true, {})
+stage(a3, "start")
+SB.VirtualKey = true
+check(v.parts.DoorFrontLeft.door.locked == true and a3.stopped == 1, "單機：虛擬鑰匙關閉時照原版（沒鑰匙解不開）")
+r.ownerUser = "lkown"
+local c0, g1 = cleared, #got
+check(stage(sp("ISOpenVehicleDoor", "EngineDoor", false, {}), "complete") == false and cleared == c0 + 1 and #got == g1 + 1,
+    "單機：開蓋被拒、後面還有動作（例：車輛資訊視窗）→ 清掉佇列，提示一則")
+check(stage(sp("ISOpenVehicleDoor", "EngineDoor", false, nil), "complete") == false and cleared == c0 + 1,
+    "單機：被拒時佇列已空 → 不清（清了會對被拒的動作多叫一次 stop）")
+local fa = sp("ISTakeGasolineFromVehicle", "TrunkDoor", false, {})
+local fu = calls("ISTakeGasolineFromVehicle.update")
+stage(fa, "update")
+check(fa.stopped == 1 and calls("ISTakeGasolineFromVehicle.update") == fu, "單機：抽油在 update 被拒就停下動作（不等時長跑完）")
+-- 單機手把整車上鎖：原版連後車廂一起鎖（ISLockDoors.lua:58-65；替身不分手把一律鎖）；沒有載貨就把後車廂改回原狀。
+-- 鍵鼠、多人伺服器、後車廂零件同時是座位門時不動
+vclass("ISLockDoors", { "update", "complete" }, { complete = function(a) a.vehicle:setTrunkLocked(a.locked); return true end })
+G.install("LK-lockdoors")
+v.seats[1], ST.vehicle = ST, v
+JoypadState = { players = {} }
+local function trunkDoor() return (v.parts.TrunkDoor or v.parts.DoorRear).door end
+local function lockAll(bits, pad, user)
+    r.grants = { { user = user or "local:0", bits = bits } }
+    JoypadState.players[ST:getPlayerNum() + 1] = pad and {} or nil
+    trunkDoor().locked = false
+    if user then intent(ST, "ISLockDoors", v) end
+    local ok = stage(A("ISLockDoors", { character = ST, vehicle = v, locked = true }), "complete")
+    return ok and trunkDoor().locked
+end
+local P, PC = MVM.ACTIONS.PASSENGER, MVM.ACTIONS.PASSENGER + MVM.ACTIONS.CARGO
+check(lockAll(P, true) == false and lockAll(PC, true) == true, "單機手把整車上鎖：只有搭乘時後車廂鎖改回原狀，有載貨照原版一起鎖")
+check(lockAll(P, false) == true, "單機鍵鼠整車上鎖：不動後車廂的結果（原版鍵鼠不碰後車廂）")
+serverMode = true
+local mpOk = lockAll(P, true, "lkstr")
+serverMode = false
+local trunkPart, seatDoors, maxPass = v.parts.TrunkDoor, v.seatDoors, v.maxPass
+local rear = part("DoorRear")
+rear.vehicle, v.parts.TrunkDoor, v.parts.DoorRear = v, nil, rear
+v.seatDoors, v.maxPass = { [0] = v.parts.DoorFrontLeft, [1] = rear }, 2
+local seatOk = lockAll(P, true)
+v.parts.TrunkDoor, v.parts.DoorRear, v.seatDoors, v.maxPass = trunkPart, nil, seatDoors, maxPass
+check(mpOk == true and seatOk == true, "整車上鎖：多人伺服器、後車廂零件同時是座位門（DoorRear 當後座門）時不改回")
+JoypadState = nil
+v:exit(ST)
+r.grants = {}
+vclass("ISLockDoors", { "update", "complete" })
+G.install("LK-lockdoors")
+serverMode = true
+local a4 = sp("ISOpenVehicleDoor", "EngineDoor", false, {})
+check(stage(a4, "complete") == false and cleared == c0 + 1 and a4.stopped == nil, "伺服器：被拒不碰本機佇列")
+MVM.clientReceive, ISTimedActionQueue = keepReceive, nil
+end)();
+
+(function()
 out("情境 G4b：車上收音機的 CD（ISDeviceMediaAction adapter：置物；目標看動作建立時解出的裝置，不看格子現在壓著哪台車）")
 boot()
 vclass("ISDeviceMediaAction", { "complete" })
@@ -6645,6 +6913,18 @@ local okX, whyX = O.canUse(X, v1, "DRIVE")
 local _, why2 = O.canUse(C2, v2, "PASSENGER")
 check(not okX and whyX == "NOT_AUTHORIZED" and O.canUse(L, v1, "DRIVE") and why2 == "FACTION_PAUSED" and select(2, O.canUse(C2, v1, "MANAGE")) == "NOT_AUTHORIZED",
     "陌生人照舊 NOT_AUTHORIZED、車主照常、同陣營其他暫停的車也是 FACTION_PAUSED；MANAGE 不說暫停")
+do -- 前蓋多選一（修理或拆零件）全不過：挑有紀錄、最具體的原因（只分享拆零件給陣營、暫停中 → FACTION_PAUSED，不是修理那筆的 NOT_AUTHORIZED）
+    G.install("FP")
+    local bits = r1.factionActionBits
+    r1.factionActionBits = AC.SALVAGE
+    local lid = part("EngineDoor")
+    lid.vehicle, v1.parts.EngineDoor = v1, lid
+    v1.order[#v1.order + 1] = lid
+    intent(C2, "ISOpenVehicleDoor", v1, "EngineDoor")
+    local okLid = stage(A("ISOpenVehicleDoor", { character = C2, part = lid, vehicle = v1 }), "complete")
+    r1.factionActionBits = bits
+    check(okLid == false and lastOf(C2, "enforcement").reason == "FACTION_PAUSED", "前蓋多選一都不過：提示陣營分享暫停（拆零件那筆），不是沒有分享")
+end
 cmd(C2, "fleetSubscribe", {}, false)
 local snap = lastOf(C2, "fleetSnapshot")
 local listed, keys = false, 0
