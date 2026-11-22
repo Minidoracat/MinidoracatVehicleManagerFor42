@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "车名长度上限（字节）",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "自定义车名的最大长度。中文与日文每个字占 3 字节。",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "车主虚拟钥匙",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "车主与被允许驾驶的玩家，不需要实体钥匙就能解锁、开门（不触发警报）与启动自己绑定的车。\n关闭＝沿用原版钥匙规则。",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "车主与被分享的玩家，不需要实体钥匙就能解锁、开门（不触发警报）与启动绑定的车，照分享的权限：车门要「搭乘」，后车厢要「后车厢」，引擎盖要「安装修理」或「拆零件」，启动要「驾驶」。\n关闭＝沿用原版钥匙规则。",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "未授权乘员处置",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "有人未经允许坐在已绑定的车上时，服务器的处置方式。两种处置都会写入审计记录并警告该玩家。服务器会定期检查每位乘员；改机客户端仍可能短暂坐上座位。",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "乘员检查间隔（秒）",

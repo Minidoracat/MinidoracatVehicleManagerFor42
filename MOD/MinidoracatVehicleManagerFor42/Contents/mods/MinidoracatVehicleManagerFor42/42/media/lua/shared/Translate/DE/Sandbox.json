@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "Länge des Fahrzeugnamens (Bytes)",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "Maximale Länge eines eigenen Fahrzeugnamens. Chinesische und japanische Zeichen belegen je 3 Bytes.",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Virtueller Schlüssel für Eigentümer",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Eigentümer und Spieler, denen sie das Fahren erlauben, können ihre beanspruchten Fahrzeuge ohne physischen Schlüssel entriegeln, ohne Alarm öffnen und starten.\nAus behält die normalen Schlüsselregeln bei.",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Eigentümer und Spieler, mit denen sie teilen, können beanspruchte Fahrzeuge ohne physischen Schlüssel entriegeln, ohne Alarm öffnen und starten, soweit ihre Freigabe reicht: Türen brauchen Mitfahren, der Kofferraum braucht Kofferraum, die Motorhaube Reparieren oder Ausschlachten, das Starten Fahren.\nAus behält die normalen Schlüsselregeln bei.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Reaktion auf unbefugte Insassen",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Was der Server tut, wenn jemand ohne Berechtigung in einem beanspruchten Fahrzeug sitzt. In beiden Fällen wird der Vorfall ins Prüfprotokoll geschrieben und der Spieler gewarnt. Der Server prüft regelmäßig jeden Insassen; ein manipulierter Client kann trotzdem kurz auf dem Sitz sitzen.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Intervall der Insassenprüfung (Sekunden)",

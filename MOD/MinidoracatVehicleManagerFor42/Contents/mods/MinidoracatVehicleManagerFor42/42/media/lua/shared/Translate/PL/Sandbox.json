@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "Długość nazwy pojazdu (bajty)",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "Maksymalna długość własnej nazwy pojazdu. Znaki chińskie i japońskie zajmują po 3 bajty.",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Wirtualny klucz dla właścicieli",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Właściciele i gracze, którym pozwolą prowadzić, mogą odblokować, otworzyć bez włączania alarmu i uruchomić swoje przypisane pojazdy bez fizycznego klucza.\nWyłączenie zachowuje standardowe zasady kluczy.",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Właściciele i gracze, którym udostępnili pojazd, mogą odblokować, otworzyć bez włączania alarmu i uruchomić przypisane pojazdy bez fizycznego klucza, w zakresie udostępnionych uprawnień: drzwi wymagają uprawnienia Pasażer, bagażnik – Bagażnik, maska – Naprawa lub Demontaż, uruchomienie – Kierowanie.\nWyłączenie zachowuje standardowe zasady kluczy.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Reakcja na nieuprawnione osoby w pojeździe",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Co robi serwer, gdy ktoś siedzi w przypisanym pojeździe bez uprawnień. W obu przypadkach zdarzenie trafia do dziennika audytu, a gracz dostaje ostrzeżenie. Serwer regularnie sprawdza każdą osobę w pojeździe; zmodyfikowany klient może jednak przez chwilę siedzieć na miejscu.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Interwał sprawdzania osób w pojeździe (sekundy)",

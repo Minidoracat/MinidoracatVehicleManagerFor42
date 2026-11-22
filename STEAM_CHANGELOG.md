@@ -3,6 +3,14 @@
 
 [b]English summary[/b]
 [list]
+[*] Locking or unlocking a door now needs the permission for that door, the same as opening it: seat doors need Ride, the trunk needs Trunk, the hood needs Repair or Salvage. Locking all doors from inside still needs Ride.
+[*] The virtual key follows the same permissions: players with Trunk can unlock the trunk without a key, and players with Repair or Salvage can unlock and open the hood. The "Unlock (virtual key)" option only lists doors you can unlock.
+[*] Adjusting the headlight angle on someone else's claimed vehicle now needs Repair.
+[*] Single player: when an action is blocked, the actions queued after it no longer run, and blocked refueling or siphoning stops right away.
+[/list]
+
+[b]English summary[/b]
+[list]
 [*] New: Project RV Interior support. On servers that run both mods, entering the interior room of a claimed vehicle now needs the Trunk permission from its owner.
 [*] Players with only Ride or Drive can't enter either, even while sitting in the vehicle; they see the "this vehicle is claimed" notice.
 [*] Owners, players with Trunk, and unclaimed vehicles work as before.

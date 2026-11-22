@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "Longitud del nombre del vehículo (bytes)",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "Longitud máxima de un nombre personalizado de vehículo. Los caracteres chinos y japoneses usan 3 bytes cada uno.",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Llave virtual para dueños",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Los dueños y los jugadores a los que permiten conducir pueden desbloquear, abrir sin activar la alarma y arrancar sus vehículos reclamados sin la llave física.\nDesactivado mantiene las reglas de llaves originales.",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Los dueños y los jugadores con quienes comparten pueden desbloquear, abrir sin activar la alarma y arrancar los vehículos reclamados sin la llave física, según los permisos compartidos: las puertas requieren Pasajero, el maletero requiere Maletero, el capó requiere Reparar o Desguazar y arrancar requiere Conducir.\nDesactivado mantiene las reglas de llaves originales.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Respuesta ante ocupantes no autorizados",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Qué hace el servidor cuando alguien se sienta en un vehículo reclamado sin permiso. En ambos casos, se anota en el registro de auditoría y se avisa a ese jugador. El servidor revisa a cada ocupante periódicamente; un cliente modificado aún puede sentarse en el asiento un momento.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Intervalo de revisión de ocupantes (segundos)",

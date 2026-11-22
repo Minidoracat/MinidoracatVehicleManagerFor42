@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "Vehicle name length (bytes)",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "Maximum length of a custom vehicle name. Chinese and Japanese characters use 3 bytes each.",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Virtual key for owners",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Owners and players they allow to drive can unlock, open without triggering the alarm and start their claimed vehicles without the physical key.\nOff keeps the vanilla key rules.",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Owners and players they share with can unlock, open without triggering the alarm and start claimed vehicles without the physical key, as far as their share allows: doors need Ride, the trunk needs Trunk, the hood needs Repair or Salvage, starting needs Drive.\nOff keeps the vanilla key rules.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Unauthorized occupant response",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "What the server does when someone sits in a claimed vehicle without permission. Either way, it is written to the audit log and that player is warned. The server checks every occupant regularly; a modified client can still sit in the seat for a moment.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Occupant check interval (seconds)",

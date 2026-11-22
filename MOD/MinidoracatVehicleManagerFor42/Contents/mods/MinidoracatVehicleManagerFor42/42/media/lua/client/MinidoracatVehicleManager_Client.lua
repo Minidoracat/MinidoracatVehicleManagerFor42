@@ -25,7 +25,7 @@ do
         and UI.CAPABILITIES and UI.CAPABILITIES.whatsNew and UI.WhatsNew then
         UI.WhatsNew.register({
             modId = "MinidoracatVehicleManagerFor42",
-            since = "0.13.0",
+            since = "0.15.0",
             name = "IGUI_MVM_SourceName",
             text = "IGUI_MVM_WhatsNew",
         })

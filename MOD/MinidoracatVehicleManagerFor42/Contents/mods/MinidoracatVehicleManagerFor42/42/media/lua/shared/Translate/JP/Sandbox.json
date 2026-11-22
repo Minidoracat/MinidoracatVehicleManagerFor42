@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "車両名の長さ上限（バイト）",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "カスタム車両名の最大長です。日本語と中国語は1文字3バイトです。",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "所有者のバーチャルキー",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "所有者と運転を許可されたプレイヤーは、物理的な鍵なしで登録済み車両の解錠、ドアの開閉（警報なし）、エンジン始動ができます。\n無効にすると標準の鍵ルールになります。",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "所有者と共有されたプレイヤーは、物理的な鍵なしで登録済み車両の解錠、ドアの開閉（警報なし）、エンジン始動ができます。共有された権限に従います：ドアは「乗車」、トランクは「トランク」、ボンネットは「取付・修理」か「部品取外し」、始動は「運転」が必要です。\n無効にすると標準の鍵ルールになります。",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "無許可の乗員への対応",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "許可なく登録済み車両に座っている人がいたときのサーバーの対応です。どちらの場合も監査ログに記録し、そのプレイヤーに警告します。サーバーは乗員を定期的に確認しますが、改造クライアントは一時的に座れる場合があります。",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "乗員確認の間隔（秒）",

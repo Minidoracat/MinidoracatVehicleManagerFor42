@@ -424,7 +424,7 @@
     "IGUI_MVM_Notice_FactionPaused": "조직 %1의 리더가 바뀌어 조직 공유가 일시 중지된 차량: %2. 내 차량 상단에서 복원하세요.",
     "IGUI_MVM_Notice_FactionGone": "조직 %1이(가) 해산, 이름 변경 또는 재생성되어 조직 공유가 일시 중지된 차량: %2. 차량 목록 창을 확인하세요.",
     "IGUI_MVM_Notice_TowDetached": "%2 님이 내 %1을(를) 견인하던 차량의 운전석에 앉아 연결이 분리되었습니다.",
-    "IGUI_MVM_WhatsNew": "대여가 끝나도 차량은 바로 등록 해제되지 않고 일정 기간 보관됩니다. 보관 중에는 접속할 때마다 알려 줍니다.",
+    "IGUI_MVM_WhatsNew": "문을 잠그거나 잠금을 풀려면 그 문의 권한이 필요합니다. 트렁크는 '트렁크', 보닛은 '수리' 또는 '분해'.",
     "IGUI_MVM_FactionPaused_Title": "조직 %1의 리더가 바뀌었습니다",
     "IGUI_MVM_FactionPaused_TitleOther": "조직 %1: 공유 일시 중지됨",
     "IGUI_MVM_FactionPaused_Count": "조직 공유가 일시 중지된 차량: %1",

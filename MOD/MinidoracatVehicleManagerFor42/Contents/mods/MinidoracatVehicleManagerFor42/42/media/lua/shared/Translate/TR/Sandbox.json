@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "Araç adı uzunluğu (bayt)",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "Özel araç adının en fazla uzunluğu. Çince ve Japonca karakterlerin her biri 3 bayt kullanır.",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Sahipler için sanal anahtar",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Sahipler ve sürmesine izin verdikleri oyuncular, sahiplenilmiş araçlarının kilidini fiziksel anahtar olmadan açabilir, alarmı çaldırmadan açabilir ve motoru çalıştırabilir.\nKapalıyken oyunun orijinal anahtar kuralları geçerlidir.",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Sahipler ve paylaştıkları oyuncular, sahiplenilmiş araçların kilidini fiziksel anahtar olmadan açabilir, alarmı çaldırmadan açabilir ve motoru çalıştırabilir; paylaşılan izinlere göre: kapılar için Yolcu, bagaj için Bagaj, kaput için Onar veya Sök, çalıştırmak için Sür gerekir.\nKapalıyken oyunun orijinal anahtar kuralları geçerlidir.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "İzinsiz binen kişiye tepki",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Biri sahiplenilmiş bir araçta izinsiz oturduğunda sunucunun ne yapacağı. İki seçenekte de olay denetim kaydına yazılır ve o oyuncu uyarılır. Sunucu tüm yolcuları düzenli olarak kontrol eder; değiştirilmiş bir istemci yine de kısa bir süre koltukta oturabilir.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Yolcu kontrol aralığı (saniye)",

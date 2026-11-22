@@ -24,7 +24,7 @@
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes": "Longueur du nom de véhicule (octets)",
     "Sandbox_MinidoracatVehicleManagerNameMaxBytes_tooltip": "Longueur maximale d'un nom de véhicule personnalisé. Les caractères chinois et japonais utilisent 3 octets chacun.",
     "Sandbox_MinidoracatVehicleManagerVirtualKey": "Clé virtuelle pour les propriétaires",
-    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Les propriétaires et les joueurs qu'ils autorisent à conduire peuvent déverrouiller, ouvrir sans déclencher l'alarme et démarrer leurs véhicules revendiqués sans la clé physique.\nLorsque cette option est désactivée, les règles du jeu de base concernant les clés s'appliquent.",
+    "Sandbox_MinidoracatVehicleManagerVirtualKey_tooltip": "Les propriétaires et les joueurs avec qui ils partagent peuvent déverrouiller, ouvrir sans déclencher l'alarme et démarrer les véhicules revendiqués sans la clé physique, selon les permissions partagées : les portières demandent Passager, le coffre demande Coffre, le capot Réparer ou Démonter, le démarrage Conduire.\nLorsque cette option est désactivée, les règles du jeu de base concernant les clés s'appliquent.",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction": "Réaction aux occupants non autorisés",
     "Sandbox_MinidoracatVehicleManagerWatchdogAction_tooltip": "Ce que fait le serveur quand quelqu'un s'assoit dans un véhicule revendiqué sans permission. Dans les deux cas, l'incident est inscrit au journal d'audit et ce joueur est averti. Le serveur vérifie régulièrement chaque occupant ; un client modifié peut quand même rester assis un instant.",
     "Sandbox_MinidoracatVehicleManagerWatchdogIntervalSeconds": "Intervalle de vérification des occupants (secondes)",

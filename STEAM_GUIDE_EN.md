@@ -37,7 +37,8 @@ Vehicle Manager lets you claim a car to your account so other players can no lon
 [*] [b]AutoDrive summon[/b]: calling the car over with AutoDrive needs the Drive permission for it; if the share is taken back mid-summon, the car stops.
 [*] [b]Who owns it[/b]: right-click next to the car and open Vehicle Manager: the first line shows the owner's account name; for cars shared with you or with everyone, the next line lists what you can do.
 [*] [b]Weapons aren't blocked[/b]: to keep a parked car safe from axes and guns, see "Damage guard".
-[*] [b]No key needed[/b]: owners can unlock, open doors (without the alarm) and start the car without a physical key (servers can turn this off).
+[*] [b]Doors, hood and trunk[/b]: opening, closing, locking or unlocking a door needs the permission for that door: seat doors need Ride, the trunk needs Trunk, the hood needs Repair or Salvage. Adjusting the headlight angle needs Repair.
+[*] [b]No key needed[/b]: owners and players they share with can unlock, open doors (without the alarm) and start the car without a physical key, within the permissions above; starting needs Drive (servers can turn this off).
 [/list]
 [h3]Containers[/h3]
 They follow permissions; without permission they don't show up in the inventory.
