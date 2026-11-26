@@ -1,0 +1,56 @@
+# 既有的「固定參數少傳」呼叫（scripts/verify_mod.py 第 1c 項）。只會變少：改掉一處就重跑
+# python scripts/verify_mod.py --rebase-args。不要為了讓新的呼叫通過而重跑：少的補 nil 傳齊，
+# 或把選用參數改成 ... 接。只有確定呼叫的是 Java 方法，或最後一個引數的呼叫確定每條路都回夠多個值
+# （key 裡是 ~，後面是那個呼叫的函式名）才加進來。
+20	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|addText|2<5
+3	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|addText|3<5
+3	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|button|2<5
+4	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|button|3<5
+2	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|button|4<5
+2	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|openSheet|1<2
+1	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|request|3<4
+7	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|say|1<2
+2	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|sendAutoRenew|4<5
+1	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|span|1<2
+1	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|startQuote|2<3
+2	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|textAt|3<5
+2	client/ISUI/MinidoracatVehicleManager_BillingWindow.lua|textAt|4<5
+2	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|add|1<3
+1	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|add|1~3|F.locationText
+1	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|add|1~3|F.shareText
+10	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|add|1~3|getText
+10	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|add|2<3
+1	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|add|2~3|F.stateToken
+5	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|adminSend|2<3
+21	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|button|2<4
+11	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|button|3<4
+1	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|field|2~3|getText
+2	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|heading|2<3
+1	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|open|0<1
+4	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|request|3<4
+20	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|say|1<2
+11	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|send|2<3
+13	client/ISUI/MinidoracatVehicleManager_FleetWindow.lua|text|5<6
+5	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|addText|2<4
+1	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|button|3<4
+1	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|changeLine|4<5
+5	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|fieldRow|1<2
+1	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|footButton|2<4
+1	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|footButton|3<4
+4	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|say|1<2
+5	client/ISUI/MinidoracatVehicleManager_PaidSlotsWindow.lua|textAt|4<5
+2	client/MinidoracatVehicleManager_Client.lua|notify|2~3|getText
+4	client/MinidoracatVehicleManager_Client.lua|request|3<4
+1	client/MinidoracatVehicleManager_ClientGuards.lua|check|1<2
+1	server/MinidoracatVehicleManager_ActionGuards.lua|send|3<4
+1	server/MinidoracatVehicleManager_Economy.lua|summary|1<2
+5	server/MinidoracatVehicleManager_OwnershipSystem.lua|setState|3<4
+1	server/MinidoracatVehicleManager_PaidSlots.lua|encode|1<2
+10	server/MinidoracatVehicleManager_PaidSlots.lua|fail|1<2
+1	server/MinidoracatVehicleManager_Server.lua|noteRoom|2<3
+8	server/MinidoracatVehicleManager_Server.lua|send|3<4
+1	server/MinidoracatVehicleManager_Server.lua|summary|1<2
+1	shared/MinidoracatVehicleManager_CommandGate.lua|allowsRecord|3<4
+1	shared/MinidoracatVehicleManager_CommandGate.lua|onAllow|0<1
+1	shared/MinidoracatVehicleManager_CommandGate.lua|send|3<4
+2	shared/MinidoracatVehicleManager_CommandGate.lua|unload|3<4
