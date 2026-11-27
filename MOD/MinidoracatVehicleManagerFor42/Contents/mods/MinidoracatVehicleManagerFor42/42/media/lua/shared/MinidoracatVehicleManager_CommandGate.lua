@@ -231,7 +231,7 @@ local RULES = {
         -- :115-134；正常呼叫者是修警示燈前在車外關燈與警笛（ELRTurnOffLightbar.lua:51-52）
         setLightbarLightsMode = lightbar, setLightbarSirenMode = lightbar,
     },
-    -- 整車拆解子 MOD 42/media/lua/server/VRO_SalvageCommands.lua:205-210：移除整台車（ISVehicleSalvage.lua:163 最後送），同 vehicle.remove
+    -- 整車拆解子 MOD 42/media/lua/server/VRO_SalvageCommands.lua:218-233：移除整台車（ISVehicleSalvage.lua:163 最後送），同 vehicle.remove
     vro_salvage = { removeVehicle = one("MANAGE") },
     -- Project RV Interior（Workshop 3543229299）42/media/lua/server/RVServerMP_V3.lua:379-392：進車內房間，要 CARGO
     -- （房間裡的容器比照後車廂；坐在車上的人也一樣）。目標是送指令的人所在或身旁的車（同處理器的找法，:20-33），
